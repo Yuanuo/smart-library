@@ -1,0 +1,19 @@
+# maven
+/target
+
+# eclipse
+/.settings
+/.classpath
+/.project
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# more
+/.cached
+bak/
+scenicview.jar
+scenicView.properties

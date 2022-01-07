@@ -1,0 +1,33 @@
+#-----------------------------------------------------------------------
+#some test synonym mappings unlikely to appear in real input text
+#aaafoo => aaabar
+#bbbfoo => bbbfoo bbbbar
+#cccfoo => cccbar cccbaz
+#fooaaa,baraaa,bazaaa
+
+# Some synonym groups specific to this example
+#GB,gib,gigabyte,gigabytes
+#MB,mib,megabyte,megabytes
+#Television, Televisions, TV, TVs
+#notice we use "gib" instead of "GiB" so any WordDelimiterGraphFilter coming
+#after us won't split it into two words.
+
+# Synonym mappings can be used for spelling correction too
+#pixima => pixma
+
+十大弟子 => 十大弟子 釋迦十聖 十弟子 舍利弗 目犍連 摩訶迦葉 阿那律 須菩提 富樓那 迦旃延 優婆離 羅睺羅 阿難
+十大弟子,釋迦十聖,十弟子
+
+龍樹,龍猛
+目揵連,目連,目犍連,目干連,目伽略,勿伽羅,目犍連延,目犍羅夜那,沒特伽羅,毛伽利耶夜那,拘律陀,拘律,俱哩多,拘離迦,拘理迦,俱離多
+舍利弗,舍利弗多,舍利弗羅,舍利弗怛羅,舍利弗多羅,奢利富多羅,奢利弗多羅,奢唎補怛羅,設利弗呾羅,鶖鷺子,秋露子,鴝鵒子,鴝鵒子,舍利子,舍梨子
+迦葉,大迦葉,摩訶迦葉,迦葉波,迦攝波
+阿那律,阿尼盧陀,阿樓馱,阿難律,阿樓陀
+須菩提,蘇補底,須扶提,須浮帝,藪浮帝修,浮帝,須楓
+富樓那,布剌拏梅但利曳尼子,分耨文陀尼子,富婁那,彌多羅尼子,滿慈子
+迦旃延,迦多衍那,迦底耶夜那,迦氈延,迦氎延,那罗陀,嘎达雅那
+羅睺羅,羅侯羅,羅怙羅,羅護羅,羅雲,羅吼羅,羅睺,曷羅怙羅,何羅怙羅
+
+六祖,惠能,慧能,曹溪大师,大鉴禅师
+玄奘,唐玄奘,唐三藏,唐僧
+

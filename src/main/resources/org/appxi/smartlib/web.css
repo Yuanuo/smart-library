@@ -1,0 +1,96 @@
+/*   *************************************************************************************************************    */
+div.p,
+p {
+    /*padding-bottom: calc(var(--font-size) * .85);*/
+}
+/*   *************************************************************************************************************    */
+body {
+    padding: 3rem;
+}
+
+body > article > hr {
+    display: none;
+}
+
+.wrap-lines-on,
+.wrap-pages-on {
+    margin-left: 4rem;
+}
+.wrap-lines-on div,
+.wrap-lines-on p,
+.wrap-lines-on .lg .l,
+.wrap-pages-on div,
+.wrap-pages-on p,
+.wrap-pages-on .lg .l {
+    display: inline;
+}
+.wrap-pages-on span.lb:before,
+.wrap-lines-on span.lb:before {
+    content: "\A" attr(id) " : ";
+    white-space: pre;
+    color: var(--text-color);
+    font-family: Helvetica;
+    font-weight: normal;
+    opacity: .5;
+}
+
+.wrap-pages-on span.pb:before {
+    content: "\A\A\A" attr(id) "\A\A";
+    white-space: pre;
+    color: var(--text-color);
+    font-family: Helvetica;
+    font-weight: normal;
+    opacity: .5;
+}
+
+.pretty-indent-on .indent-first-letter,
+.pretty-indent-on .indent-first-letter-lg .l:first-child{
+    text-indent: calc(-1 * var(--char-size));
+}
+.pretty-indent-on .indent-last-letter-lg .l:last-child{
+    text-indent: calc(1 * var(--char-size));
+}
+.pretty-indent-on .indent-first2-letter,
+.pretty-indent-on .indent-first2-letter-lg .l:first-child{
+    text-indent: calc(-2 * var(--char-size));
+}
+.pretty-indent-on .indent-last2-letter-lg .l:last-child{
+    text-indent: calc(2 * var(--char-size));
+}
+/*   *************************************************************************************************************    */
+.edit-orig-inline-on span.note.orig:before {
+    content: attr(data-t);
+    font-size: 85%;
+    color: #20b771;
+}
+
+.edit-mod-sharp-on span.note.mod:before {
+    content: "[#]";
+    font-size: 85%;
+    font-weight: 600;
+    color: #20b771;
+}
+
+.edit-mod-color-on span.lem > .tmp,
+.edit-mod-popover-on span.lem > .tmp {
+    color: #20b771;
+    padding: 0 .5rem;
+}
+
+.edit-mod-inline-on span.note.mod:before {
+    content: attr(data-t);
+    font-size: 85%;
+    color: #20b771;
+}
+
+/*   *************************************************************************************************************    */
+.tippy-box {
+    font-size: 95% !important;
+    max-width: 70rem !important;
+}
+.theme-dark .tippy-box {
+    background: #666 !important;
+}
+.theme-dark .tippy-arrow::before {
+    color: #666 !important;
+}

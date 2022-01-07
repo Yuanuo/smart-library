@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.appxi</groupId>
+    <artifactId>smart-library</artifactId>
+    <version>22.01.07</version>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>18</maven.compiler.release>
+        <javafx.version>18-ea+9</javafx.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.appxi</groupId>
+            <artifactId>javafx</artifactId>
+            <version>[1.0.0,)</version>
+        </dependency>
+        <dependency>
+            <groupId>org.appxi</groupId>
+            <artifactId>timeago</artifactId>
+            <version>[1.0.0,)</version>
+        </dependency>
+        <dependency>
+            <groupId>org.appxi</groupId>
+            <artifactId>smartcn-pinyin</artifactId>
+            <version>[1.0.0,)</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-swing</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+<!--        <dependency>-->
+<!--            <groupId>org.openjfx</groupId>-->
+<!--            <artifactId>javafx-fxml</artifactId>-->
+<!--            <version>${javafx.version}</version>-->
+<!--        </dependency>-->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>[1.14.3,)</version>
+        </dependency>
+        <dependency>
+            <groupId>org.appxi</groupId>
+            <artifactId>search-solr</artifactId>
+            <version>[1.0.0,)</version>
+        </dependency>
+        <dependency>
+            <groupId>org.appxi</groupId>
+            <artifactId>search-tika-aio</artifactId>
+            <version>[1.0.0,)</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.8.1</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.2.1</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
