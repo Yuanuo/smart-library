@@ -33,10 +33,12 @@ public class PreferencesController extends WorkbenchSideToolController {
     public void onViewportShowing(boolean firstTime) {
         SettingsPane settingsPane = new SettingsPane();
 
-        settingsPane.getOptions().add(app.visualProvider.settingOptionForFontSize());
-        settingsPane.getOptions().add(app.visualProvider.settingOptionForTheme());
-        settingsPane.getOptions().add(app.visualProvider.settingOptionForSwatch());
-        settingsPane.getOptions().add(app.visualProvider.settingOptionForWebZoom());
+        settingsPane.getOptions().add(app.visualProvider.optionForFontName());
+        settingsPane.getOptions().add(app.visualProvider.optionForFontSize());
+        settingsPane.getOptions().add(app.visualProvider.optionForTheme());
+        settingsPane.getOptions().add(app.visualProvider.optionForSwatch());
+        settingsPane.getOptions().add(app.visualProvider.optionForWebFontName());
+        settingsPane.getOptions().add(app.visualProvider.optionForWebFontSize());
 
         settingsPane.getOptions().add(new DefaultOption<>(
                 "打开方式", "资源管理器默认双击动作", "EXPLORER",
@@ -71,39 +73,39 @@ public class PreferencesController extends WorkbenchSideToolController {
                                         () -> getEditor().setValue(getEditor().getItems().get(0)));
                     }
                 }));
-        settingsPane.getOptions().add(new DefaultOption<>(
-                "图文编辑器", "图文数据默认排版/编辑器", "EDITOR",
-                UserPrefs.prefs.getString("item.article.editor", "advanced"), true,
-                option -> new OptionEditorBase<String, ChoiceBox<String>>(option, new ChoiceBox<>()) {
-                    private StringProperty valueProperty;
-
-                    @Override
-                    public Property<String> valueProperty() {
-                        if (this.valueProperty == null) {
-                            this.valueProperty = new SimpleStringProperty();
-                            this.getEditor().getItems().setAll(
-                                    "simple:简易图文编辑器", "advanced:高级图文/表格编辑器（推荐）"
-                            );
-                            this.getEditor().getSelectionModel().selectedItemProperty().addListener((obs, ov, nv) -> {
-                                if (ov == null || Objects.equals(ov, nv)) return;
-                                this.valueProperty.set(nv);
-                                //
-                                UserPrefs.prefs.setProperty("item.article.editor", nv.split(":", 2)[0]);
-                            });
-                            this.valueProperty.addListener((obs, ov, nv) -> this.setValue(nv));
-                        }
-                        return this.valueProperty;
-                    }
-
-                    @Override
-                    public void setValue(String value) {
-                        if (getEditor().getItems().isEmpty()) return;
-                        getEditor().getItems().stream().filter(v -> v.startsWith(value))
-                                .findFirst()
-                                .ifPresentOrElse(v -> getEditor().setValue(v),
-                                        () -> getEditor().setValue(getEditor().getItems().get(0)));
-                    }
-                }));
+//        settingsPane.getOptions().add(new DefaultOption<>(
+//                "图文编辑器", "图文数据默认排版/编辑器", "EDITOR",
+//                UserPrefs.prefs.getString("item.article.editor", "advanced"), true,
+//                option -> new OptionEditorBase<String, ChoiceBox<String>>(option, new ChoiceBox<>()) {
+//                    private StringProperty valueProperty;
+//
+//                    @Override
+//                    public Property<String> valueProperty() {
+//                        if (this.valueProperty == null) {
+//                            this.valueProperty = new SimpleStringProperty();
+//                            this.getEditor().getItems().setAll(
+//                                    "simple:简易图文编辑器", "advanced:高级图文/表格编辑器（推荐）"
+//                            );
+//                            this.getEditor().getSelectionModel().selectedItemProperty().addListener((obs, ov, nv) -> {
+//                                if (ov == null || Objects.equals(ov, nv)) return;
+//                                this.valueProperty.set(nv);
+//                                //
+//                                UserPrefs.prefs.setProperty("item.article.editor", nv.split(":", 2)[0]);
+//                            });
+//                            this.valueProperty.addListener((obs, ov, nv) -> this.setValue(nv));
+//                        }
+//                        return this.valueProperty;
+//                    }
+//
+//                    @Override
+//                    public void setValue(String value) {
+//                        if (getEditor().getItems().isEmpty()) return;
+//                        getEditor().getItems().stream().filter(v -> v.startsWith(value))
+//                                .findFirst()
+//                                .ifPresentOrElse(v -> getEditor().setValue(v),
+//                                        () -> getEditor().setValue(getEditor().getItems().get(0)));
+//                    }
+//                }));
 
         final DialogPane dialogPane = new DialogPane() {
             @Override
