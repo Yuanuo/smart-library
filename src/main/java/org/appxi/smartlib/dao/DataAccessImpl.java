@@ -10,6 +10,8 @@ import org.appxi.smartlib.item.ItemHelper;
 import org.appxi.smartlib.item.ItemProvider;
 import org.appxi.smartlib.item.ItemProviders;
 import org.appxi.util.FileHelper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.awt.*;
 import java.io.File;
@@ -33,6 +35,7 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 class DataAccessImpl implements DataAccess {
+    private final Logger logger = LoggerFactory.getLogger(DataAccessImpl.class);
     private final Path repository;
     private final int rootLevels;
 
@@ -55,7 +58,7 @@ class DataAccessImpl implements DataAccess {
                     .sorted((a, b) -> Boolean.compare(Files.isDirectory(b), Files.isDirectory(a)))
                     .forEach(path -> result.add(toItem(path)));
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.warn("list", e);
         }
         return result;
     }
@@ -107,7 +110,7 @@ class DataAccessImpl implements DataAccess {
             return "文件或目录不能读取";
         if (!Files.isDirectory(parentPath)) {
             consumer.accept(parent);
-            return "不是正确的目录路径";
+            return null;
         }
 
         try {
@@ -128,9 +131,10 @@ class DataAccessImpl implements DataAccess {
                 }
             });
         } catch (AccessDeniedException e) {
+            logger.warn("walk", e);
             return "本地文件禁止访问！";
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.warn("walk", e);
             return "本地文件访问错误！";
         }
         return null;
@@ -165,7 +169,7 @@ class DataAccessImpl implements DataAccess {
                     }
                 });
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.warn("exists", e);
             }
             return result;
         }
@@ -196,9 +200,10 @@ class DataAccessImpl implements DataAccess {
                 item.setPath(FileHelper.subPath(itemPath, rootLevels));
                 return null;
             } catch (AccessDeniedException e) {
+                logger.warn("create", e);
                 return "本地文件禁止访问！";
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.warn("create", e);
                 return e.getMessage();
             }
         } else {
@@ -208,9 +213,10 @@ class DataAccessImpl implements DataAccess {
                 item.setPath(FileHelper.subPath(itemPath, rootLevels));
                 return null;
             } catch (AccessDeniedException e) {
+                logger.warn("create", e);
                 return "本地文件禁止访问！";
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.warn("create", e);
                 return e.getMessage();
             }
         }
@@ -236,9 +242,10 @@ class DataAccessImpl implements DataAccess {
             item.setPath(FileHelper.subPath(targetPath, rootLevels));
             return null;
         } catch (AccessDeniedException e) {
+            logger.warn("rename", e);
             return "文件或目录禁止访问！";
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.warn("rename", e);
             return e.getMessage();
         }
     }
@@ -266,9 +273,10 @@ class DataAccessImpl implements DataAccess {
                 Files.delete(itemPath);
             }
         } catch (AccessDeniedException e) {
+            logger.warn("delete", e);
             return "文件或目录禁止访问！";
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.warn("delete", e);
             return e.getMessage();
         }
         return FileHelper.notExists(itemPath) ? null : "无法删除一些文件或目录！";
@@ -284,9 +292,10 @@ class DataAccessImpl implements DataAccess {
                 Files.copy(swap, itemPath, StandardCopyOption.REPLACE_EXISTING);
                 return null;
             } catch (AccessDeniedException e) {
+                logger.warn("setContent", e);
                 return "文件或目录禁止访问！";
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.warn("setContent", e);
                 return e.getMessage();
             }
         }
@@ -301,7 +310,7 @@ class DataAccessImpl implements DataAccess {
             try {
                 return Files.newInputStream(itemPath);
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.warn("getContent", e);
                 return null;
             }
         }
@@ -314,7 +323,7 @@ class DataAccessImpl implements DataAccess {
                 try {
                     zipStream.putNextEntry(new ZipEntry(item.getPath().concat("/")));
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    logger.warn("backup", e);
                 }
             } else {
                 progressCallback.accept(-1D, item.typedPath());
@@ -324,7 +333,7 @@ class DataAccessImpl implements DataAccess {
                         IOUtils.copy(itemContent, zipStream);
                     }
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    logger.warn("backup", e);
                 }
             }
         });
@@ -346,7 +355,7 @@ class DataAccessImpl implements DataAccess {
                 FileHelper.makeParents(target);
                 Files.copy(zipFile.getInputStream(entry), target, StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException e) {
-                e.printStackTrace();
+                logger.warn("restore", e);
             }
         });
         return null;
@@ -367,7 +376,7 @@ class DataAccessImpl implements DataAccess {
             item.setPath(FileHelper.subPath(targetPath, rootLevels));
             return null;
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.warn("move", e);
             return e.getMessage();
         }
     }
@@ -384,12 +393,12 @@ class DataAccessImpl implements DataAccess {
                 try {
                     repository.saveAll(batchList);
                 } catch (Throwable t) {
-                    t.printStackTrace();
+                    logger.warn("batchCommitter.saveAll", t);
                     for (Piece itm : batchList) {
                         try {
                             repository.save(itm);
                         } catch (Throwable ex) {
-                            ex.printStackTrace();
+                            logger.warn("batchCommitter.save", ex);
                         }
                     }
                 }
@@ -419,7 +428,7 @@ class DataAccessImpl implements DataAccess {
                     final List<Piece> pieces = indexer.apply(item);
                     if (null != pieces) repository.saveAll(pieces);
                 } catch (Throwable t) {
-                    t.printStackTrace();
+                    logger.warn("batchCommitter.saveAll", t);
                 }
             }
         }

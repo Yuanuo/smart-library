@@ -21568,7 +21568,7 @@
       editor.on('BeforeExecCommand', function (e) {
         var cmd = e.command;
         if (window.javaApp && cmd === 'Delete') {
-          javaApp.setClipboardData('text/plain', editor.selection.getSel().toString());
+          javaApp.setClipboardText(editor.selection.getSel().toString());
         }
         if (!shouldIgnoreCommand(cmd)) {
           endTyping(undoManager, locks);
@@ -25899,6 +25899,10 @@
           }
         });
         editor.on('copy', function (e) {
+          if (window.javaApp) {
+            javaApp.setClipboardText(editor.selection.getSel().toString());
+            return;
+          }
           var clipboardData = e.clipboardData;
           if (!e.isDefaultPrevented() && e.clipboardData && !Env.ie) {
             var realSelectionElement = getRealSelectionElement();
@@ -25908,8 +25912,6 @@
               clipboardData.setData('text/html', realSelectionElement.outerHTML);
               clipboardData.setData('text/plain', realSelectionElement.outerText || realSelectionElement.innerText);
             }
-          } else {
-            if (window.javaApp) javaApp.setClipboardData('text/plain', editor.selection.getSel().toString());
           }
         });
         init$2(editor);

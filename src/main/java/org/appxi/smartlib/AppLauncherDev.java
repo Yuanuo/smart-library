@@ -3,6 +3,7 @@ package org.appxi.smartlib;
 import javafx.application.Application;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
@@ -52,8 +53,8 @@ public class AppLauncherDev extends AppLauncher {
 
         @Override
         public void onViewportShowing(boolean firstTime) {
-            AppContext.toastError("disabled sceneview.jar");
-//            javafx.application.Platform.runLater(() -> org.scenicview.ScenicView.show(app.getPrimaryScene()));
+            app.toastError("disabled sceneview.jar");
+            //            javafx.application.Platform.runLater(() -> org.scenicview.ScenicView.show(app.getPrimaryScene()));
         }
     }
 
@@ -92,10 +93,12 @@ public class AppLauncherDev extends AppLauncher {
             dialogPane.setStyle("-fx-padding: 1em;");
             dialogPane.setPrefSize(1280, 800);
             dialogPane.setContent(scrollPane);
+            dialogPane.getButtonTypes().add(ButtonType.OK);
 
             final Alert alert = new Alert(Alert.AlertType.NONE);
             alert.setTitle(viewTitle.get() + " Total " + MaterialIcon.values().length + " Icons");
             alert.setDialogPane(dialogPane);
+            alert.initOwner(app.getPrimaryStage());
             alert.show();
         }
     }

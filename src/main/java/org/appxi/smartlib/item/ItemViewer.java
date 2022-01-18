@@ -11,7 +11,7 @@ public abstract class ItemViewer extends ItemController {
         this.viewId.bind(Bindings.concat("View@", item.path));
         //
         this.viewTitle.bind(item.name);
-        this.viewTooltip.bind(Bindings.createStringBinding(item::typedPath));
+        this.viewTooltip.bind(Bindings.createStringBinding(item::typedPath, item.path));
         this.appTitle.bind(item.name);
     }
 

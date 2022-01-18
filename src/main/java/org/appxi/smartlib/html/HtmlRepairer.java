@@ -1,7 +1,8 @@
 package org.appxi.smartlib.html;
 
-import org.appxi.util.DigestHelper;
+import org.appxi.util.NumberHelper;
 import org.jsoup.nodes.Attributes;
+import org.jsoup.nodes.Comment;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
 import org.jsoup.nodes.TextNode;
@@ -13,10 +14,19 @@ import java.util.List;
 import java.util.Set;
 
 public class HtmlRepairer implements NodeVisitor {
-    public static final String lineSplitter = "([，、。？：；！,.?:;!།༎]+)";
-    public static final List<String> messes = List.of("font-family: \"\";", "font-size: x-large;");
+    private static final String lineSplitter = "([，、。？：；！,.?:;!།༎]+)";
+    private static final List<String> messes = List.of("font-family: \"\";", "font-size: x-large;", "font-size: xx-large;");
 
-    private final Set<String> tagNames = new HashSet<>();
+    private final Set<String> idTags = new HashSet<>();
+    private long edition;
+
+    public HtmlRepairer(long edition) {
+        this.edition = edition;
+    }
+
+    public long edition() {
+        return edition;
+    }
 
     public HtmlRepairer withMost() {
         return this.with("div", "p", "pre", "h1", "h2", "h3", "h4", "h5", "h6"
@@ -25,15 +35,30 @@ public class HtmlRepairer implements NodeVisitor {
     }
 
     public HtmlRepairer with(String... tagNames) {
-        this.tagNames.addAll(Arrays.asList(tagNames));
+        this.idTags.addAll(Arrays.asList(tagNames));
         return this;
     }
 
     @Override
     public void head(Node node, int depth) {
+        if (node instanceof Comment) {
+            node.remove();
+            return;
+        }
         if (node instanceof Element ele) {
-            String styleStr = ele.attr("style");
-            if (!styleStr.isEmpty()) {
+            final String tagName = ele.tagName();
+            if (tagName.contains(":")) {
+                ele.remove();
+                return;
+            }
+            if ("br".equals(tagName) || "hr".equals(tagName)) return;
+
+            final Attributes eleAttrs = ele.attributes();
+            if ("p".equals(tagName) && eleAttrs.hasKey("data-pb")) return;
+
+            String styleStr = eleAttrs.get("style");
+            if (eleAttrs.hasKey("style") && styleStr.isBlank()) eleAttrs.remove("style");
+            else if (!styleStr.isEmpty()) {
                 if (styleStr.contains("caret-color"))
                     styleStr = null;
                 else {
@@ -45,39 +70,79 @@ public class HtmlRepairer implements NodeVisitor {
                     }
                     styleStr = buff.toString();
                 }
-                if (null == styleStr || styleStr.isBlank()) ele.removeAttr("style");
-                else ele.attr("style", styleStr);
+                if (null == styleStr || styleStr.isBlank()) eleAttrs.remove("style");
+                else eleAttrs.put("style", styleStr);
             }
 
-            final Attributes eleAttrs = ele.attributes();
-            if ("span".equals(ele.tagName()) && ele.childNodeSize() > 0
-                && (eleAttrs.size() == 0 || eleAttrs.size() == 1 && eleAttrs.hasKey("id"))
-                && ele.childNodeSize() == ele.childrenSize()) {
-                Element wrap = ele.ownerDocument().createElement("wrap");
-                wrap.appendChildren(ele.children());
-                ele.replaceWith(wrap);
-                wrap.unwrap();
-                return;
+            switch (tagName) {
+                case "span":
+                    if (eleAttrs.isEmpty() || eleAttrs.size() == 1 && eleAttrs.hasKey("id")) {
+                        ele.unwrap();
+                        return;
+                    }
+                    break;
+                case "div":
+                    if ("body".equals(ele.parent().tagName())) {
+                        ele.tagName("p");
+                    }
+                    break;
+                case "b":
+                case "strong":
+                    if (HtmlHelper.headingTags.contains(ele.parent().tagName())) {
+                        ele.unwrap();
+                        return;
+                    }
+                    break;
             }
 
-            if (!eleAttrs.hasKey("id") && this.tagNames.contains(ele.tagName())) ele.id(DigestHelper.uid());
+            if (!eleAttrs.hasKey("id") && this.idTags.contains(tagName) || ele.id().startsWith("temp-"))
+                ele.id(nextID(null));
         } else if (node instanceof TextNode text && !text.isBlank()) {
             if (text.parent() instanceof Element parent) {
-                if (parent.is("span[id]")) return;
+                if (null == text.previousSibling()) text.text(text.text().stripLeading());
+                if (null == text.nextSibling()) text.text(text.text().stripTrailing());
+                if (text.isBlank() || HtmlHelper.headingTags.contains(parent.tagName())) return;
+
                 final String[] lines = text.text().replaceAll(lineSplitter, "$1∷\n").split("∷\n");
                 if (lines.length == 1) {
-                    if (!parent.hasAttr("id")) parent.id(DigestHelper.uid());
+//                    if (text.nextSibling() == null
+//                        || text.nextSibling() instanceof Element nextEle && "a".equals(nextEle.tagName()))
+//                        return;
+//                    final Element anchor = node.ownerDocument().createElement("a");
+//                    anchor.id(nextID("L"));
+//                    parent.insertChildren(text.siblingIndex() + 1, anchor);
                     return;
                 }
                 final Element wrap = node.ownerDocument().createElement("wrap");
-                for (String line : lines) wrap.appendElement("span").id(DigestHelper.uid()).text(line);
+                final StringBuilder buff = new StringBuilder();
+                for (int i = 0; i < lines.length; i++) {
+                    if (i > 0) buff.append("<a id=\"".concat(nextID("a-")).concat("\"/>"));
+                    buff.append(lines[i]);
+                }
+                wrap.html(buff.toString());
                 node.replaceWith(wrap);
                 wrap.unwrap();
             }
         }
     }
 
+    private String nextID(String prefix) {
+//        return null == prefix ? DigestHelper.sid() : prefix.concat(DigestHelper.uid());
+        return (null == prefix ? "a" : prefix).concat(NumberHelper.toRadix62(edition++));
+    }
+
     @Override
     public void tail(Node node, int depth) {
     }
+
+//    public static HtmlRepairer ofInnerSequenced() {
+//        return new HtmlRepairer() {
+//            private long innerSequence = 1;
+//
+//            @Override
+//            protected String nextID(String prefix) {
+//                return (null == prefix ? "Z" : prefix).concat(NumberHelper.toRadix62(innerSequence++));
+//            }
+//        };
+//    }
 }

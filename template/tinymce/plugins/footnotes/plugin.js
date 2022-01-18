@@ -1,4 +1,3 @@
-
 (function(){
     'use strict';
 
@@ -30,57 +29,23 @@
         })();
       }
 
-    
-    /**
-     * 
-     * @param str
-     * @param data
-     * @returns {*}
-     */
-    var replaceTmpl = function(str, data) {
-        var result = str;
-        for (var key in data) {
-            result = result.replace(/\{(\/?[^\}]+)\}/gm,data[key]);
-        }
-        return result;
-    };
-
-    /**
-     * 
-     * @param editor
-     */
     var open = function (editor) {
-        var selectedNode = editor.selection.getNode(), name = '',
-            isFootNotes = selectedNode.tagName == 'SPAN' && editor.dom.getAttrib(selectedNode, 'class') === 'fnoteWrap';
-
-        var selectIndex = (function(){
-            if (selectedNode.className == 'fnoteWrap') {
-                var num = selectedNode.childNodes[0].firstChild.nodeValue.replace(/[^0-9]/g,'');
-                return num;
-            }
-            else {
-                return selectedNode.childNodes[0];
-            }
-        }());
-
-        if (isFootNotes) {
-            name = selectedNode.name || decodeURIComponent(selectedNode.childNodes[0].getAttribute('data-content')) || '';
-        }
-        
+        const selectedNode = editor.selection.getNode();
+        const selectedIsNote = selectedNode.tagName === 'A' && selectedNode.hasAttribute('data-note');
+        const oldNote = selectedIsNote && decodeURIComponent(selectedNode.getAttribute('data-note')) || '';
         
         editor.windowManager.open({
-            title: 'Insert Contents',
+            title: 'Text',
             size: 'normal',
             body: {
                 type: 'panel',
                 items : [
                     {
                         type:'textarea',
-                        name: 'name',
+                        name: 'note',
                         multiline: true,
                         minWidth: 520,
                         minHeight: 100,
-
                     }
                 ],
             },
@@ -98,136 +63,39 @@
                 }
             ],
 
-            initialData: { name: name },
+            initialData: { note: oldNote },
             onSubmit: function (e) {
-                var newfootnoteContent = e.getData().name,
-                    fixFootnoteContent = (function () {
-                        return encodeURIComponent(newfootnoteContent);
-                    }()),
-                    htmlTemplate = '<span class="fnoteWrap" id="#wk_ft{FOOTNOTE_INDEX}" contenteditable="false"><button type="button" class="fnoteBtn" data-content="'+fixFootnoteContent+'">{FOOTNOTE_INDEX}</button></span>',
-                    totalFootNote = editor.getDoc().querySelectorAll('.fnoteBtn'),
-                    totalCount = totalFootNote.length,
-                    html;
+                let uid = 'temp-' + new Date().getTime();
+                let newNote = e.getData().note;
+                let html = '<a id="' + uid + '" data-note="' + encodeURIComponent(newNote) + '"></a>';
                 
-                        
-                function findNextFD(node) {
-                    var getNext = function(el) {
-
-                        var nextAll = false,
-                            elements;
-
-                        nextAll = [].filter.call(el.parentNode.children, function (htmlElement) {
-                            return (htmlElement.previousElementSibling === el) ? nextAll = true : nextAll;
-                        });
-
-                        return nextAll.map(v => {
-                            if (Array.from(v.querySelectorAll('fnoteBtn').length) > 0) {
-                                
-                                $node.nextElementSibling.classList.contains('fnoteBtn') ?
-                                    elements =  $node.nextElementSibling.children.children :
-                                    elements =  v.querySelectorAll('.fnoteBtn');
-
-                                return elements
-                            }
-                            else {
-                                if (el.nodeName === 'BODY') return [];
-
-                                return getNext(el.parentNode);
-                            }
-                        })
-                    }
-                    var nextInDOM = function(_selector, el) {
-                        
-                        var next = getNext(el);
-                        
-                        while(next.length !== 0) {
-                            var found = searchFor(_selector, next);
-                            if(found !== null) {
-                                return found;
-                            }
-                            next = getNext(next);
-                        }
-                        return next;
-                    }
-
-                    
-                    var searchFor = function(_selector, el) {
-                        if (!el) {return false};
-                        if(el) {
-                            return $node;
-                        }
-                        else {
-                            var found = null;
-                            el.children.forEach(function() {
-                                if (el)
-                                    found = searchFor(_selector, this);
-                            });
-                            return found;
-                        }
-                        return null;
-                    }
-                    var currentClassNot_NextClass = nextInDOM('.fnoteBtn', node);
-
-                    return currentClassNot_NextClass;
-                }
-                
-                var nextFD = findNextFD(editor.selection.getNode());
-
-                if(nextFD.length) {
-                    nextFD = nextFD[0];
-                    var foundIdx;
-                    for(foundIdx = 0; foundIdx < totalCount; foundIdx++) {
-                        if(nextFD == totalFootNote[foundIdx]) {
-                            break;
-                        }
-                    }
-                    if (selectIndex < totalCount) {
-                        // modify
-                        html = replaceTmpl(htmlTemplate,{FOOTNOTE_INDEX : $(totalFootNote[selectIndex-1]).html()});
-                    }
-                    else {
-                        // anywhere add
-                        html = replaceTmpl(htmlTemplate,{FOOTNOTE_INDEX : $(totalFootNote[foundIdx]).html()});
-                        editor.selection.collapse(0);
-                    }
-
-                } else {
-                    // last add
-                    html = replaceTmpl(htmlTemplate,{FOOTNOTE_INDEX : totalCount + 1});
+                if (selectedIsNote){
+                    editor.execCommand('mceReplaceContent', false, html);
                     editor.selection.collapse(0);
                 }
+                else {
+                    editor.selection.collapse(0);
+                    editor.execCommand('mceInsertContent', false, html);
+                }
 
-                editor.execCommand('mceInsertContent', false, html);
                 e.close()
-               
-                // index realignment
-                
-                var fnoteBtn = Array.from(editor.getDoc().querySelectorAll('.fnoteBtn'));
-
-                fnoteBtn.forEach(function(value,idx){
-                    value.textContent = idx+1;
-                    value.parentNode.setAttribute('id','#wk_ft' + (idx +1))
-                })
-               
             }
         });
     };
     var Dialog = { open: open };
     var register$1 = function (editor) {
         editor.ui.registry.addToggleButton('footnotes', {
-            icon : 'fnote',
+            icon : 'footnote',
             tooltip : 'Footnote',
             onAction: function () {
-
                 return editor.execCommand('footnotes');
             },
             onSetup: function (buttonApi) {
-                return editor.selection.selectorChangedWithUnbind('span.fnoteWrap', buttonApi.setActive).unbind;
+                return editor.selection.selectorChangedWithUnbind('a[data-note]', buttonApi.setActive).unbind;
             }
         });
         editor.ui.registry.addMenuItem('footnotes', {
-            icon: 'fnote',
-
+            icon: 'footnote',
             onAction: function () {
                 return editor.execCommand('footnotes');
             }
@@ -245,7 +113,7 @@
 
     function Plugin () {
         global.add('footnotes', function (editor) {
-            editor.ui.registry.addIcon('fnote','<img src="'+ tinyMCE.baseURL + '/plugins/footnotes/img/fn.png' +'">')
+            editor.ui.registry.addIcon('footnote','<svg width="24px" height="24px"><path d="M8 21a1 1 0 0 1-1-1v-3H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6.586l-3.707 3.707A1 1 0 0 1 8 21zM19 5H5v10h3a1 1 0 0 1 1 1v1.586l2.293-2.293A1 1 0 0 1 12 15h7V5z"/><circle cx="16" cy="10" r="1"/><circle cx="12" cy="10" r="1"/><circle cx="8" cy="10" r="1"/></svg>');
             Commands.register(editor);
             Buttons.register(editor);
         });

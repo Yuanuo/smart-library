@@ -11,7 +11,7 @@ public abstract class ItemEditor extends ItemController {
         this.viewId.bind(Bindings.concat("Edit@", item.path));
         //
         this.viewTitle.bind(Bindings.concat("编辑: ", item.name));
-        this.viewTooltip.bind(Bindings.concat("编辑: ", item.typedPath()));
+        this.viewTooltip.bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.typedPath()), item.path));
         this.appTitle.bind(viewTitle);
     }
 }

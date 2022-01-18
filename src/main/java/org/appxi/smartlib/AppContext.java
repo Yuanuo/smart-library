@@ -1,7 +1,5 @@
 package org.appxi.smartlib;
 
-import org.appxi.javafx.control.Notifications;
-import org.appxi.javafx.helper.FxHelper;
 import org.appxi.smartcn.pinyin.Pinyin;
 import org.appxi.smartcn.pinyin.PinyinConvertors;
 import org.appxi.smartlib.event.GenericEvent;
@@ -14,6 +12,7 @@ import org.springframework.core.io.UrlResource;
 
 import java.net.URL;
 import java.util.List;
+import java.util.Map;
 
 public abstract class AppContext {
     private static AnnotationConfigApplicationContext beans;
@@ -48,7 +47,8 @@ public abstract class AppContext {
 
     public static <T> T getBean(Class<T> requiredType) {
         try {
-            return beans().getBean(requiredType);
+            return null;
+            // return beans().getBean(requiredType);
         } catch (Throwable ignore) {
             return null;
         }
@@ -59,20 +59,6 @@ public abstract class AppContext {
     }
 
     private AppContext() {
-    }
-
-    public static void toast(String msg) {
-        FxHelper.runLater(() -> Notifications.of().description(msg)
-                .owner(App.app().getPrimaryStage())
-                .showInformation()
-        );
-    }
-
-    public static void toastError(String msg) {
-        FxHelper.runLater(() -> Notifications.of().description(msg)
-                .owner(App.app().getPrimaryStage())
-                .showError()
-        );
     }
 
     private static TimeAgo.Messages timeAgoI18N;
@@ -88,14 +74,12 @@ public abstract class AppContext {
     }
 
     public static String ascii(String text) {
-        List<Pinyin> pinyinList = PinyinConvertors.convert(text);
+        final List<Map.Entry<Character, Pinyin>> pinyinList = PinyinConvertors.convert(text);
         StringBuilder result = new StringBuilder(pinyinList.size() * (6));
-
-        for (int i = 0; i < text.length(); ++i) {
-            Pinyin pinyin = pinyinList.get(i);
-            if (pinyin == Pinyin.none5) result.append(text.charAt(i));
-            else result.append(" ").append(pinyin.getPinyinWithoutTone()).append(" ");
-        }
+        pinyinList.forEach(entry -> {
+            if (null == entry.getValue()) result.append(entry.getKey());
+            else result.append(" ").append(entry.getValue().getPinyinWithoutTone()).append(" ");
+        });
 
         // 原始数据中的空格有多有少，此处需要保证仅有1个空格，以方便匹配用户输入的数据
         return result.toString().replaceAll("\s+", " ").strip();

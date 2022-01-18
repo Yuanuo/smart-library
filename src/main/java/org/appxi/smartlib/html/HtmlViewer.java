@@ -1,5 +1,6 @@
 package org.appxi.smartlib.html;
 
+import javafx.application.Platform;
 import javafx.beans.InvalidationListener;
 import javafx.beans.Observable;
 import javafx.concurrent.Worker;
@@ -41,9 +42,12 @@ import org.appxi.smartlib.item.ItemViewer;
 import org.appxi.util.StringHelper;
 import org.appxi.util.ext.Attributes;
 import org.appxi.util.ext.LookupExpression;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedInputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -58,9 +62,11 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 public abstract class HtmlViewer extends ItemViewer {
-    private final EventHandler<VisualEvent> onThemeChanged = this::onThemeChanged;
+    protected static final Logger logger = LoggerFactory.getLogger(HtmlViewer.class);
+
+    private final EventHandler<VisualEvent> onSetAppStyle = this::onSetAppStyle;
     private final EventHandler<AppEvent> onAppEventStopping = this::onAppEventStopping;
-    private final EventHandler<VisualEvent> onWebZoomChanged = this::onWebZoomChanged;
+    private final EventHandler<VisualEvent> onSetWebFont = this::onSetWebFont;
     private final InvalidationListener onWebViewBodyResize = this::onWebViewBodyResize;
 
     protected WebPane webPane;
@@ -73,9 +79,9 @@ public abstract class HtmlViewer extends ItemViewer {
 
     @Override
     public void initialize() {
-        app.eventBus.addEventHandler(VisualEvent.STYLE_CHANGED, onThemeChanged);
+        app.eventBus.addEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
         app.eventBus.addEventHandler(AppEvent.STOPPING, onAppEventStopping);
-        app.eventBus.addEventHandler(VisualEvent.WEB_ZOOM_CHANGED, onWebZoomChanged);
+        app.eventBus.addEventHandler(VisualEvent.SET_WEB_FONT, onSetWebFont);
     }
 
     @Override
@@ -96,7 +102,7 @@ public abstract class HtmlViewer extends ItemViewer {
         button.setOnAction(event -> {
             Printer printer = Printer.getDefaultPrinter();
             if (null == printer) {
-                AppContext.toastError("打印机不可用");
+                app.toastError("打印机不可用");
                 return;
             }
 
@@ -106,7 +112,7 @@ public abstract class HtmlViewer extends ItemViewer {
             job.getJobSettings().setPageLayout(pageLayout);
             webPane.webEngine().print(job);
             job.endJob();
-            AppContext.toast("已添加到系统打印队列，请检查打印结果！");
+            app.toast("已添加到系统打印队列，请检查打印结果！");
         });
         //
         webPane.toolbar.addLeft(button);
@@ -223,7 +229,13 @@ public abstract class HtmlViewer extends ItemViewer {
         if (null == this.webPane) return;
 
         final RawHolder<byte[]> allBytes = new RawHolder<>();
-        allBytes.value = (":root {--zoom: " + app.visualProvider.webZoom() + " !important;}").getBytes();
+        allBytes.value = """
+                :root {
+                    --font-family: tibetan, "%s", AUTO !important;
+                    --zoom: %.2f !important;
+                }
+                """.formatted(app.visualProvider.webFontName(), app.visualProvider.webFontSize())
+                .getBytes(StandardCharsets.UTF_8);
         Consumer<InputStream> consumer = stream -> {
             try (BufferedInputStream in = new BufferedInputStream(stream)) {
                 int pos = allBytes.value.length;
@@ -241,11 +253,16 @@ public abstract class HtmlViewer extends ItemViewer {
         String cssData = "data:text/css;charset=utf-8;base64," + Base64.getMimeEncoder().encodeToString(allBytes.value);
         FxHelper.runLater(() -> {
             webPane.webEngine().setUserStyleSheetLocation(cssData);
-            webPane.executeScript("document.body.setAttribute('class','".concat(app.visualProvider.toString()).concat("');"));
+            applyBodyTheme();
         });
     }
 
-    protected void onThemeChanged(VisualEvent event) {
+    private void applyBodyTheme() {
+        if (null == webPane) return;
+        webPane.executeScript("document.body.setAttribute('class','".concat(app.visualProvider.toString()).concat("');"));
+    }
+
+    protected void onSetAppStyle(VisualEvent event) {
         this.applyTheme(null);
     }
 
@@ -254,7 +271,7 @@ public abstract class HtmlViewer extends ItemViewer {
         saveUserExperienceData();
     }
 
-    protected void onWebZoomChanged(VisualEvent event) {
+    protected void onSetWebFont(VisualEvent event) {
         if (null == this.webPane) return;
         saveUserExperienceData();
         this.applyTheme(null);
@@ -269,10 +286,11 @@ public abstract class HtmlViewer extends ItemViewer {
     @Override
     public void onViewportClosing(boolean selected) {
         saveUserExperienceData();
-        app.eventBus.removeEventHandler(VisualEvent.STYLE_CHANGED, onThemeChanged);
+        app.eventBus.removeEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
         app.eventBus.removeEventHandler(AppEvent.STOPPING, onAppEventStopping);
-        app.eventBus.removeEventHandler(VisualEvent.WEB_ZOOM_CHANGED, onWebZoomChanged);
+        app.eventBus.removeEventHandler(VisualEvent.SET_WEB_FONT, onSetWebFont);
         app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, item));
+        if (null != webPane) webPane.release();
     }
 
     protected void saveUserExperienceData() {
@@ -304,6 +322,7 @@ public abstract class HtmlViewer extends ItemViewer {
                 onWebEngineLoading();
             }));
         } else {
+            Platform.runLater(() -> webPane.webView().requestFocus());
             app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, item));
         }
     }
@@ -331,7 +350,7 @@ public abstract class HtmlViewer extends ItemViewer {
         openedItem = item;
         navigatePos = null != navigatePos ? navigatePos : item;
         final Path htmlFile = createViewableHtmlFile();
-        System.out.println("LOAD htmlFile: ".concat(htmlFile.toString()));
+        logger.warn("LOAD htmlFile: ".concat(htmlFile.toString()));
         FxHelper.runLater(() -> webPane.webEngine().load(htmlFile.toUri().toString()));
     }
 
@@ -342,13 +361,12 @@ public abstract class HtmlViewer extends ItemViewer {
         final JSObject window = webPane.executeScript("window");
         window.setMember("javaApp", javaApp);
         // apply theme
-        webPane.executeScript("document.body.setAttribute('class','".concat(app.visualProvider.toString()).concat("');"));
+        applyBodyTheme();
 
         webPane.setContextMenuBuilder(this::handleWebViewContextMenu);
         //
         position(navigatePos);
         //
-//        System.out.println("load htmlDocFile used time: " + (System.currentTimeMillis() - st) + ", " + htmlDoc);
         if (null != loadingLayerHandler) {
             loadingLayerHandler.run();
             loadingLayerHandler = null;
@@ -510,7 +528,7 @@ public abstract class HtmlViewer extends ItemViewer {
                 "jquery.isinviewport.js", "jquery.scrollto.js",
 //                "jquery.highlight.js", "jquery.highlight.finder.js",
                 "jquery.mark.js", "jquery.mark.finder.js",
-//                "popper.min.js", "tippy-bundle.umd.min.js",
+                "popper.min.js", "tippy-bundle.umd.min.js",
                 "rangy-core.js", "rangy-serializer.js",
                 "app.css", "app.js"
         };

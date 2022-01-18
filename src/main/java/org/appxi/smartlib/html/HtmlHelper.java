@@ -1,7 +1,21 @@
 package org.appxi.smartlib.html;
 
-abstract class Utils {
-    private Utils() {
+import org.appxi.util.DigestHelper;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+
+public abstract class HtmlHelper {
+    public static final String headings = "h1,h2,h3,h4,h5,h6";
+    public static final Set<String> headingTags = Set.of(headings.split(","));
+
+    private HtmlHelper() {
     }
 
     public static String escapeJavaStyleString(String str, boolean escapeSingleQuote, boolean escapeForwardSlash) {
@@ -74,5 +88,57 @@ abstract class Utils {
             }
         }
         return out.toString();
+    }
+
+    public static String encodeURI(String str) {
+        return URLEncoder.encode(str, StandardCharsets.UTF_8);
+    }
+
+    public static String decodeURI(String str) {
+        return URLDecoder.decode(str, StandardCharsets.UTF_8);
+    }
+
+    public static void inlineFootnotes(Element element) {
+        Elements footnotes = element.select("p > a:first-child:matches(\\[\\d+\\])");
+        Map<String, String> footnotesMap = new HashMap<>(footnotes.size());
+
+        for (int i = footnotes.size() - 1; i >= 0; i--) {
+            Element ele = footnotes.get(i);
+            String key = ele.text();
+            if (footnotesMap.containsKey(key)) continue;
+
+            Element elePrt = ele.parent();
+            elePrt.remove();
+            ele.remove();
+            footnotesMap.put(key, elePrt.text().strip());
+        }
+        if (footnotesMap.isEmpty()) return;
+        //
+        element.select("a:matches(\\[\\d+\\])").forEach(ele -> {
+            String ref = ele.attr("data-note");
+            if (!ref.isEmpty()) ref = ref.substring(1);
+            if (!ref.isEmpty()) ref = "[".concat(ref).concat("]");
+            else ref = ele.text();
+            //
+            String val = footnotesMap.remove(ref);
+            if (null != val) {
+                ele.attr("data-note", HtmlHelper.encodeURI(val));
+                ele.id("temp-".concat(DigestHelper.uid()));
+                ele.empty();
+            }
+        });
+        //
+        if (footnotesMap.isEmpty()) {
+            Element ele = element.select("> div > hr").last();
+            if (null != ele) {
+                ele = ele.parent();
+                if (null != ele && ele == ele.parent().children().last())
+                    ele.remove();
+            }
+
+            ele = element.select("> hr").last();
+            if (null != ele && ele == ele.parent().children().last())
+                ele.remove();
+        }
     }
 }

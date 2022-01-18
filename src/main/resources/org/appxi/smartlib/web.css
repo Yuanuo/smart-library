@@ -94,3 +94,10 @@ body > article > hr {
 .theme-dark .tippy-arrow::before {
     color: #666 !important;
 }
+
+a[data-note]::before {
+    content:"✱";
+    font-size: 85%;
+    font-weight: 600;
+    color: #20b771;
+}

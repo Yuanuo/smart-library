@@ -85,7 +85,7 @@ public class RecentViewsController extends WorkbenchViewController {
 
     private void saveRecentViews() {
         final Preferences recents = createRecentViews(false);
-        workbench.getMainViewsTabs().forEach(tab -> {
+        workbench.mainViews.getTabs().forEach(tab -> {
             if (tab.getUserData() instanceof ItemViewer itemView) {
                 recents.setProperty(itemView.item.getPath(),
                         String.valueOf(itemView.item.provider.providerId())

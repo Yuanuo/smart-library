@@ -77,7 +77,7 @@ abstract class TikaProvider extends AbstractProvider {
             mainPiece.title = item.getName();
             //
             Piece piece = mainPiece.clone();
-            piece.id = DigestHelper.uid();
+            piece.id = DigestHelper.uid62s();
             piece.title = mainPiece.title;
             piece.field("title_txt_aio", piece.title);
             piece.field("title_txt_en", AppContext.ascii(piece.title));
@@ -87,6 +87,11 @@ abstract class TikaProvider extends AbstractProvider {
             result.add(piece);
             return result;
         };
+    }
+
+    @Override
+    public Consumer<Item> getToucher() {
+        return null;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -110,7 +115,7 @@ abstract class TikaProvider extends AbstractProvider {
             body.html(extractedText);
         }
         // fill id for elements
-        body.traverse(new HtmlRepairer().withMost());
+        body.traverse(new HtmlRepairer(1).withMost());
         //
         final StringBuilder buff = new StringBuilder();
         buff.append("<!DOCTYPE html><html lang=\"");
@@ -158,7 +163,7 @@ abstract class TikaProvider extends AbstractProvider {
         return buff.toString();
     }
 
-    private static final String VERSION = "22.01.01";
+    private static final String VERSION = "22.01.10";
 
     public String toViewableHtmlFile(Item item, Supplier<Element> bodySupplier, Function<Element, Object> bodyWrapper, String... includes) {
         final StringBuilder cacheInfo = new StringBuilder();

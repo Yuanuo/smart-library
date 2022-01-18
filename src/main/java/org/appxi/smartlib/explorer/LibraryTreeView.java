@@ -4,10 +4,8 @@ import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TreeItem;
-import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
-import javafx.scene.input.MouseButton;
 import org.appxi.javafx.app.BaseApp;
 import org.appxi.javafx.control.TreeViewEx;
 import org.appxi.javafx.visual.MaterialIcon;
@@ -28,8 +26,6 @@ class LibraryTreeView extends TreeViewEx<Item> {
     final WorkbenchPane workbench;
     final LibraryExplorer explorer;
 
-    private ContextMenu contextMenu;
-
     public LibraryTreeView(LibraryExplorer explorer) {
         super();
         this.app = explorer.app;
@@ -46,16 +42,8 @@ class LibraryTreeView extends TreeViewEx<Item> {
             else if (null != item.provider.getViewer())
                 app.eventBus.fireEvent(new ItemEvent(ItemEvent.VIEWING, item));
         });
-
         //
         this.setCellFactory(new LibraryTreeCell());
-        // dynamic context-menu
-        this.setOnContextMenuRequested(this::handleOnContextMenuRequested);
-        // hide context-menu
-        this.setOnMousePressed(event -> {
-            if (event.getButton() != MouseButton.SECONDARY && null != contextMenu && contextMenu.isShowing())
-                contextMenu.hide();
-        });
         //
         this.addEventHandler(KeyEvent.KEY_RELEASED, event -> {
             if (event.getCode() == KeyCode.F2) { // rename
@@ -65,7 +53,8 @@ class LibraryTreeView extends TreeViewEx<Item> {
         });
     }
 
-    private void handleOnContextMenuRequested(ContextMenuEvent event) {
+    @Override
+    protected void handleOnContextMenuRequested() {
         final LibraryTreeItem treeItem = (LibraryTreeItem) this.getSelectionModel().getSelectedItem();
         final Item item = null == treeItem ? null : treeItem.getValue();
         final List<MenuItem> menuItems = new ArrayList<>(16);
@@ -133,20 +122,17 @@ class LibraryTreeView extends TreeViewEx<Item> {
         menuItems.add(restore);
         // ---
         menuItems.add(new SeparatorMenuItem());
+        //
+        final MenuItem touch = new MenuItem("接触");
+        touch.setGraphic(MaterialIcon.TOUCH_APP.graphic());
+        touch.setOnAction(e -> ItemActions.touch(null != item ? item : root().getValue()));
+        menuItems.add(touch);
         // reindex
         if (null != item) {
             final MenuItem reindex = new MenuItem("重建索引");
             reindex.setGraphic(MaterialIcon.FIND_REPLACE.graphic());
             reindex.setOnAction(e -> ItemActions.reindex(item));
             menuItems.add(reindex);
-            // ---
-//            if (item.provider.getTouch() != null) {
-//                final MenuItem menuItem = new MenuItem("接触");
-//                menuItem.setGraphic(MaterialIcon.TOUCH_APP.graphic());
-//                menuItem.setOnAction(e -> item.provider.getTouch().accept(item, this));
-//                menuItems.add(menuItem);
-//            }
-            // ---
         } else {
             final MenuItem reindex = new MenuItem("重建全部索引");
             reindex.setGraphic(MaterialIcon.FIND_REPLACE.graphic());
@@ -158,6 +144,8 @@ class LibraryTreeView extends TreeViewEx<Item> {
             deleteAll.setOnAction(e -> ItemActions.delete(root().getValue()));
             menuItems.add(deleteAll);
         }
+        // ---
+        menuItems.add(new SeparatorMenuItem());
         //
         final MenuItem reload = new MenuItem("刷新");
         reload.setGraphic(MaterialIcon.SYNC.graphic());
@@ -195,11 +183,7 @@ class LibraryTreeView extends TreeViewEx<Item> {
         menuItems.add(unselect);
 
         //
-        event.consume();
-        if (null != contextMenu && contextMenu.isShowing())
-            contextMenu.hide();
-        contextMenu = new ContextMenu(menuItems.toArray(new MenuItem[0]));
-        contextMenu.show(this, event.getScreenX(), event.getScreenY());
+        this.setContextMenu(new ContextMenu(menuItems.toArray(new MenuItem[0])));
     }
 
     public LibraryTreeItem root() {

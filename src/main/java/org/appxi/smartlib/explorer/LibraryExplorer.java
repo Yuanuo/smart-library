@@ -1,8 +1,6 @@
 package org.appxi.smartlib.explorer;
 
-import javafx.event.Event;
 import javafx.scene.control.Button;
-import javafx.scene.control.Tab;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeItem;
 import javafx.scene.input.KeyCode;
@@ -155,16 +153,9 @@ public class LibraryExplorer extends WorkbenchSideViewController {
                 node.getChildren().clear();
             else node.getParent().getChildren().remove(node);
             // remove from main-views
-            workbench.getMainViewsTabs().forEach(tab -> {
-                if (!(tab.getUserData() instanceof ItemController itemView))
-                    return;
-                if (!itemView.item.getPath().startsWith(event.item.getPath()))
-                    return;
-                FxHelper.runLater(() -> tab.getTabPane().getTabs().remove(tab));
-                if (tab.getOnClosed() != null) {
-                    Event.fireEvent(tab, new Event(Tab.CLOSED_EVENT));
-                }
-            });
+            FxHelper.runLater(() -> workbench.mainViews.removeTabs(tab ->
+                    tab.getUserData() instanceof ItemController c
+                    && c.item.getPath().startsWith(event.item.getPath())));
             // remove from recents
             Set.copyOf(UserPrefs.recents.getPropertyKeys()).forEach(k -> {
                 if (k.startsWith(event.item.getPath())) {

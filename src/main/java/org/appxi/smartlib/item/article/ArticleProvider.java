@@ -3,10 +3,10 @@ package org.appxi.smartlib.item.article;
 import javafx.scene.Node;
 import javafx.scene.control.TreeItem;
 import org.appxi.javafx.visual.MaterialIcon;
-import org.appxi.prefs.UserPrefs;
 import org.appxi.search.solr.Piece;
 import org.appxi.smartlib.App;
 import org.appxi.smartlib.AppContext;
+import org.appxi.smartlib.html.HtmlHelper;
 import org.appxi.smartlib.item.AbstractProvider;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEditor;
@@ -22,6 +22,7 @@ import org.jsoup.select.Elements;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -64,10 +65,7 @@ public class ArticleProvider extends AbstractProvider {
     @Override
     public Function<Item, ItemEditor> getEditor() {
         if (null != this.editor) return this.editor;
-        return this.editor = item ->
-                "simple".equals(UserPrefs.prefs.getString("item.article.editor", "advanced"))
-                        ? new ArticleEditorOld(item, App.app().workbench())
-                        : new ArticleEditor(item, App.app().workbench());
+        return this.editor = item -> new ArticleEditor(item, App.app().workbench());
     }
 
     private Function<Item, ItemViewer> viewer;
@@ -77,43 +75,6 @@ public class ArticleProvider extends AbstractProvider {
         if (null != this.viewer) return this.viewer;
         return this.viewer = item -> new ArticleViewer(item, App.app().workbench());
     }
-
-//    private BiConsumer<Item, LibraryTreeView> itemActionForTouch;
-//    public BiConsumer<Item, LibraryTreeView> getItemActionForTouch() {
-//        if (null != this.itemActionForTouch)
-//            return this.itemActionForTouch;
-//
-//        return this.itemActionForTouch = (item, treeView) -> {
-//            if (null == treeView) {
-//                ArticleDocument document = new ArticleDocument(item);
-//                document.getDocument();
-//                document.save();
-//                return;
-//            }
-//            final Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-//            alert.setHeaderText("接触");
-//            alert.setContentText("""
-//                    接触：
-//
-//                    """
-//                    .concat(item.toStringWithType()));
-//            alert.initOwner(App.app().getPrimaryStage());
-//            Optional<ButtonType> optional = alert.showAndWait().filter(t -> t == ButtonType.OK);
-//            if (optional.isEmpty()) return;
-//
-//            AppContext.runBlocking(() -> {
-//                try {
-//                    ArticleDocument document = new ArticleDocument(item);
-//                    document.getDocument();
-//                    document.save();
-//                } catch (Throwable t) {
-//                    AppContext.toastError(t.getMessage());
-//                    return;
-//                }
-//                AppContext.toast("已接触");
-//            });
-//        };
-//    }
 
     private Function<Item, List<Piece>> indexer;
 
@@ -171,20 +132,21 @@ public class ArticleProvider extends AbstractProvider {
             for (int j = 0; j < documents.size(); j++) {
                 ArticleDocument document = documents.get(j);
                 Piece piece = mainPiece.clone();
-                piece.id = DigestHelper.uid();
                 // detect topic title
-                final Elements headings = document.body().select("h1, h2, h3, h4, h5, h6");
+                final Elements headings = document.body().select(HtmlHelper.headings);
                 if (articleDocumentOnly) {
+                    piece.id = articleDocument.html().id();
                     piece.title = mainPiece.title;
                 } else {
+                    piece.id = DigestHelper.uid62s();
                     piece.type = "topic";
                     piece.title = "<HR but no HEADING>";
                     Optional.ofNullable(headings.first())
                             .ifPresent(h -> piece.setTitle(h.text().strip()).field("anchor_s", h.id()));
                     if (j == 0) {
-                        if (mainPiece.title.endsWith(piece.title))
+                        if (mainPiece.title.startsWith(piece.title) || mainPiece.title.endsWith(piece.title))
                             piece.setTitle(mainPiece.title).setType("article");
-                        else if (piece.title.endsWith(mainPiece.title))
+                        else if (piece.title.startsWith(mainPiece.title) || piece.title.endsWith(mainPiece.title))
                             piece.setType("article");
                         else result.add(createPiece(mainPiece.path, null, mainPiece.title, "topic"));
                     }
@@ -216,7 +178,7 @@ public class ArticleProvider extends AbstractProvider {
     private Piece createPiece(String path, String anchor, String title, String type) {
         Piece piece = Piece.of();
         piece.provider = providerId();
-        piece.id = DigestHelper.uid();
+        piece.id = DigestHelper.uid62s();
         piece.type = type;
         piece.path = path;
         if (null != anchor) {
@@ -235,5 +197,27 @@ public class ArticleProvider extends AbstractProvider {
         final List<String> paths = StringHelper.getFlatPaths(StringHelper.join("/", names));
         final String grouped = StringHelper.concat(".categories/", group, "/");
         paths.forEach(s -> piece.categories.add(grouped.concat(s)));
+    }
+
+    private Consumer<Item> toucher;
+
+    @Override
+    public Consumer<Item> getToucher() {
+        if (null != this.toucher) return this.toucher;
+        return this.toucher = item -> {
+            ArticleDocument document = new ArticleDocument(item);
+            //
+            if (document.getMetadata("library").isEmpty()) document.setMetadata("library", "unknown");
+            //
+            if (document.getMetadata("catalog").isEmpty()) document.setMetadata("catalog", "unknown");
+            //
+            if (document.getMetadata("period").isEmpty()) document.setMetadata("period", "unknown");
+            //
+            if (document.getMetadata("author").isEmpty()) document.setMetadata("author", "unknown");
+
+            HtmlHelper.inlineFootnotes(document.body());
+
+            document.save();
+        };
     }
 }

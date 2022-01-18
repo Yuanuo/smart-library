@@ -27,7 +27,6 @@ import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.App;
-import org.appxi.smartlib.AppContext;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
 import org.appxi.util.FileHelper;
@@ -50,7 +49,7 @@ public abstract class SimpleEditor extends HtmlEditor {
     protected WebEngine webEngine() {
         if (null == this.webView) {
             this.webView = htmlEditor.webView();
-            attachAdvancedPasteShortcuts(this.webView);
+            attachAdvancedPasteShortcuts(this.webView, () -> webView.isFocused());
         }
         return this.htmlEditor.webEngine();
     }
@@ -90,7 +89,7 @@ public abstract class SimpleEditor extends HtmlEditor {
             saveEditorContent(this.htmlEditor.getHtmlText());
             FxHelper.runLater(() -> {
                 documentChanges.set(0);
-                AppContext.toast("已保存");
+                app.toast("已保存");
                 htmlEditor.webView().requestFocus();
             });
             //
@@ -140,7 +139,7 @@ public abstract class SimpleEditor extends HtmlEditor {
                         document.selection.createRange().pasteHTML(html);
                     }
                 }insertHtmlAtCursor('"""
-                .concat(Objects.requireNonNull(Utils.escapeJavaStyleString(html, true, true)))
+                .concat(Objects.requireNonNull(HtmlHelper.escapeJavaStyleString(html, true, true)))
                 .concat("')"));
     }
 
@@ -175,14 +174,14 @@ public abstract class SimpleEditor extends HtmlEditor {
                     final Item oldItem = item.clone(), newItem = item.clone();
                     final String msg = org.appxi.smartlib.dao.DataApi.dataAccess().rename(newItem, newName);
                     if (msg != null) {
-                        AppContext.toastError(msg);
+                        app.toastError(msg);
                         return;
                     }
                     FxHelper.runLater(() -> {
                         item.setName(newItem.getName()).setPath(newItem.getPath());
                         //
                         App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.RENAMED, item, oldItem));
-                        AppContext.toast("重命名成功");
+                        app.toast("重命名成功");
                     });
                 });
             }

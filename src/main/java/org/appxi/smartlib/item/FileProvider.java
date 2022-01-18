@@ -48,25 +48,8 @@ public final class FileProvider extends AbstractProvider {
         return null;
     }
 
-
-//    private Consumer<Item> creator;
-//
-//    //    @Override
-//    public Consumer<Item> getCreatorA() {
-//        if (null != this.creator) return this.creator;
-//        return this.creator = parent -> {
-//            String str = DateHelper.format2(new Date()).replaceAll("[\s:]", "-");
-//
-//            Item item = new Item(this);
-//            item.setName(str);
-//            item.setPath(parent.isRoot() ? str : parent.getPath().concat("/").concat(str));
-//            //
-//            final String msg = DataApi.dataAccess().create(item);
-//            if (null != msg) {
-//                AppContext.toastError(msg);
-//                return;
-//            }
-//            App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.CREATED, item, parent));
-//        };
-//    }
+    @Override
+    public Consumer<Item> getToucher() {
+        return null;
+    }
 }

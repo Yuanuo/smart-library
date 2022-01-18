@@ -13,7 +13,6 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import org.appxi.holder.BoolHolder;
 import org.appxi.smartlib.App;
-import org.appxi.smartlib.AppContext;
 import org.appxi.smartlib.search.Searchable;
 import org.appxi.util.NumberHelper;
 import org.appxi.util.StringHelper;
@@ -233,7 +232,7 @@ class ArticleMetadata extends DialogPane {
             document.setSearchable(searchable.getSelectionModel().getSelectedItem());
 
             //
-            AppContext.toast("数据已修改，请手动保存生效！");
+            App.app().toast("数据已修改，请手动保存生效！");
         });
         return result.value;
     }

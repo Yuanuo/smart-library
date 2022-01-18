@@ -18,6 +18,8 @@ import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
 import org.appxi.util.DateHelper;
 import org.appxi.util.FileHelper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.awt.*;
 import java.io.File;
@@ -29,6 +31,8 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 public class ItemActions {
+    private static final Logger logger = LoggerFactory.getLogger(ItemActions.class);
+
     static void rename(Item item) {
         final TextInputDialog dialog = new TextInputDialog(item.getName());
         dialog.setTitle("重命名");
@@ -44,7 +48,7 @@ public class ItemActions {
                 final Item oldItem = item.clone(), newItem = item.clone();
                 final String msg = DataApi.dataAccess().rename(newItem, newName);
                 if (msg != null) {
-                    AppContext.toastError(msg);
+                    App.app().toastError(msg);
                     return;
                 }
                 // update indexes
@@ -76,7 +80,7 @@ public class ItemActions {
         dialog.showAndWait().filter(t -> t == ButtonType.OK).ifPresent(t -> ProgressLayer.showAndWait(App.app().getPrimaryGlass(), progressLayer -> {
             final String msg = DataApi.dataAccess().delete(item, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
             if (msg != null) {
-                AppContext.toastError(msg);
+                App.app().toastError(msg);
                 return;
             }
             // update indexes
@@ -99,7 +103,7 @@ public class ItemActions {
         final Runnable moving = () -> ProgressLayer.showAndWait(App.app().getPrimaryGlass(), progressLayer -> {
             final String msg = DataApi.dataAccess().move(newItem, newParent);
             if (msg != null) {
-                AppContext.toastError(msg);
+                App.app().toastError(msg);
                 return;
             }
 
@@ -166,10 +170,10 @@ public class ItemActions {
                 .ifPresent(t -> ProgressLayer.showAndWait(App.app().getPrimaryGlass(), progressLayer -> {
                     final String msg = DataApi.dataAccess().reindex(item, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
                     if (msg != null) {
-                        AppContext.toastError(msg);
+                        App.app().toastError(msg);
                         return;
                     }
-                    AppContext.toast("已重建索引");
+                    App.app().toast("已重建索引");
                 }));
     }
 
@@ -188,7 +192,7 @@ public class ItemActions {
         if (null == file)
             return;
         if (!file.getParentFile().canWrite()) {
-            AppContext.toastError("目录不能写入，请重新选择！");
+            App.app().toastError("目录不能写入，请重新选择！");
             return;
         }
         UserPrefs.prefs.setProperty("exchange.dir", file.getParent());
@@ -201,13 +205,13 @@ public class ItemActions {
             try (ZipOutputStream zipOutput = new ZipOutputStream(new FileOutputStream(finalFile))) {
                 final String msg = DataApi.dataAccess().backup(item, zipOutput, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
                 if (null != msg) {
-                    AppContext.toastError(msg);
+                    App.app().toastError(msg);
                     return;
                 }
-                AppContext.toast("已导出");
+                App.app().toast("已导出");
             } catch (Exception e) {
-                e.printStackTrace();
-                AppContext.toastError(e.getMessage());
+                logger.warn("backup", e);
+                App.app().toastError(e.getMessage());
             }
         });
     }
@@ -232,29 +236,62 @@ public class ItemActions {
             try (ZipFile zipFile = new ZipFile(file)) {
                 final String msg = DataApi.dataAccess().restore(item, zipFile, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
                 if (null != msg) {
-                    AppContext.toastError(msg);
+                    App.app().toastError(msg);
                     return;
                 }
                 // update indexes
                 DataApi.dataAccess().reindex(item, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
 
-                AppContext.toast("已导入");
+                App.app().toast("已导入");
                 App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.RESTORED, item));
             } catch (Exception e) {
-                e.printStackTrace();
-                AppContext.toastError(e.getMessage());
+                logger.warn("restore", e);
+                App.app().toastError(e.getMessage());
             }
         }));
     }
 
-    public static void update(Item item, InputStream content) {
+    public static void setContent(Item item, InputStream content) {
         final String msg = DataApi.dataAccess().setContent(item, content);
         if (msg != null) {
-            AppContext.toastError(msg);
+            App.app().toastError(msg);
             return;
         }
         // update indexes
         DataApi.dataAccess().reindex(item, (d, s) -> {
         });
+    }
+
+    public static void touch(Item item) {
+        final Alert dialog = new Alert(Alert.AlertType.CONFIRMATION);
+        dialog.setHeaderText("接触数据");
+        dialog.setContentText("""
+                此功能用于修整异常数据，若无必要请勿使用！！
+
+                将处理以下数据项及所有子项的索引数据：
+                                
+                """
+                .concat(item.typedPath()));
+        dialog.getDialogPane().setPrefWidth(800);
+        dialog.initOwner(App.app().getPrimaryStage());
+
+        dialog.showAndWait().filter(t -> t == ButtonType.OK)
+                .ifPresent(t -> ProgressLayer.showAndWait(App.app().getPrimaryGlass(), progressLayer -> {
+                    final String msg = DataApi.dataAccess().walk(item, itm -> {
+                        if (null == itm || null == itm.provider || itm.provider.isDirectory()) return;
+                        if (null == itm.provider.getToucher()) return;
+                        try {
+                            Platform.runLater(() -> progressLayer.message.setText(itm.typedPath()));
+                            itm.provider.getToucher().accept(itm);
+                        } catch (Throwable ex) {
+                            logger.warn("touch", ex);
+                        }
+                    });
+                    if (msg != null) {
+                        App.app().toastError(msg);
+                        return;
+                    }
+                    App.app().toast("已接触");
+                }));
     }
 }

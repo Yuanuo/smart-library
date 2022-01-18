@@ -60,7 +60,7 @@ public class SearchController extends WorkbenchSideToolController {
 
     private void openSearcherWithText(String text, Item scope) {
         // 优先查找可用的搜索视图，以避免打开太多未使用的搜索视图
-        SearcherController searcher = workbench.getMainViewsTabs().stream()
+        SearcherController searcher = workbench.mainViews.getTabs().stream()
                 .map(tab -> (tab.getUserData() instanceof SearcherController view && view.isNeverSearched()) ? view : null)
                 .filter(Objects::nonNull)
                 .findFirst()

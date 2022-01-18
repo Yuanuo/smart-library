@@ -3,11 +3,13 @@ package org.appxi.smartlib.item.article;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.dao.DataApi;
 import org.appxi.smartlib.explorer.ItemActions;
+import org.appxi.smartlib.html.HtmlHelper;
 import org.appxi.smartlib.html.HtmlRepairer;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.search.Searchable;
 import org.appxi.util.DigestHelper;
 import org.appxi.util.FileHelper;
+import org.appxi.util.NumberHelper;
 import org.appxi.util.StringHelper;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -24,7 +26,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -33,13 +34,14 @@ class ArticleDocument {
 
     Item item;
     private Document document;
+    private long edition = 1;
 
     public ArticleDocument(Item item) {
         this.item = item;
     }
 
     private ArticleDocument(Item item, Document document) {
-        this(item);
+        this.item = item;
         this.document = document;
     }
 
@@ -56,6 +58,11 @@ class ArticleDocument {
         //
         if (null == this.document)
             this.document = Jsoup.parse("");
+
+        Element html = html();
+        if (html.id().isBlank()) html.id(DigestHelper.uid62s());
+        edition = NumberHelper.toLong(html.attr("data-ver"), 1);
+
         //
         item.attr(Searchable.class, Searchable.of(getMetadata("searchable", "all")));
         //
@@ -64,29 +71,31 @@ class ArticleDocument {
 
     protected InputStream getDefaultFileContent() {
         return new ByteArrayInputStream("""
-                <!DOCTYPE html>
-                <html id="${ID}">
+                <!doctype html>
+                <html id="%s">
                 <head>
-                    <meta charset="utf-8">
+                  <meta charset="utf-8">
                 </head>
-                <body><p>
-                </p></body>
+                <body><p></p></body>
                 </html>
-                """.replace("${ID}", DigestHelper.uid("§")).getBytes(StandardCharsets.UTF_8));
+                """.formatted(DigestHelper.uid62s()).getBytes(StandardCharsets.UTF_8));
     }
 
     public ArticleDocument setDocumentBody(String html) {
-        this.document.body().replaceWith(Jsoup.parse(html).body());
+        this.body().replaceWith(Jsoup.parse(html).body());
 
         return this;
     }
 
     public ArticleDocument save() {
         // fill id for elements
-        this.document.body().traverse(new HtmlRepairer().withMost());
+        final HtmlRepairer htmlRepairer = new HtmlRepairer(edition).withMost();
+        this.body().traverse(htmlRepairer);
+        //
+        this.html().attr("data-ver", String.valueOf(htmlRepairer.edition()));
 
         // this.item.attr(ArticleDocument.class, this);
-        ItemActions.update(this.item, new ByteArrayInputStream(this.document.outerHtml().getBytes(StandardCharsets.UTF_8)));
+        ItemActions.setContent(this.item, new ByteArrayInputStream(this.document.outerHtml().getBytes(StandardCharsets.UTF_8)));
 
         return this;
     }
@@ -207,11 +216,14 @@ class ArticleDocument {
         final List<ArticleDocument> result = new ArrayList<>();
         final List<List<Element>> lists = new ArrayList<>();
 
-        Elements children = this.body().children();
+        final Document tmpDocument = getDocument().clone();
+        final Element tmpBody = tmpDocument.body();
+
+        Elements children = tmpBody.children();
         int fromIndex = 0;
         for (int toIndex = 0; toIndex < children.size(); toIndex++) {
             Element element = children.get(toIndex);
-            if ("hr".equals(element.tagName())) {
+            if ("p".equals(element.tagName()) && element.hasAttr("data-pb")) {
                 if (fromIndex == toIndex) continue;
                 lists.add(new ArrayList<>(children.subList(fromIndex, toIndex)));
                 fromIndex = toIndex + 1;
@@ -220,10 +232,9 @@ class ArticleDocument {
         if (fromIndex < children.size())
             lists.add(new ArrayList<>(children.subList(fromIndex, children.size())));
 
-        final Set<String> headings = Set.of("h1", "h2", "h3", "h4", "h5", "h6");
         for (int i = 1; i < lists.size(); i++) {
             List<Element> list = lists.get(i);
-            if (list.stream().takeWhile(ele -> headings.contains(ele.tagName())).findAny().isEmpty()) {
+            if (list.stream().takeWhile(ele -> HtmlHelper.headingTags.contains(ele.tagName())).findAny().isEmpty()) {
                 lists.get(i - 1).addAll(list);
                 lists.remove(i--);
             }
@@ -232,9 +243,9 @@ class ArticleDocument {
         if (lists.size() <= 1) return List.of(this);
 
         lists.forEach(list -> list.forEach(Node::remove));
-        this.body().text("");// clear body for clone
+        tmpBody.text("");// clear body for clone
         lists.forEach(list -> {
-            Document doc = this.document.clone();
+            Document doc = tmpDocument.clone();
             doc.body().appendChildren(list);
             result.add(new ArticleDocument(item, doc));
         });

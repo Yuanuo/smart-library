@@ -30,4 +30,6 @@ public interface ItemProvider {
     Function<Item, ItemViewer> getViewer();
 
     Function<Item, List<Piece>> getIndexer();
+
+    Consumer<Item> getToucher();
 }

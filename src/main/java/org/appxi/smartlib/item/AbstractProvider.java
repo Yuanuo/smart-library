@@ -63,7 +63,7 @@ public abstract class AbstractProvider implements ItemProvider {
                 //
                 final String msg = DataApi.dataAccess().create(item);
                 if (null != msg) {
-                    AppContext.toastError(msg);
+                    App.app().toastError(msg);
                     return;
                 }
                 App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.CREATED, item));
@@ -84,7 +84,7 @@ public abstract class AbstractProvider implements ItemProvider {
             mainPiece.title = item.getName();
             //
             Piece piece = mainPiece.clone();
-            piece.id = DigestHelper.uid();
+            piece.id = DigestHelper.uid62s();
             piece.title = mainPiece.title;
             piece.field("title_txt_aio", piece.title);
             piece.field("title_txt_en", AppContext.ascii(piece.title));

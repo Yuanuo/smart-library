@@ -23,7 +23,6 @@ import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.visual.VisualEvent;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.App;
-import org.appxi.smartlib.AppContext;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
 import org.appxi.util.FileHelper;
@@ -43,7 +42,7 @@ public abstract class AdvancedEditor extends HtmlEditor {
     protected WebEngine webEngine() {
         if (null == this.webView) {
             this.webView = this.webPane.webView();
-            attachAdvancedPasteShortcuts(this.webView);
+            attachAdvancedPasteShortcuts(this.webView, () -> webPane.executeScript("tinymce.activeEditor.hasFocus()"));
         }
         return this.webPane.webEngine();
     }
@@ -51,7 +50,7 @@ public abstract class AdvancedEditor extends HtmlEditor {
     @Override
     protected void insertHtmlAtCursor(String html) {
         webEngine().executeScript("tinymce.activeEditor.insertContent('"
-                .concat(Utils.escapeJavaStyleString(html, true, true))
+                .concat(HtmlHelper.escapeJavaStyleString(html, true, false))
                 .concat("')"));
     }
 
@@ -99,14 +98,14 @@ public abstract class AdvancedEditor extends HtmlEditor {
                 ProgressLayer.showAndWait(getViewport(), progressLayer -> {
                     final String msg = org.appxi.smartlib.dao.DataApi.dataAccess().rename(newItem, newName);
                     if (msg != null) {
-                        AppContext.toastError(msg);
+                        app.toastError(msg);
                         return;
                     }
                     FxHelper.runLater(() -> {
                         item.setName(newItem.getName()).setPath(newItem.getPath());
                         //
                         App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.RENAMED, item, oldItem));
-                        AppContext.toast("重命名成功");
+                        app.toast("重命名成功");
                     });
                 });
             }
@@ -202,8 +201,8 @@ public abstract class AdvancedEditor extends HtmlEditor {
                   contextmenu: 'link image imagetools table',
                   skin: useDarkMode ? 'oxide-dark' : 'oxide',
                   content_css: useDarkMode ? 'dark' : 'default',
-                  content_style: 'body { }, img {max-width:100%;}',
-                  pagebreak_separator: "<!-- pagebreak -->",
+                  content_style: 'a.mce-item-anchor[id^=a-]{display: none} a.mce-item-anchor[data-note]{background:unset;width:auto !important;height:auto !important;} a.mce-item-anchor[data-note]:before{content:"✱";font-size:85%}',
+                  pagebreak_separator: '<p data-pb></p>',
                   pagebreak_split_block: true,
                   fontsize_formats: '0.8rem 0.9rem 1.0rem 1.1rem 1.2rem 1.3rem 1.4rem 1.5rem 1.6rem 1.7rem 1.8rem 2.0rem 2.2rem',
                   lineheight_formats: '1 1.1 1.2 1.3 1.4 1.5 2',
@@ -238,11 +237,13 @@ public abstract class AdvancedEditor extends HtmlEditor {
         final JSObject window = (JSObject) webEngine().executeScript("window");
         window.setMember("javaApp", javaApp);
 
+        webView.setContextMenuEnabled(false);
+
         String editorContent = cachedEditorContent != null ? cachedEditorContent : loadEditorContent();
         cachedEditorContent = null;
         if (null != editorContent && editorContent.length() > 0)
             webEngine().executeScript("setTimeout(function(){tinymce.activeEditor.setContent('"
-                    .concat(Utils.escapeJavaStyleString(editorContent, true, false))
+                    .concat(HtmlHelper.escapeJavaStyleString(editorContent, true, false))
                     .concat("')}, 100)"));
         if (cachedEditorIsDirty)
             webEngine().executeScript("setTimeout(function(){tinymce.activeEditor.setDirty(true)}, 120)");
@@ -251,17 +252,20 @@ public abstract class AdvancedEditor extends HtmlEditor {
     }
 
     @Override
-    protected void onThemeChanged(VisualEvent event) {
+    protected void onSetAppStyle(VisualEvent event) {
         if (null == this.webView) return;
-        cachedEditorIsDirty = (boolean) webEngine().executeScript("tinymce.activeEditor.isDirty()");
-        cachedEditorContent = (String) webEngine().executeScript("tinymce.activeEditor.getContent()");
-        loadDefaultEditor();
-        super.onThemeChanged(event);
+        FxHelper.runLater(() -> {
+            cachedEditorIsDirty = (boolean) webEngine().executeScript("tinymce.activeEditor.isDirty()");
+            cachedEditorContent = (String) webEngine().executeScript("tinymce.activeEditor.getContent()");
+            loadDefaultEditor();
+            super.onSetAppStyle(event);
+        });
     }
 
     @Override
     public void onViewportClosing(boolean selected) {
         super.onViewportClosing(selected);
+        if (null != webPane) webPane.release();
         if (null != this.nameChangeListener)
             item.name.removeListener(this.nameChangeListener);
     }
@@ -288,15 +292,15 @@ public abstract class AdvancedEditor extends HtmlEditor {
         public void save(String content) {
             ProgressLayer.showAndWait(app.getPrimaryGlass(), progressLayer -> {
                 saveEditorContent(content);
-                AppContext.toast("已保存");
+                app.toast("已保存");
                 //
                 App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.UPDATED, item));
             });
         }
 
-        public void setClipboardData(String mime, String data) {
+        public void setClipboardText(String text) {
 //            System.out.println(mime + " >>> " + data);
-            Platform.runLater(() -> Clipboard.getSystemClipboard().setContent(Map.of(DataFormat.lookupMimeType(mime), data)));
+            Platform.runLater(() -> Clipboard.getSystemClipboard().setContent(Map.of(DataFormat.PLAIN_TEXT, text)));
         }
     }
 

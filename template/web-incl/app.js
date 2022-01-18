@@ -98,6 +98,13 @@ $(document).ready(function () {
     document.body.onresize = handleOnResizeBody;
     handleOnPrettyIndent();
     if (rangy) rangy.init();
+
+    tippy('a[data-note]', {
+        allowHTML: true,
+        animation: false,
+        placement: 'top',
+        content: (ele) => decodeURIComponent(ele.getAttribute('data-note'))
+    });
 });
 
 function getValidSelection() {

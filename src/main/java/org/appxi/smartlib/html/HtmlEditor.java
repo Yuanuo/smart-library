@@ -1,12 +1,12 @@
 package org.appxi.smartlib.html;
 
+import javafx.application.Platform;
 import javafx.concurrent.Worker;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.event.EventHandler;
 import javafx.scene.Node;
 import javafx.scene.image.Image;
 import javafx.scene.input.Clipboard;
-import javafx.scene.input.DataFormat;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.web.WebEngine;
@@ -24,7 +24,6 @@ import org.appxi.smartlib.AppContext;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEditor;
 import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.NodeVisitor;
 
@@ -34,6 +33,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Base64;
 import java.util.HashMap;
@@ -41,11 +41,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 public abstract class HtmlEditor extends ItemEditor {
-    private final EventHandler<VisualEvent> onThemeChanged = this::onThemeChanged;
+    private final EventHandler<VisualEvent> onSetAppStyle = this::onSetAppStyle;
     private final EventHandler<AppEvent> onAppEventStopping = this::onAppEventStopping;
-    private final EventHandler<VisualEvent> onWebZoomChanged = this::onWebZoomChanged;
+    private final EventHandler<VisualEvent> onSetWebFont = this::onSetWebFont;
 
     protected WebView webView;
     protected Runnable progressLayerHandler;
@@ -58,9 +60,9 @@ public abstract class HtmlEditor extends ItemEditor {
 
     @Override
     public void initialize() {
-        app.eventBus.addEventHandler(VisualEvent.STYLE_CHANGED, onThemeChanged);
+        app.eventBus.addEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
         app.eventBus.addEventHandler(AppEvent.STOPPING, onAppEventStopping);
-        app.eventBus.addEventHandler(VisualEvent.WEB_ZOOM_CHANGED, onWebZoomChanged);
+        app.eventBus.addEventHandler(VisualEvent.SET_WEB_FONT, onSetWebFont);
     }
 
     @Override
@@ -73,10 +75,13 @@ public abstract class HtmlEditor extends ItemEditor {
                 //
                 webEngine().getLoadWorker().stateProperty().addListener((o, ov, state) -> {
                     if (state == Worker.State.SUCCEEDED) onWebEngineLoadSucceeded();
+                    else if (state == Worker.State.FAILED) onWebEngineLoadFailed();
                 });
                 //
                 onWebEngineLoading();
             }));
+        } else if (null != webView) {
+            Platform.runLater(() -> webView.requestFocus());
         }
     }
 
@@ -84,12 +89,16 @@ public abstract class HtmlEditor extends ItemEditor {
 
     protected void onWebEngineLoadSucceeded() {
         // apply theme
-        webEngine().executeScript("document.body.setAttribute('class','".concat(app.visualProvider.toString()).concat("')"));
+        applyBodyTheme();
 
         if (null != progressLayerHandler) {
             progressLayerHandler.run();
             progressLayerHandler = null;
         }
+    }
+
+    protected void onWebEngineLoadFailed() {
+        //
     }
 
     @Override
@@ -100,16 +109,23 @@ public abstract class HtmlEditor extends ItemEditor {
     @Override
     public void onViewportClosing(boolean selected) {
         saveUserExperienceData();
-        app.eventBus.removeEventHandler(VisualEvent.STYLE_CHANGED, onThemeChanged);
+        app.eventBus.removeEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
         app.eventBus.removeEventHandler(AppEvent.STOPPING, onAppEventStopping);
-        app.eventBus.removeEventHandler(VisualEvent.WEB_ZOOM_CHANGED, onWebZoomChanged);
+        app.eventBus.removeEventHandler(VisualEvent.SET_WEB_FONT, onSetWebFont);
+        webView = null;
     }
 
     protected void applyTheme(VisualEvent event) {
         if (null == this.webView) return;
 
         final RawHolder<byte[]> allBytes = new RawHolder<>();
-        allBytes.value = (":root {--zoom: " + app.visualProvider.webZoom() + " !important;}").getBytes();
+        allBytes.value = """
+                :root {
+                    --font-family: tibetan, "%s", AUTO !important;
+                    --zoom: %.2f !important;
+                }
+                """.formatted(app.visualProvider.webFontName(), app.visualProvider.webFontSize())
+                .getBytes(StandardCharsets.UTF_8);
         Consumer<InputStream> consumer = stream -> {
             try (BufferedInputStream in = new BufferedInputStream(stream)) {
                 int pos = allBytes.value.length;
@@ -127,11 +143,16 @@ public abstract class HtmlEditor extends ItemEditor {
         String cssData = "data:text/css;charset=utf-8;base64," + Base64.getMimeEncoder().encodeToString(allBytes.value);
         FxHelper.runLater(() -> {
             webEngine().setUserStyleSheetLocation(cssData);
-            webEngine().executeScript("document.body.setAttribute('class','".concat(app.visualProvider.toString()).concat("')"));
+            applyBodyTheme();
         });
     }
 
-    protected void onThemeChanged(VisualEvent event) {
+    private void applyBodyTheme() {
+        if (null == this.webView) return;
+        webEngine().executeScript("document.body.setAttribute('class','".concat(app.visualProvider.toString()).concat("')"));
+    }
+
+    protected void onSetAppStyle(VisualEvent event) {
         this.applyTheme(event);
     }
 
@@ -140,7 +161,7 @@ public abstract class HtmlEditor extends ItemEditor {
         saveUserExperienceData();
     }
 
-    protected void onWebZoomChanged(VisualEvent event) {
+    protected void onSetWebFont(VisualEvent event) {
         if (null == this.webView) return;
         saveUserExperienceData();
         this.applyTheme(null);
@@ -150,21 +171,28 @@ public abstract class HtmlEditor extends ItemEditor {
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
 
-    protected final void attachAdvancedPasteShortcuts(Node node) {
+    protected final void attachAdvancedPasteShortcuts(Node node, Supplier<Boolean> editorFocusedSupplier) {
         if (null == node) return;
         node.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (event.isShortcutDown() && event.isShiftDown() && event.getCode() == KeyCode.V) {
+                if (!editorFocusedSupplier.get()) return;
                 final Clipboard clipboard = Clipboard.getSystemClipboard();
-                if (clipboard.hasContent(DataFormat.HTML)) {
+                if (clipboard.hasHtml()) {
                     event.consume();
-                    Document dom = Jsoup.parse(clipboard.getHtml());
-                    dom.traverse(new NodeVisitor() {
+                    final Element body = Jsoup.parse(clipboard.getHtml()).body();
+                    body.traverse(new NodeVisitor() {
                         @Override
                         public void head(org.jsoup.nodes.Node node, int depth) {
                             if (node instanceof Element ele) {
-                                if (ele.is("img"))
+                                ele.removeAttr("id");
+                                //
+                                if (ele.is("img")) {
                                     wrapImgSrcToBase64Src(ele, true);
-                                else List.copyOf(ele.attributes().asList()).forEach(a -> ele.removeAttr(a.getKey()));
+                                    return;
+                                }
+                                if (HtmlHelper.headingTags.contains(ele.tagName()))
+                                    ele.tagName("p");
+                                ele.clearAttributes();
                             }
                         }
 
@@ -172,24 +200,36 @@ public abstract class HtmlEditor extends ItemEditor {
                         public void tail(org.jsoup.nodes.Node node, int depth) {
                         }
                     });
-                    insertHtmlAtCursor(dom.body().html());
+                    HtmlHelper.inlineFootnotes(body);
+                    insertHtmlAtCursor(body.html());
+                } else if (clipboard.hasString()) {
+                    event.consume();
+                    String str = clipboard.getString().lines()
+                            .map(s -> "<p>".concat(s.strip()).concat("</p>"))
+                            .collect(Collectors.joining("\n"));
+                    final Element body = Jsoup.parse(str).body();
+                    HtmlHelper.inlineFootnotes(body);
+                    insertHtmlAtCursor(body.html());
                 }
             } else if (event.isShortcutDown() && event.getCode() == KeyCode.V) {
+                if (!editorFocusedSupplier.get()) return;
                 final Clipboard clipboard = Clipboard.getSystemClipboard();
-                if (clipboard.hasContent(DataFormat.FILES)) {
+                if (clipboard.hasFiles()) {
                     event.consume();
                     for (File file : clipboard.getFiles()) {
                         if (FilenameUtils.isExtension(file.getName().toLowerCase(), "jpg", "png", "jpeg", "gif")) {
                             insertImageFileAtCursor(file);
                         }
                     }
-                } else if (clipboard.hasContent(DataFormat.HTML)) {
+                } else if (clipboard.hasHtml()) {
                     event.consume();
-                    Document dom = Jsoup.parse(clipboard.getHtml());
-                    dom.traverse(new NodeVisitor() {
+                    final Element body = Jsoup.parse(clipboard.getHtml()).body();
+                    body.traverse(new NodeVisitor() {
                         @Override
                         public void head(org.jsoup.nodes.Node node, int depth) {
                             if (node instanceof Element ele) {
+                                ele.removeAttr("id");
+                                //
                                 if (ele.is("img"))
                                     wrapImgSrcToBase64Src(ele, false);
                             }
@@ -199,8 +239,12 @@ public abstract class HtmlEditor extends ItemEditor {
                         public void tail(org.jsoup.nodes.Node node, int depth) {
                         }
                     });
-                    insertHtmlAtCursor(dom.body().html());
-                } else if (clipboard.hasContent(DataFormat.IMAGE)) {
+                    HtmlHelper.inlineFootnotes(body);
+                    insertHtmlAtCursor(body.html());
+                } else if (clipboard.hasString()) {
+                    event.consume();
+                    insertHtmlAtCursor(clipboard.getString());
+                } else if (clipboard.hasImage()) {
                     event.consume();
                     final Image image = clipboard.getImage();
                     try (ByteArrayOutputStream buff = new ByteArrayOutputStream()) {
@@ -216,7 +260,7 @@ public abstract class HtmlEditor extends ItemEditor {
 
     protected final void insertImageFileAtCursor(File file) {
         if (file.length() > 10 * 1024 * 1024) {
-            AppContext.toast("无法添加大于10MB的文件，请使用小文件！");
+            app.toast("无法添加大于10MB的文件，请使用小文件！");
             return;
         }
         try {
@@ -229,7 +273,7 @@ public abstract class HtmlEditor extends ItemEditor {
             insertHtmlAtCursor(wrapImageToBase64Img(imageType, imageWidth, imageBytes));
         } catch (Exception e) {
             e.printStackTrace();
-            AppContext.toast("无法读取所选图片文件，请更换重试！");
+            app.toast("无法读取所选图片文件，请更换重试！");
         }
     }
 
@@ -286,7 +330,7 @@ public abstract class HtmlEditor extends ItemEditor {
                             exception.printStackTrace();
                         }
                     } else {
-                        AppContext.toast("网络图片被防盗链阻止，无法获取！");
+                        app.toast("网络图片被防盗链阻止，无法获取！");
                         ele.attr("src", src);
                     }
                 });

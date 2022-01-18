@@ -11,6 +11,7 @@ import javafx.scene.input.Dragboard;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.TransferMode;
 import javafx.util.Callback;
+import org.appxi.javafx.helper.FxHelper;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.item.Item;
 
@@ -76,6 +77,13 @@ class LibraryTreeCell implements Callback<TreeView<Item>, TreeCell<Item>> {
 
     private void dragOver(DragEvent event, TreeCell<Item> treeCell) {
         if (!event.getDragboard().hasContent(PLAIN_ITEM)) return;
+
+        final LibraryTreeView treeView = (LibraryTreeView) treeCell.getTreeView();
+        final int scrollToRow = treeView.fetchNextInvisibleRow(treeCell);
+        if (scrollToRow != -1) {
+            treeView.scrollTo(scrollToRow);
+            FxHelper.sleepSilently(50);
+        }
 
         final TreeItem<Item> thisItem = treeCell.getTreeItem();
         // can't drop on itself
