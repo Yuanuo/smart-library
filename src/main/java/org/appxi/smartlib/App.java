@@ -28,7 +28,7 @@ import java.util.Optional;
 public class App extends WorkbenchApp {
     public static final String ID = "smartLibrary";
     public static final String NAME = "智悲研藏";
-    public static final String VERSION = "22.01.07";
+    public static final String VERSION = "22.01.20";
     private static App instance;
 
     public App() {
@@ -93,7 +93,7 @@ public class App extends WorkbenchApp {
             if (null == css) return;
             System.out.println("CSS < " + css);
             if (css.endsWith("web.css")) {
-                eventBus.fireEvent(new VisualEvent(VisualEvent.STYLE_CHANGED, null));
+                eventBus.fireEvent(new VisualEvent(VisualEvent.SET_STYLE, null));
             } else if (scene.getStylesheets().contains(css)) {
                 final int idx = scene.getStylesheets().indexOf(css);
                 String finalCss = css;
