@@ -18,7 +18,7 @@ public abstract class AppContext {
     private static AnnotationConfigApplicationContext beans;
     private static final Object _initBeans = new Object();
 
-    public static BeanFactory beans() {
+    private static BeanFactory beans() {
         if (null != beans)
             return beans;
         synchronized (_initBeans) {
@@ -47,8 +47,7 @@ public abstract class AppContext {
 
     public static <T> T getBean(Class<T> requiredType) {
         try {
-            return null;
-            // return beans().getBean(requiredType);
+            return beans().getBean(requiredType);
         } catch (Throwable ignore) {
             return null;
         }
