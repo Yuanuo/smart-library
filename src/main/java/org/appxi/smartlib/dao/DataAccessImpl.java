@@ -194,31 +194,22 @@ class DataAccessImpl implements DataAccess {
             return null;
         }
 
-        if (item.provider.isDirectory()) {
-            try {
+        try {
+            if (item.provider.isDirectory()) {
                 Files.createDirectories(itemPath);
                 item.setPath(FileHelper.subPath(itemPath, rootLevels));
-                return null;
-            } catch (AccessDeniedException e) {
-                logger.warn("create", e);
-                return "本地文件禁止访问！";
-            } catch (Exception e) {
-                logger.warn("create", e);
-                return e.getMessage();
-            }
-        } else {
-            try {
+            } else {
                 Files.createDirectories(itemPath.getParent());
                 Files.createFile(itemPath);
                 item.setPath(FileHelper.subPath(itemPath, rootLevels));
-                return null;
-            } catch (AccessDeniedException e) {
-                logger.warn("create", e);
-                return "本地文件禁止访问！";
-            } catch (Exception e) {
-                logger.warn("create", e);
-                return e.getMessage();
             }
+            return null;
+        } catch (AccessDeniedException e) {
+            logger.warn("create", e);
+            return "本地文件禁止访问！";
+        } catch (Exception e) {
+            logger.warn("create", e);
+            return e.getClass().getName().concat(": ").concat(e.getMessage());
         }
     }
 
@@ -246,7 +237,7 @@ class DataAccessImpl implements DataAccess {
             return "文件或目录禁止访问！";
         } catch (Exception e) {
             logger.warn("rename", e);
-            return e.getMessage();
+            return e.getClass().getName().concat(": ").concat(e.getMessage());
         }
     }
 
@@ -258,7 +249,7 @@ class DataAccessImpl implements DataAccess {
         // TODO move to trash when delete ?
         try {
             if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH)
-                && Desktop.getDesktop().moveToTrash(itemPath.toFile())) {
+                    && Desktop.getDesktop().moveToTrash(itemPath.toFile())) {
                 return null;
             } else if (Files.isDirectory(itemPath)) {
                 Files.walk(itemPath)
@@ -277,7 +268,7 @@ class DataAccessImpl implements DataAccess {
             return "文件或目录禁止访问！";
         } catch (Exception e) {
             logger.warn("delete", e);
-            return e.getMessage();
+            return e.getClass().getName().concat(": ").concat(e.getMessage());
         }
         return FileHelper.notExists(itemPath) ? null : "无法删除一些文件或目录！";
     }
@@ -296,7 +287,7 @@ class DataAccessImpl implements DataAccess {
                 return "文件或目录禁止访问！";
             } catch (Exception e) {
                 logger.warn("setContent", e);
-                return e.getMessage();
+                return e.getClass().getName().concat(": ").concat(e.getMessage());
             }
         }
     }
@@ -377,7 +368,7 @@ class DataAccessImpl implements DataAccess {
             return null;
         } catch (Exception e) {
             logger.warn("move", e);
-            return e.getMessage();
+            return e.getClass().getName().concat(": ").concat(e.getMessage());
         }
     }
 
@@ -412,7 +403,7 @@ class DataAccessImpl implements DataAccess {
                 if (null == indexer)
                     return;
                 final List<Piece> pieces = indexer.apply(itm);
-                if (null == pieces)
+                if (null == pieces || pieces.isEmpty())
                     return;
                 batchList.addAll(pieces);
                 //
@@ -426,7 +417,7 @@ class DataAccessImpl implements DataAccess {
             if (null != indexer) {
                 try {
                     final List<Piece> pieces = indexer.apply(item);
-                    if (null != pieces) repository.saveAll(pieces);
+                    if (null != pieces && !pieces.isEmpty()) repository.saveAll(pieces);
                 } catch (Throwable t) {
                     logger.warn("batchCommitter.saveAll", t);
                 }
