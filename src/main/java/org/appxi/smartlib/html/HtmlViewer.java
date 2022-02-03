@@ -67,7 +67,7 @@ public abstract class HtmlViewer extends ItemViewer {
 
     private final EventHandler<VisualEvent> onSetAppStyle = this::onSetAppStyle;
     private final EventHandler<AppEvent> onAppEventStopping = this::onAppEventStopping;
-    private final EventHandler<VisualEvent> onSetWebFont = this::onSetWebFont;
+    private final EventHandler<VisualEvent> onSetWebStyle = this::onSetWebStyle;
     private final InvalidationListener onWebViewBodyResize = this::onWebViewBodyResize;
 
     protected WebPane webPane;
@@ -82,7 +82,7 @@ public abstract class HtmlViewer extends ItemViewer {
     public void initialize() {
         app.eventBus.addEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
         app.eventBus.addEventHandler(AppEvent.STOPPING, onAppEventStopping);
-        app.eventBus.addEventHandler(VisualEvent.SET_WEB_FONT, onSetWebFont);
+        app.eventBus.addEventHandler(VisualEvent.SET_WEB_STYLE, onSetWebStyle);
     }
 
     @Override
@@ -226,7 +226,7 @@ public abstract class HtmlViewer extends ItemViewer {
         webPane.toolbar.addRight(webFinder);
     }
 
-    protected void applyTheme(VisualEvent event) {
+    protected void applyWebStyle(VisualEvent event) {
         if (null == this.webPane) return;
 
         final RawHolder<byte[]> allBytes = new RawHolder<>();
@@ -234,9 +234,16 @@ public abstract class HtmlViewer extends ItemViewer {
                 :root {
                     --font-family: tibetan, "%s", AUTO !important;
                     --zoom: %.2f !important;
+                    --text-color: %s;
                 }
-                """.formatted(app.visualProvider.webFontName(), app.visualProvider.webFontSize())
-                .getBytes(StandardCharsets.UTF_8);
+                body {
+                    background-color: %s;
+                }
+                """.formatted(app.visualProvider.webFontName(),
+                app.visualProvider.webFontSize(),
+                app.visualProvider.webTextColor(),
+                app.visualProvider.webPageColor()
+        ).getBytes(StandardCharsets.UTF_8);
         Consumer<InputStream> consumer = stream -> {
             try (BufferedInputStream in = new BufferedInputStream(stream)) {
                 int pos = allBytes.value.length;
@@ -268,7 +275,7 @@ public abstract class HtmlViewer extends ItemViewer {
     }
 
     protected void onSetAppStyle(VisualEvent event) {
-        this.applyTheme(null);
+        this.applyWebStyle(null);
     }
 
     protected void onAppEventStopping(AppEvent event) {
@@ -276,10 +283,10 @@ public abstract class HtmlViewer extends ItemViewer {
         saveUserExperienceData();
     }
 
-    protected void onSetWebFont(VisualEvent event) {
+    protected void onSetWebStyle(VisualEvent event) {
         if (null == this.webPane) return;
         saveUserExperienceData();
-        this.applyTheme(null);
+        this.applyWebStyle(null);
         navigate(null);
     }
 
@@ -293,7 +300,7 @@ public abstract class HtmlViewer extends ItemViewer {
         saveUserExperienceData();
         app.eventBus.removeEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
         app.eventBus.removeEventHandler(AppEvent.STOPPING, onAppEventStopping);
-        app.eventBus.removeEventHandler(VisualEvent.SET_WEB_FONT, onSetWebFont);
+        app.eventBus.removeEventHandler(VisualEvent.SET_WEB_STYLE, onSetWebStyle);
         app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, item));
         if (null != webPane) webPane.release();
     }
@@ -317,7 +324,7 @@ public abstract class HtmlViewer extends ItemViewer {
             loadingLayerHandler = ProgressLayer.show(getViewport(), progressLayer -> FxHelper.runLater(() -> {
                 webPane.webEngine().setUserDataDirectory(UserPrefs.cacheDir().toFile());
                 // apply theme
-                this.applyTheme(null);
+                this.applyWebStyle(null);
                 //
                 webPane.webEngine().getLoadWorker().stateProperty().addListener((o, ov, state) -> {
                     if (state == Worker.State.SUCCEEDED) onWebEngineLoadSucceeded();
