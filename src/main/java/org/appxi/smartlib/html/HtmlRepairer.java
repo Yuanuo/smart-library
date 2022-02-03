@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Set;
 
 public class HtmlRepairer implements NodeVisitor {
-    private static final String lineSplitter = "([，、。？：；！,.?:;!།༎]+)";
+    private static final String lineSplitter = "(([，、。？：；！]+)|([,.?:;!]\s+)|([།༎]\s+))";
     private static final List<String> messes = List.of("font-family: \"\";", "font-size: x-large;", "font-size: xx-large;");
 
     private final Set<String> idTags = new HashSet<>();
@@ -41,6 +41,7 @@ public class HtmlRepairer implements NodeVisitor {
 
     @Override
     public void head(Node node, int depth) {
+        if (depth == 0) return;
         if (node instanceof Comment) {
             node.remove();
             return;
@@ -82,7 +83,7 @@ public class HtmlRepairer implements NodeVisitor {
                     }
                     break;
                 case "div":
-                    if ("body".equals(ele.parent().tagName())) {
+                    if (depth == 1) {
                         ele.tagName("p");
                     }
                     break;
@@ -105,12 +106,6 @@ public class HtmlRepairer implements NodeVisitor {
 
                 final String[] lines = text.text().replaceAll(lineSplitter, "$1∷\n").split("∷\n");
                 if (lines.length == 1) {
-//                    if (text.nextSibling() == null
-//                        || text.nextSibling() instanceof Element nextEle && "a".equals(nextEle.tagName()))
-//                        return;
-//                    final Element anchor = node.ownerDocument().createElement("a");
-//                    anchor.id(nextID("L"));
-//                    parent.insertChildren(text.siblingIndex() + 1, anchor);
                     return;
                 }
                 final Element wrap = node.ownerDocument().createElement("wrap");
@@ -127,22 +122,10 @@ public class HtmlRepairer implements NodeVisitor {
     }
 
     private String nextID(String prefix) {
-//        return null == prefix ? DigestHelper.sid() : prefix.concat(DigestHelper.uid());
         return (null == prefix ? "a" : prefix).concat(NumberHelper.toRadix62(edition++));
     }
 
     @Override
     public void tail(Node node, int depth) {
     }
-
-//    public static HtmlRepairer ofInnerSequenced() {
-//        return new HtmlRepairer() {
-//            private long innerSequence = 1;
-//
-//            @Override
-//            protected String nextID(String prefix) {
-//                return (null == prefix ? "Z" : prefix).concat(NumberHelper.toRadix62(innerSequence++));
-//            }
-//        };
-//    }
 }

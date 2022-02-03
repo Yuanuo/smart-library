@@ -99,12 +99,16 @@ public abstract class HtmlHelper {
     }
 
     public static void inlineFootnotes(Element element) {
+        element.select("sup:matches(\\d+)").forEach(ele -> {
+            if (!ele.parents().is("a")) ele.tagName("a");
+        });
+
         Elements footnotes = element.select("p > a:first-child:matches(\\[\\d+\\])");
         Map<String, String> footnotesMap = new HashMap<>(footnotes.size());
 
         for (int i = footnotes.size() - 1; i >= 0; i--) {
             Element ele = footnotes.get(i);
-            String key = ele.text();
+            String key = ele.text().replaceAll("[\\[\\]]+", "").strip();
             if (footnotesMap.containsKey(key)) continue;
 
             Element elePrt = ele.parent();
@@ -116,9 +120,8 @@ public abstract class HtmlHelper {
         //
         element.select("a:matches(\\[\\d+\\])").forEach(ele -> {
             String ref = ele.attr("data-note");
-            if (!ref.isEmpty()) ref = ref.substring(1);
-            if (!ref.isEmpty()) ref = "[".concat(ref).concat("]");
-            else ref = ele.text();
+            if (ref.startsWith("@")) ref = ref.substring(1).strip();
+            else ref = ele.text().replaceAll("[\\[\\]]+", "").strip();
             //
             String val = footnotesMap.remove(ref);
             if (null != val) {

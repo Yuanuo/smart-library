@@ -29,7 +29,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
     public LibraryExplorer(WorkbenchPane workbench) {
         super("EXPLORER", workbench);
         this.setTitles("资源管理器");
-        this.viewGraphic.set(MaterialIcon.LOCAL_LIBRARY.graphic());
+        this.graphic.set(MaterialIcon.LOCAL_LIBRARY.graphic());
     }
 
     @Override
@@ -48,9 +48,9 @@ public class LibraryExplorer extends WorkbenchSideViewController {
             }
 
             final ItemViewer newViewer = item.provider.getViewer().apply(item);
-            final ItemViewer oldViewer = (ItemViewer) workbench.findMainViewController(newViewer.viewId.get());
+            final ItemViewer oldViewer = (ItemViewer) workbench.findMainViewController(newViewer.id.get());
             if (null != oldViewer) {
-                workbench.selectMainView(oldViewer.viewId.get());
+                workbench.selectMainView(oldViewer.id.get());
                 FxHelper.runLater(() -> oldViewer.navigate(item));
                 return;
             }
@@ -58,7 +58,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
                 workbench.addWorkbenchViewAsMainView(newViewer, false);
                 newViewer.initialize();
                 newViewer.attr(Item.class, item);
-                workbench.selectMainView(newViewer.viewId.get());
+                workbench.selectMainView(newViewer.id.get());
             });
         });
         app.eventBus.addEventHandler(ItemEvent.EDITING, event -> {
@@ -69,15 +69,15 @@ public class LibraryExplorer extends WorkbenchSideViewController {
                 return;
             }
             final ItemEditor newEditor = item.provider.getEditor().apply(item);
-            final ItemEditor oldEditor = (ItemEditor) workbench.findMainViewController(newEditor.viewId.get());
+            final ItemEditor oldEditor = (ItemEditor) workbench.findMainViewController(newEditor.id.get());
             if (null != oldEditor) {
-                workbench.selectMainView(oldEditor.viewId.get());
+                workbench.selectMainView(oldEditor.id.get());
                 return;
             }
             FxHelper.runLater(() -> {
                 workbench.addWorkbenchViewAsMainView(newEditor, false);
                 newEditor.initialize();
-                workbench.selectMainView(newEditor.viewId.get());
+                workbench.selectMainView(newEditor.id.get());
             });
         });
         //
@@ -152,6 +152,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
             if (null == node.getParent())
                 node.getChildren().clear();
             else node.getParent().getChildren().remove(node);
+            treeView.getSelectionModel().clearSelection();
             // remove from main-views
             FxHelper.runLater(() -> workbench.mainViews.removeTabs(tab ->
                     tab.getUserData() instanceof ItemController c
@@ -174,7 +175,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
         //
         app.getPrimaryScene().getAccelerators().put(
                 new KeyCodeCombination(KeyCode.E, KeyCombination.SHORTCUT_DOWN),
-                () -> workbench.selectSideTool(this.viewId.getValue()));
+                () -> workbench.selectSideTool(this.id.getValue()));
         //
         final Button btnNewArticle = new Button();
         btnNewArticle.setTooltip(new Tooltip("新建图文（Ctrl+N）"));
@@ -250,8 +251,8 @@ public class LibraryExplorer extends WorkbenchSideViewController {
     void reload(LibraryTreeItem treeItem) {
         if (null == treeItem) {
             final LibraryTreeItem rootItem = new LibraryTreeItem(Item.ROOT);
-            this.treeView.setRoot(rootItem);
             rootItem.setExpanded(true);
+            FxHelper.runLater(() -> this.treeView.setRoot(rootItem));
         } else {
             treeItem.reset();
             treeItem.setExpanded(true);

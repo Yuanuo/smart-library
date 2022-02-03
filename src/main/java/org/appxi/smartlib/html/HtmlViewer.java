@@ -4,6 +4,7 @@ import javafx.application.Platform;
 import javafx.beans.InvalidationListener;
 import javafx.beans.Observable;
 import javafx.concurrent.Worker;
+import javafx.event.Event;
 import javafx.event.EventHandler;
 import javafx.print.PageLayout;
 import javafx.print.PageOrientation;
@@ -259,7 +260,11 @@ public abstract class HtmlViewer extends ItemViewer {
 
     private void applyBodyTheme() {
         if (null == webPane) return;
-        webPane.executeScript("document.body.setAttribute('class','".concat(app.visualProvider.toString()).concat("');"));
+        try {
+            webPane.executeScript("document.body.setAttribute('class','".concat(app.visualProvider.toString()).concat("');"));
+        } catch (RuntimeException e) {
+            logger.warn("applyBodyTheme failed", e);
+        }
     }
 
     protected void onSetAppStyle(VisualEvent event) {
@@ -284,7 +289,7 @@ public abstract class HtmlViewer extends ItemViewer {
     }
 
     @Override
-    public void onViewportClosing(boolean selected) {
+    public void onViewportClosing(Event event, boolean selected) {
         saveUserExperienceData();
         app.eventBus.removeEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
         app.eventBus.removeEventHandler(AppEvent.STOPPING, onAppEventStopping);

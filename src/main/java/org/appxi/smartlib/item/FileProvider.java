@@ -5,7 +5,6 @@ import javafx.scene.control.TreeItem;
 import org.appxi.javafx.visual.MaterialIcon;
 
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 public final class FileProvider extends AbstractProvider {
     public static final FileProvider ONE = new FileProvider();
@@ -35,21 +34,6 @@ public final class FileProvider extends AbstractProvider {
 
     @Override
     public Consumer<Item> getCreator() {
-        return null;
-    }
-
-    @Override
-    public Function<Item, ItemEditor> getEditor() {
-        return null;
-    }
-
-    @Override
-    public Function<Item, ItemViewer> getViewer() {
-        return null;
-    }
-
-    @Override
-    public Consumer<Item> getToucher() {
         return null;
     }
 }

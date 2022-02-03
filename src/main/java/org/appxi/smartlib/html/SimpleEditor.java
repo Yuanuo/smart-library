@@ -4,6 +4,7 @@ import javafx.beans.binding.Bindings;
 import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.value.ChangeListener;
+import javafx.event.Event;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -238,8 +239,8 @@ public abstract class SimpleEditor extends HtmlEditor {
     }
 
     @Override
-    public void onViewportClosing(boolean selected) {
-        super.onViewportClosing(selected);
+    public void onViewportClosing(Event event, boolean selected) {
+        super.onViewportClosing(event, selected);
         if (null != this.nameChangeListener)
             item.name.removeListener(this.nameChangeListener);
 //        if (null != documentSaver && documentChanges.get() > 0) {

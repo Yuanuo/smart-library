@@ -4,6 +4,7 @@ import javafx.application.Platform;
 import javafx.beans.InvalidationListener;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.event.Event;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -199,7 +200,7 @@ class SearcherController extends WorkbenchMainViewController {
     }
 
     @Override
-    public void onViewportClosing(boolean selected) {
+    public void onViewportClosing(Event event, boolean selected) {
     }
 
     boolean isNeverSearched() {

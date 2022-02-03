@@ -2,6 +2,7 @@ package org.appxi.smartlib.html;
 
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
+import javafx.event.Event;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.TextField;
@@ -263,8 +264,8 @@ public abstract class AdvancedEditor extends HtmlEditor {
     }
 
     @Override
-    public void onViewportClosing(boolean selected) {
-        super.onViewportClosing(selected);
+    public void onViewportClosing(Event event, boolean selected) {
+        super.onViewportClosing(event, selected);
         if (null != webPane) webPane.release();
         if (null != this.nameChangeListener)
             item.name.removeListener(this.nameChangeListener);

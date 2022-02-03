@@ -6,8 +6,6 @@ import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.smartlib.dao.DataApi;
 
 import java.util.List;
-import java.util.function.Consumer;
-import java.util.function.Function;
 
 public final class FolderProvider extends AbstractProvider {
     public static final FolderProvider ONE = new FolderProvider();
@@ -38,20 +36,5 @@ public final class FolderProvider extends AbstractProvider {
 
     public List<Item> getItemChildren(Item item) {
         return DataApi.dataAccess().list(item);
-    }
-
-    @Override
-    public Function<Item, ItemEditor> getEditor() {
-        return null;
-    }
-
-    @Override
-    public Function<Item, ItemViewer> getViewer() {
-        return null;
-    }
-
-    @Override
-    public Consumer<Item> getToucher() {
-        return null;
     }
 }

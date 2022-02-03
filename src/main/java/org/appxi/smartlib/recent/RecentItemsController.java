@@ -25,7 +25,7 @@ public class RecentItemsController extends WorkbenchSideViewController {
     public RecentItemsController(WorkbenchPane workbench) {
         super("RECENT", workbench);
         this.setTitles("最近");
-        this.viewGraphic.set(MaterialIcon.HISTORY.graphic());
+        this.graphic.set(MaterialIcon.HISTORY.graphic());
     }
 
     @Override

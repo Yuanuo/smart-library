@@ -89,11 +89,6 @@ abstract class TikaProvider extends AbstractProvider {
         };
     }
 
-    @Override
-    public Consumer<Item> getToucher() {
-        return null;
-    }
-
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     public final String toExtractedText(Item item) {
         try (InputStream stream = DataApi.dataAccess().getContent(item)) {

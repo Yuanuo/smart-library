@@ -23,7 +23,7 @@ public class RecentViewsController extends WorkbenchViewController {
     public RecentViewsController(WorkbenchPane workbench) {
         super("recentViews", workbench);
         this.setTitles("RecentViews");
-        this.viewGraphic.set(MaterialIcon.HISTORY.graphic());
+        this.graphic.set(MaterialIcon.HISTORY.graphic());
     }
 
     @Override
@@ -70,13 +70,13 @@ public class RecentViewsController extends WorkbenchViewController {
                     swapRecentViewSelected.value = addedController;
             }
         });
-        app.eventBus.addEventHandler(AppEvent.STARTED, event -> new Thread(() -> {
+        app.eventBus.addEventHandler(AppEvent.STARTED, event -> FxHelper.runThread(100, () -> {
             if (!swapRecentViews.isEmpty()) {
                 swapRecentViews.forEach(WorkbenchViewController::initialize);
                 if (null != swapRecentViewSelected.value)
-                    FxHelper.runLater(() -> workbench.selectMainView(swapRecentViewSelected.value.viewId.get()));
+                    workbench.selectMainView(swapRecentViewSelected.value.id.get());
             }
-        }).start());
+        }));
     }
 
     private Preferences createRecentViews(boolean load) {

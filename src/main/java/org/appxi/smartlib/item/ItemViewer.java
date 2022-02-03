@@ -8,11 +8,10 @@ public abstract class ItemViewer extends ItemController {
     public ItemViewer(Item item, WorkbenchPane workbench) {
         super(item, workbench);
         //
-        this.viewId.bind(Bindings.concat("View@", item.path));
+        this.id.bind(Bindings.concat("View@", item.path));
         //
-        this.viewTitle.bind(item.name);
-        this.viewTooltip.bind(Bindings.createStringBinding(item::typedPath, item.path));
-        this.appTitle.bind(item.name);
+        this.title.bind(item.name);
+        this.tooltip.bind(Bindings.createStringBinding(item::typedPath, item.path));
     }
 
     public abstract void navigate(Item item);

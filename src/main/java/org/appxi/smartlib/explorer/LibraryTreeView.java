@@ -6,9 +6,9 @@ import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TreeItem;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
-import org.appxi.javafx.app.BaseApp;
 import org.appxi.javafx.control.TreeViewEx;
 import org.appxi.javafx.visual.MaterialIcon;
+import org.appxi.javafx.workbench.WorkbenchApp;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.dao.DataApi;
@@ -22,7 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 class LibraryTreeView extends TreeViewEx<Item> {
-    final BaseApp app;
+    final WorkbenchApp app;
     final WorkbenchPane workbench;
     final LibraryExplorer explorer;
 
@@ -111,12 +111,12 @@ class LibraryTreeView extends TreeViewEx<Item> {
             menuItems.add(new SeparatorMenuItem());
         }
         // backup
-        final MenuItem backup = new MenuItem("备份／导出数据");
+        final MenuItem backup = new MenuItem("导出数据包");
         backup.setGraphic(MaterialIcon.CALL_SPLIT.graphic());
         backup.setOnAction(e -> ItemActions.backup(null != item ? item : root().getValue()));
         menuItems.add(backup);
         // restore
-        final MenuItem restore = new MenuItem("还原／导入数据");
+        final MenuItem restore = new MenuItem("导入数据包");
         restore.setGraphic(MaterialIcon.CALL_MERGE.graphic());
         restore.setOnAction(e -> ItemActions.restore(explorer.preferFolder()));
         menuItems.add(restore);

@@ -266,9 +266,9 @@ public class ItemActions {
         final Alert dialog = new Alert(Alert.AlertType.CONFIRMATION);
         dialog.setHeaderText("接触数据");
         dialog.setContentText("""
-                此功能用于修整异常数据，若无必要请勿使用！！
+                此功能适用于批量修整手动维护的本地数据，若非必要不建议使用！！
 
-                将处理以下数据项及所有子项的索引数据：
+                将处理以下数据项及所有子项的数据：
                                 
                 """
                 .concat(item.typedPath()));

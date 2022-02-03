@@ -3,10 +3,12 @@ package org.appxi.smartlib.html;
 import javafx.application.Platform;
 import javafx.concurrent.Worker;
 import javafx.embed.swing.SwingFXUtils;
+import javafx.event.Event;
 import javafx.event.EventHandler;
 import javafx.scene.Node;
 import javafx.scene.image.Image;
 import javafx.scene.input.Clipboard;
+import javafx.scene.input.DataFormat;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.web.WebEngine;
@@ -107,7 +109,7 @@ public abstract class HtmlEditor extends ItemEditor {
     }
 
     @Override
-    public void onViewportClosing(boolean selected) {
+    public void onViewportClosing(Event event, boolean selected) {
         saveUserExperienceData();
         app.eventBus.removeEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
         app.eventBus.removeEventHandler(AppEvent.STOPPING, onAppEventStopping);
@@ -174,24 +176,35 @@ public abstract class HtmlEditor extends ItemEditor {
     protected final void attachAdvancedPasteShortcuts(Node node, Supplier<Boolean> editorFocusedSupplier) {
         if (null == node) return;
         node.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            if (event.isShortcutDown() && event.isShiftDown() && event.getCode() == KeyCode.V) {
+            if (event.isShortcutDown() && event.isShiftDown() && event.isAltDown() && event.getCode() == KeyCode.V) {
+                final Clipboard clipboard = Clipboard.getSystemClipboard();
+                if (clipboard.hasHtml()) {
+                    event.consume();
+                    Clipboard.getSystemClipboard().setContent(Map.of(DataFormat.PLAIN_TEXT, clipboard.getHtml()));
+                }
+            } else if (event.isShortcutDown() && event.isShiftDown() && event.getCode() == KeyCode.V) {
                 if (!editorFocusedSupplier.get()) return;
                 final Clipboard clipboard = Clipboard.getSystemClipboard();
                 if (clipboard.hasHtml()) {
                     event.consume();
                     final Element body = Jsoup.parse(clipboard.getHtml()).body();
+                    Optional.ofNullable(body.children().first())
+                            .filter(ele -> "div".equals(ele.tagName())).ifPresent(Element::unwrap);
                     body.traverse(new NodeVisitor() {
                         @Override
                         public void head(org.jsoup.nodes.Node node, int depth) {
+                            if (depth == 0) return;
                             if (node instanceof Element ele) {
                                 ele.removeAttr("id");
                                 //
-                                if (ele.is("img")) {
+                                if (depth == 1 && "div".equals(ele.tagName())) {
+                                    ele.tagName("p");
+                                } else if ("img".equals(ele.tagName())) {
                                     wrapImgSrcToBase64Src(ele, true);
                                     return;
-                                }
-                                if (HtmlHelper.headingTags.contains(ele.tagName()))
+                                } else if (HtmlHelper.headingTags.contains(ele.tagName())) {
                                     ele.tagName("p");
+                                }
                                 ele.clearAttributes();
                             }
                         }
@@ -224,14 +237,18 @@ public abstract class HtmlEditor extends ItemEditor {
                 } else if (clipboard.hasHtml()) {
                     event.consume();
                     final Element body = Jsoup.parse(clipboard.getHtml()).body();
+                    Optional.ofNullable(body.children().first())
+                            .filter(ele -> "div".equals(ele.tagName())).ifPresent(Element::unwrap);
                     body.traverse(new NodeVisitor() {
                         @Override
                         public void head(org.jsoup.nodes.Node node, int depth) {
+                            if (depth == 0) return;
                             if (node instanceof Element ele) {
                                 ele.removeAttr("id");
                                 //
-                                if (ele.is("img"))
-                                    wrapImgSrcToBase64Src(ele, false);
+                                if (depth == 1 && "div".equals(ele.tagName())) ele.tagName("p");
+                                else if ("img".equals(ele.tagName())) wrapImgSrcToBase64Src(ele, false);
+                                else if (HtmlHelper.headingTags.contains(ele.tagName())) ele.tagName("p");
                             }
                         }
 
