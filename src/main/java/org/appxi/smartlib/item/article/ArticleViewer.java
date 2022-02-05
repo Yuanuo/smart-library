@@ -9,6 +9,7 @@ import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
 import org.appxi.util.StringHelper;
 
+import java.net.URI;
 import java.nio.file.Path;
 
 class ArticleViewer extends HtmlViewer {
@@ -36,11 +37,11 @@ class ArticleViewer extends HtmlViewer {
     }
 
     @Override
-    protected Path createViewableHtmlFile() {
+    protected URI prepareHtmlContent() {
         String htmlFile = this.document.toViewableHtmlFile(null,
                 body -> StringHelper.concat("<body><article>", body.html(), "</article></body>"),
                 WebIncl.getIncludePaths()
         );
-        return Path.of(htmlFile);
+        return Path.of(htmlFile).toUri();
     }
 }

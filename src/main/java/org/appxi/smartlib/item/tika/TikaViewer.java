@@ -5,6 +5,7 @@ import org.appxi.smartlib.html.HtmlViewer;
 import org.appxi.smartlib.item.Item;
 import org.appxi.util.StringHelper;
 
+import java.net.URI;
 import java.nio.file.Path;
 
 class TikaViewer extends HtmlViewer {
@@ -16,11 +17,11 @@ class TikaViewer extends HtmlViewer {
     }
 
     @Override
-    protected Path createViewableHtmlFile() {
+    protected URI prepareHtmlContent() {
         String htmlFile = ((TikaProvider) item.provider).toViewableHtmlFile(this.item, null,
                 body -> StringHelper.concat("<body><article>", body.html(), "</article></body>"),
                 WebIncl.getIncludePaths()
         );
-        return Path.of(htmlFile);
+        return Path.of(htmlFile).toUri();
     }
 }

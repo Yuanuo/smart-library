@@ -48,6 +48,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.BufferedInputStream;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -62,7 +63,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 
-public abstract class HtmlViewer extends ItemViewer {
+public class HtmlViewer extends ItemViewer {
     protected static final Logger logger = LoggerFactory.getLogger(HtmlViewer.class);
 
     private final EventHandler<VisualEvent> onSetAppStyle = this::onSetAppStyle;
@@ -361,12 +362,16 @@ public abstract class HtmlViewer extends ItemViewer {
         if (null == loadingLayerHandler) loadingLayerHandler = ProgressLayer.showIndicator(getViewport());
         openedItem = item;
         navigatePos = null != navigatePos ? navigatePos : item;
-        final Path htmlFile = createViewableHtmlFile();
-        logger.warn("LOAD htmlFile: ".concat(htmlFile.toString()));
-        FxHelper.runLater(() -> webPane.webEngine().load(htmlFile.toUri().toString()));
+        final URI htmlUri = prepareHtmlContent();
+        if (null != htmlUri) {
+            logger.warn("LOAD html: ".concat(htmlUri.toString()));
+            FxHelper.runLater(() -> webPane.webEngine().load(htmlUri.toString()));
+        }
     }
 
-    protected abstract Path createViewableHtmlFile();
+    protected URI prepareHtmlContent() {
+        return Path.of(item.getPath()).toUri();
+    }
 
     protected void onWebEngineLoadSucceeded() {
         // set an interface object named 'javaApp' in the web engine's page
