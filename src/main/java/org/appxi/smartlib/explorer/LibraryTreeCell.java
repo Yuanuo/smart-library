@@ -1,5 +1,6 @@
 package org.appxi.smartlib.explorer;
 
+import javafx.beans.binding.Bindings;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
@@ -14,6 +15,7 @@ import javafx.util.Callback;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.item.Item;
+import org.appxi.util.StringHelper;
 
 import java.util.Objects;
 
@@ -42,7 +44,13 @@ class LibraryTreeCell implements Callback<TreeView<Item>, TreeCell<Item>> {
                 if (item == updatedItem)
                     return;//
                 updatedItem = item;
-                this.textProperty().bind(item.name);
+                if (item.provider.isDirectory()) {
+                    this.textProperty().bind(Bindings.createStringBinding(
+                            () -> StringHelper.concat(item.getName(), " (", getTreeItem().getChildren().size(), ")"),
+                            item.name));
+                } else {
+                    this.textProperty().bind(item.name);
+                }
                 this.setGraphic(item.provider.getItemIcon(getTreeItem()));
                 this.setTooltip(new Tooltip(item.getName()));
                 //
