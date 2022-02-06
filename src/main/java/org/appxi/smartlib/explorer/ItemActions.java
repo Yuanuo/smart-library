@@ -251,15 +251,16 @@ public class ItemActions {
         }));
     }
 
-    public static void setContent(Item item, InputStream content) {
+    public static void setContent(Item item, InputStream content, boolean reindex) {
         final String msg = DataApi.dataAccess().setContent(item, content);
         if (msg != null) {
             App.app().toastError(msg);
             return;
         }
         // update indexes
-        DataApi.dataAccess().reindex(item, (d, s) -> {
-        });
+        if (reindex)
+            DataApi.dataAccess().reindex(item, (d, s) -> {
+            });
     }
 
     public static void touch(Item item) {

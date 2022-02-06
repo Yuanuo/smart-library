@@ -217,7 +217,7 @@ public class ArticleProvider extends AbstractProvider {
 
             HtmlHelper.inlineFootnotes(document.body());
 
-            document.save();
+            document.save(false);
         };
     }
 }

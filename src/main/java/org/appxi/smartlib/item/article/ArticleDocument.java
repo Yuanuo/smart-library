@@ -88,6 +88,10 @@ class ArticleDocument {
     }
 
     public ArticleDocument save() {
+        return this.save(true);
+    }
+
+    public ArticleDocument save(boolean reindex) {
         // fill id for elements
         final HtmlRepairer htmlRepairer = new HtmlRepairer(edition).withMost();
         this.body().traverse(htmlRepairer);
@@ -95,7 +99,7 @@ class ArticleDocument {
         this.html().attr("data-ver", String.valueOf(htmlRepairer.edition()));
 
         // this.item.attr(ArticleDocument.class, this);
-        ItemActions.setContent(this.item, new ByteArrayInputStream(this.document.outerHtml().getBytes(StandardCharsets.UTF_8)));
+        ItemActions.setContent(this.item, new ByteArrayInputStream(this.document.outerHtml().getBytes(StandardCharsets.UTF_8)), reindex);
 
         return this;
     }
@@ -160,7 +164,7 @@ class ArticleDocument {
             } else if (include.endsWith(".css")) {
                 buff.append("\r\n<link rel=\"stylesheet\" href=\"").append(include).append("\"/>");
             } else if (include.startsWith("<script") || include.startsWith("<style")
-                       || include.startsWith("<link") || include.startsWith("<meta")) {
+                    || include.startsWith("<link") || include.startsWith("<meta")) {
                 buff.append("\r\n").append(include);
             } else if (include.startsWith("var ") || include.startsWith("function")) {
                 scripts.add(include);
