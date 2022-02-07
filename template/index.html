@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <script type="text/javascript" src="web-incl/jquery.min.js"></script>
+    <script type="text/javascript" src="web-incl/jquery.ext.js"></script>
+    <script type="text/javascript" src="web-incl/jquery.isinviewport.js"></script>
+    <script type="text/javascript" src="web-incl/jquery.scrollto.js"></script>
+    <script type="text/javascript" src="web-incl/jquery.mark.js"></script>
+    <script type="text/javascript" src="web-incl/jquery.mark.finder.js"></script>
+    <script type="text/javascript" src="web-incl/popper.min.js"></script>
+    <script type="text/javascript" src="web-incl/tippy-bundle.umd.min.js"></script>
+    <script type="text/javascript" src="web-incl/rangy-core.js"></script>
+    <script type="text/javascript" src="web-incl/rangy-serializer.js"></script>
+    <link rel="stylesheet" href="web-incl/app.css"/>
+    <script type="text/javascript" src="web-incl/app.js"></script>
+    <!--  (<a id="[a-zA-Z0-9\-]+"></a>)|(id="[a-zA-Z0-9\-]+") -->
+</head>
+<body>
+<article>
+    <h1>智悲研藏（Smart Library）</h1>
+    <p>这是一款具有自维护内容、强大搜索功能、数据本地化、数据可分享等特性的知识库系统！</p>
+    <p></p>
+    <h1>用途</h1>
+    <p>主要用于对个人收集的大量资料建立索引，并提供基于目录名、文件名、内容标题的快捷检索，以及基于文本内容的全文检索。</p>
+    <p>同时也支持非&ldquo;自维护内容&rdquo;的任意文件资料。</p>
+    <p>除了个人用于归档数据检索外，也可将收录的内容分享给他人。比如收录众多文集，并将数据打包分享。</p>
+    <p></p>
+    <h1>用法</h1>
+    <p>本程序提供一个树状结构的&ldquo;资源管理器&rdquo;用于管理所有资源，实际数据均存储在本地磁盘中，所有针对数据的功能操作可在资源管理器中通过右键菜单完成。（参考功能说明部分）</p>
+    <h2>分享的数据</h2>
+    <p>本系统主程序默认不带数据，为便于入手故建议先使用他人分享的数据包。</p>
+    <p>分享的数据包文件后缀名为&ldquo;*.smartlib&rdquo;，在资源管理器中右键并使用&ldquo;导入数据包&rdquo;即可。</p>
+    <p></p>
+    <h2>自维护内容的数据</h2>
+    <p>这是推荐的方式。</p>
+    <p>本系统提供一种&ldquo;图文&rdquo;类型的数据格式，支持丰富的排版样式，支持内嵌图片等。</p>
+    <p>使用此方式管理数据的优点是，可以灵活控制数据中可检索的内容，比如凡是标记为&ldquo;标题1-6级别&rdquo;的内容均可被快捷检索；使用&ldquo;分页&rdquo;功能对长文进行细分更便于全文检索；</p>
+    <p>可通过&ldquo;添加 图文&rdquo;（快捷键&ldquo;Ctrl/Command + N&rdquo;）增加数据，编辑内容，并设置一些适当的&ldquo;元数据&rdquo;，保存。之后即可正常使用查看、快捷检索、全文搜索等功能。</p>
+    <p>可通过&ldquo;添加 目录&rdquo;（快捷键&ldquo;Ctrl/Command + Shift + N&rdquo;）增加目录，以便于分门别类。（虽然理论上将所有数据放到一个目录中也不影响搜索，但仍然建议做一些合理的分类）</p>
+    <p></p>
+    <h2>其他类型的文档</h2>
+    <p>考虑到实际使用时可能有不能录入成自维护内容的数据，本系统依然提供查看和全文检索功能。</p>
+    <p>目前支持全文检索的文档格式有：doc, docx, ppt, pptx, xls, xlsx, pdf, txt。特别说明：此类文档在查看时不保证原版格式；pdf会有换行导致段落文字不连续的问题，会影响全文检索结果。</p>
+    <p>除此等之外的任意文档格式只支持文件名级别的快捷检索，不支持内容级别的全文检索。</p>
+    <p>将任意文档存放在本系统的数据目录（在资源管理器右键显示本地文件位置）中，然后在资源处理器中刷新可同步本地更改，然后对新加入的文档或目录&ldquo;重建索引&rdquo;，待索引完成后即可进行检索，否则只支持查看。</p>
+    <p></p>
+    <h2>四种检索功能</h2>
+    <p>当收录了大量的数据后，要通过手工查找并浏览内容就不现实，此时最适当的方式是使用&ldquo;搜索&rdquo;，本程序提供四种搜索功能。</p>
+    <p>目前支持检索的语种：中文简体、中文繁体、日文、韩文、藏文（非桑布札）、英文系（10多种）。其他语种尚未测试。</p>
+    <p>1）快捷检索</p>
+    <p>&nbsp; &nbsp; &nbsp;针对目录名、文件名、内容标题（主题）进行检索。</p>
+    <p>&nbsp; &nbsp; &nbsp;通过快捷键&ldquo;双击Shift&rdquo;或&ldquo;Ctrl/Command + G&rdquo;开启。</p>
+    <p>2）全文检索</p>
+    <p>&nbsp; &nbsp; &nbsp;针对内容文本进行检索。</p>
+    <p>&nbsp; &nbsp; &nbsp;通过快捷键&ldquo;Ctrl/Command + H&rdquo;开启。</p>
+    <p>3）页内快捷检索</p>
+    <p>&nbsp; &nbsp; &nbsp;仅在阅读视图（查看文档时）可用，针对所查看的文档内容标题进行查找并定位。</p>
+    <p>&nbsp; &nbsp; &nbsp;在阅读视图中通过&ldquo;Ctrl/Command + T&rdquo;开启。</p>
+    <p>4）页内全文检索</p>
+    <p>&nbsp; &nbsp; &nbsp;仅在阅读视图（查看文档）时可用，针对所查看的文档内容文本进行查找并定位。 &nbsp;</p>
+    <p>&nbsp; &nbsp; &nbsp;在阅读视图中通过&ldquo;Ctrl/Command + F&rdquo;开启。</p>
+    <h1>详细功能说明</h1>
+    <p>即将添加内容。。。</p>
+    <p></p>
+</article>
+</body>
+</html>

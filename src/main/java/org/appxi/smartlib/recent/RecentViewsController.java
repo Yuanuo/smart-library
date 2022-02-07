@@ -1,7 +1,10 @@
 package org.appxi.smartlib.recent;
 
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyCodeCombination;
 import org.appxi.holder.RawHolder;
 import org.appxi.javafx.app.AppEvent;
+import org.appxi.javafx.app.DesktopApp;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
@@ -11,10 +14,13 @@ import org.appxi.prefs.Preferences;
 import org.appxi.prefs.PreferencesInProperties;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.dao.DataApi;
+import org.appxi.smartlib.html.HtmlViewer;
+import org.appxi.smartlib.item.FileProvider;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemProviders;
 import org.appxi.smartlib.item.ItemViewer;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -34,6 +40,7 @@ public class RecentViewsController extends WorkbenchViewController {
     @Override
     public void initialize() {
         app.eventBus.addEventHandler(AppEvent.STOPPING, event -> saveRecentViews());
+        app.getPrimaryScene().getAccelerators().put(new KeyCodeCombination(KeyCode.F1), this::showWelcome);
         //
         final RawHolder<WorkbenchMainViewController> swapRecentViewSelected = new RawHolder<>();
         final List<WorkbenchMainViewController> swapRecentViews = new ArrayList<>();
@@ -71,7 +78,9 @@ public class RecentViewsController extends WorkbenchViewController {
             }
         });
         app.eventBus.addEventHandler(AppEvent.STARTED, event -> FxHelper.runThread(100, () -> {
-            if (!swapRecentViews.isEmpty()) {
+            if (swapRecentViews.isEmpty()) {
+                showWelcome();
+            } else {
                 swapRecentViews.forEach(WorkbenchViewController::initialize);
                 if (null != swapRecentViewSelected.value)
                     workbench.selectMainView(swapRecentViewSelected.value.id.get());
@@ -99,5 +108,24 @@ public class RecentViewsController extends WorkbenchViewController {
 
     @Override
     public void onViewportShowing(boolean firstTime) {
+    }
+
+    private void showWelcome() {
+        Path indexHtml = DesktopApp.appDir().resolve("template/index.html");
+        Item indexItem = new Item("欢迎使用", indexHtml.toString(), FileProvider.ONE);
+        HtmlViewer newViewer = new HtmlViewer(indexItem, workbench);
+        // 优先查找存在的视图，以避免重复打开
+        HtmlViewer oldViewer = (HtmlViewer) workbench.findMainViewController(newViewer.id.get());
+
+        FxHelper.runLater(() -> {
+            if (null != oldViewer) {
+                workbench.selectMainView(oldViewer.id.get());
+                return;
+            }
+
+            workbench.addWorkbenchViewAsMainView(newViewer, false);
+            newViewer.initialize();
+            workbench.selectMainView(newViewer.id.get());
+        });
     }
 }
