@@ -116,10 +116,17 @@ class LibraryTreeView extends TreeViewEx<Item> {
         backup.setOnAction(e -> ItemActions.backup(null != item ? item : root().getValue()));
         menuItems.add(backup);
         // restore
-        final MenuItem restore = new MenuItem("导入数据包");
+        final MenuItem restore = new MenuItem("导入数据包（到根目录）");
         restore.setGraphic(MaterialIcon.CALL_MERGE.graphic());
-        restore.setOnAction(e -> ItemActions.restore(explorer.preferFolder()));
+        restore.setOnAction(e -> ItemActions.restore(root().getValue()));
         menuItems.add(restore);
+        // restore to selected folder
+        if (null != item) {
+            final MenuItem restoreToSel = new MenuItem("导入数据包（到所选目录）");
+            restoreToSel.setGraphic(MaterialIcon.CALL_MERGE.graphic());
+            restoreToSel.setOnAction(e -> ItemActions.restore(explorer.preferFolder()));
+            menuItems.add(restoreToSel);
+        }
         // ---
         menuItems.add(new SeparatorMenuItem());
         //
