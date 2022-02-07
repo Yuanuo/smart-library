@@ -28,7 +28,7 @@ import java.util.Optional;
 public class App extends WorkbenchApp {
     public static final String ID = "smartLibrary";
     public static final String NAME = "智悲研藏";
-    public static final String VERSION = "22.01.20";
+    public static final String VERSION = "22.02.07";
     private static App instance;
 
     public App() {

@@ -42,6 +42,7 @@ module appxi.smartLibrary {
 
     exports org.appxi.smartlib; // for application launch
     exports org.appxi.smartlib.html;
+    exports org.appxi.smartlib.item;
 
     opens org.appxi.smartlib;
     opens org.appxi.smartlib.dao;
