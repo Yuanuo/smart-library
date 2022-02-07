@@ -268,6 +268,7 @@ public class ItemActions {
         dialog.setHeaderText("接触数据");
         dialog.setContentText("""
                 此功能适用于批量修整手动维护的本地数据，若非必要不建议使用！！
+                此功能不同时更新索引数据，请在修整数据后“重建索引”！
 
                 将处理以下数据项及所有子项的数据：
                                 
