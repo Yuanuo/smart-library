@@ -249,6 +249,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
     }
 
     void reload(LibraryTreeItem treeItem) {
+        if (null == treeItem) treeItem = treeView.root();
         if (null == treeItem) {
             final LibraryTreeItem rootItem = new LibraryTreeItem(Item.ROOT);
             rootItem.setExpanded(true);

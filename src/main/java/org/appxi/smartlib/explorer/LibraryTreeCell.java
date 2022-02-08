@@ -44,6 +44,8 @@ class LibraryTreeCell implements Callback<TreeView<Item>, TreeCell<Item>> {
                 if (item == updatedItem)
                     return;//
                 updatedItem = item;
+                if (this.textProperty().isBound())
+                    this.textProperty().unbind();
                 if (item.provider.isDirectory()) {
                     this.textProperty().bind(Bindings.createStringBinding(
                             () -> StringHelper.concat(item.getName(), " (", getTreeItem().getChildren().size(), ")"),
