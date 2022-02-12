@@ -83,7 +83,9 @@ public abstract class HtmlEditor extends ItemEditor {
                 onWebEngineLoading();
             }));
         } else if (null != webView) {
-            Platform.runLater(() -> webView.requestFocus());
+            FxHelper.runLater(() -> {
+                if (null != webView) webView.requestFocus();
+            });
         }
     }
 
