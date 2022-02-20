@@ -1,10 +1,10 @@
 package org.appxi.smartlib.item.article;
 
 import org.appxi.javafx.workbench.WorkbenchPane;
-import org.appxi.smartlib.html.AdvancedEditor;
+import org.appxi.smartlib.html.HtmlEditor;
 import org.appxi.smartlib.item.Item;
 
-class ArticleEditor extends AdvancedEditor {
+class ArticleEditor extends HtmlEditor {
     final ArticleDocument document;
 
     public ArticleEditor(Item item, WorkbenchPane workbench) {

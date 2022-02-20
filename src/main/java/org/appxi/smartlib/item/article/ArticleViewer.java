@@ -9,7 +9,6 @@ import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
 import org.appxi.util.StringHelper;
 
-import java.net.URI;
 import java.nio.file.Path;
 
 class ArticleViewer extends HtmlViewer {
@@ -33,11 +32,11 @@ class ArticleViewer extends HtmlViewer {
         button.setGraphic(MaterialIcon.EDIT.graphic());
         button.setOnAction(event -> app.eventBus.fireEvent(new ItemEvent(ItemEvent.EDITING, item)));
         //
-        webPane.toolbar.addLeft(button);
+        webPane().toolbar.addLeft(button);
     }
 
     @Override
-    protected URI prepareHtmlContent() {
+    protected Object prepareHtmlContent() {
         String htmlFile = this.document.toViewableHtmlFile(null,
                 body -> StringHelper.concat("<body><article>", body.html(), "</article></body>"),
                 WebIncl.getIncludePaths()

@@ -12,8 +12,7 @@ import org.appxi.smartlib.dao.DataApi;
 import org.appxi.smartlib.html.HtmlRepairer;
 import org.appxi.smartlib.item.AbstractProvider;
 import org.appxi.smartlib.item.Item;
-import org.appxi.smartlib.item.ItemEditor;
-import org.appxi.smartlib.item.ItemViewer;
+import org.appxi.smartlib.item.ItemRenderer;
 import org.appxi.util.DigestHelper;
 import org.appxi.util.FileHelper;
 import org.appxi.util.StringHelper;
@@ -49,15 +48,10 @@ abstract class TikaProvider extends AbstractProvider {
         return null;
     }
 
-    @Override
-    public final Function<Item, ItemEditor> getEditor() {
-        return null;
-    }
-
-    private Function<Item, ItemViewer> viewer;
+    private Function<Item, ItemRenderer> viewer;
 
     @Override
-    public Function<Item, ItemViewer> getViewer() {
+    public Function<Item, ItemRenderer> getViewer() {
         if (null != this.viewer) return this.viewer;
         return this.viewer = item -> new TikaViewer(item, App.app().workbench());
     }
@@ -125,7 +119,7 @@ abstract class TikaProvider extends AbstractProvider {
             } else if (include.endsWith(".css")) {
                 buff.append("\r\n<link rel=\"stylesheet\" href=\"").append(include).append("\"/>");
             } else if (include.startsWith("<script") || include.startsWith("<style")
-                       || include.startsWith("<link") || include.startsWith("<meta")) {
+                    || include.startsWith("<link") || include.startsWith("<meta")) {
                 buff.append("\r\n").append(include);
             } else if (include.startsWith("var ") || include.startsWith("function")) {
                 scripts.add(include);

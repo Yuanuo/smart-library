@@ -9,9 +9,8 @@ import org.appxi.smartlib.AppContext;
 import org.appxi.smartlib.html.HtmlHelper;
 import org.appxi.smartlib.item.AbstractProvider;
 import org.appxi.smartlib.item.Item;
-import org.appxi.smartlib.item.ItemEditor;
 import org.appxi.smartlib.item.ItemHelper;
-import org.appxi.smartlib.item.ItemViewer;
+import org.appxi.smartlib.item.ItemRenderer;
 import org.appxi.smartlib.search.Searchable;
 import org.appxi.util.DigestHelper;
 import org.appxi.util.NumberHelper;
@@ -60,18 +59,18 @@ public class ArticleProvider extends AbstractProvider {
         return ItemHelper.nameWithoutProvider(name, providerId());
     }
 
-    private Function<Item, ItemEditor> editor;
+    private Function<Item, ItemRenderer> editor;
 
     @Override
-    public Function<Item, ItemEditor> getEditor() {
+    public Function<Item, ItemRenderer> getEditor() {
         if (null != this.editor) return this.editor;
         return this.editor = item -> new ArticleEditor(item, App.app().workbench());
     }
 
-    private Function<Item, ItemViewer> viewer;
+    private Function<Item, ItemRenderer> viewer;
 
     @Override
-    public Function<Item, ItemViewer> getViewer() {
+    public Function<Item, ItemRenderer> getViewer() {
         if (null != this.viewer) return this.viewer;
         return this.viewer = item -> new ArticleViewer(item, App.app().workbench());
     }

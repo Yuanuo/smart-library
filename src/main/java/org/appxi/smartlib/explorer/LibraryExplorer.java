@@ -10,14 +10,13 @@ import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.WorkbenchViewController;
+import org.appxi.javafx.workbench.views.WorkbenchMainViewController;
 import org.appxi.javafx.workbench.views.WorkbenchSideViewController;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.item.FolderProvider;
 import org.appxi.smartlib.item.Item;
-import org.appxi.smartlib.item.ItemController;
-import org.appxi.smartlib.item.ItemEditor;
 import org.appxi.smartlib.item.ItemEvent;
-import org.appxi.smartlib.item.ItemViewer;
+import org.appxi.smartlib.item.ItemRenderer;
 import org.appxi.smartlib.item.article.ArticleProvider;
 
 import java.nio.file.Path;
@@ -47,11 +46,12 @@ public class LibraryExplorer extends WorkbenchSideViewController {
                 this.treeView.refresh();
             }
 
-            final ItemViewer newViewer = item.provider.getViewer().apply(item);
-            final ItemViewer oldViewer = (ItemViewer) workbench.findMainViewController(newViewer.id.get());
+            final ItemRenderer newViewer = item.provider.getViewer().apply(item);
+            final WorkbenchMainViewController oldViewer = workbench.findMainViewController(newViewer.id.get());
             if (null != oldViewer) {
                 workbench.selectMainView(oldViewer.id.get());
-                FxHelper.runLater(() -> oldViewer.navigate(item));
+                if (oldViewer instanceof ItemRenderer itemRenderer)
+                    FxHelper.runLater(() -> itemRenderer.navigate(item));
                 return;
             }
             FxHelper.runLater(() -> {
@@ -68,8 +68,8 @@ public class LibraryExplorer extends WorkbenchSideViewController {
                 locate(item);
                 return;
             }
-            final ItemEditor newEditor = item.provider.getEditor().apply(item);
-            final ItemEditor oldEditor = (ItemEditor) workbench.findMainViewController(newEditor.id.get());
+            final ItemRenderer newEditor = item.provider.getEditor().apply(item);
+            final WorkbenchMainViewController oldEditor = workbench.findMainViewController(newEditor.id.get());
             if (null != oldEditor) {
                 workbench.selectMainView(oldEditor.id.get());
                 return;
@@ -155,8 +155,8 @@ public class LibraryExplorer extends WorkbenchSideViewController {
             treeView.getSelectionModel().clearSelection();
             // remove from main-views
             FxHelper.runLater(() -> workbench.mainViews.removeTabs(tab ->
-                    tab.getUserData() instanceof ItemController c
-                    && c.item.getPath().startsWith(event.item.getPath())));
+                    tab.getUserData() instanceof ItemRenderer c
+                            && c.item.getPath().startsWith(event.item.getPath())));
             // remove from recents
             Set.copyOf(UserPrefs.recents.getPropertyKeys()).forEach(k -> {
                 if (k.startsWith(event.item.getPath())) {
@@ -201,7 +201,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
         btnLocate.getStyleClass().add("flat");
         btnLocate.setOnAction(event -> {
             final WorkbenchViewController controller1 = workbench.getSelectedMainViewController();
-            if (controller1 instanceof ItemController controller) locate(controller.item);
+            if (controller1 instanceof ItemRenderer controller) locate(controller.item);
         });
         //
         this.topBar.addRight(btnNewArticle, btnNewFolder, btnLocate);
@@ -225,7 +225,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
         TreeItem<Item> treeItem = treeView.getSelectionModel().getSelectedItem();
         Item result = null == treeItem ? null : treeItem.getValue();
 
-        if (null == result && workbench.getSelectedMainViewController() instanceof ItemController c) result = c.item;
+        if (null == result && workbench.getSelectedMainViewController() instanceof ItemRenderer c) result = c.item;
         if (null == result) result = treeView.getRoot().getValue();
         return result;
     }

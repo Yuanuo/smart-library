@@ -1,11 +1,8 @@
 package org.appxi.smartlib.html;
 
-import javafx.application.Platform;
 import javafx.beans.InvalidationListener;
 import javafx.beans.Observable;
-import javafx.concurrent.Worker;
 import javafx.event.Event;
-import javafx.event.EventHandler;
 import javafx.print.PageLayout;
 import javafx.print.PageOrientation;
 import javafx.print.Paper;
@@ -24,35 +21,26 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.StackPane;
 import netscape.javascript.JSObject;
-import org.appxi.holder.RawHolder;
-import org.appxi.javafx.app.AppEvent;
 import org.appxi.javafx.app.DesktopApp;
 import org.appxi.javafx.control.LookupLayer;
 import org.appxi.javafx.control.ProgressLayer;
 import org.appxi.javafx.control.WebPane;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
-import org.appxi.javafx.visual.VisualEvent;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.AppContext;
 import org.appxi.smartlib.event.SearcherEvent;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
-import org.appxi.smartlib.item.ItemViewer;
+import org.appxi.smartlib.recent.RecentViewSupport;
 import org.appxi.util.StringHelper;
 import org.appxi.util.ext.Attributes;
 import org.appxi.util.ext.LookupExpression;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.io.BufferedInputStream;
-import java.io.InputStream;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -61,36 +49,21 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Consumer;
 
-public class HtmlViewer extends ItemViewer {
-    protected static final Logger logger = LoggerFactory.getLogger(HtmlViewer.class);
-
-    private final EventHandler<VisualEvent> onSetAppStyle = this::onSetAppStyle;
-    private final EventHandler<AppEvent> onAppEventStopping = this::onAppEventStopping;
-    private final EventHandler<VisualEvent> onSetWebStyle = this::onSetWebStyle;
+public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
     private final InvalidationListener onWebViewBodyResize = this::onWebViewBodyResize;
 
-    protected WebPane webPane;
     protected WebPane.WebMarksFinder webFinder;
-    protected Runnable loadingLayerHandler;
 
     public HtmlViewer(Item item, WorkbenchPane workbench) {
         super(item, workbench);
     }
 
     @Override
-    public void initialize() {
-        app.eventBus.addEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
-        app.eventBus.addEventHandler(AppEvent.STOPPING, onAppEventStopping);
-        app.eventBus.addEventHandler(VisualEvent.SET_WEB_STYLE, onSetWebStyle);
-    }
-
-    @Override
     protected void onViewportInitOnce(StackPane viewport) {
-        this.webPane = new WebPane();
-        this.webPane.addEventHandler(KeyEvent.KEY_PRESSED, this::handleWebViewShortcuts);
-        viewport.getChildren().add(this.webPane);
+        super.onViewportInitOnce(viewport);
+        //
+        this.webPane().addEventHandler(KeyEvent.KEY_PRESSED, this::handleWebViewShortcuts);
 
         addTool_Print();
         addTool_GotoHeadings();
@@ -112,12 +85,12 @@ public class HtmlViewer extends ItemViewer {
             PageLayout pageLayout = printer.createPageLayout(Paper.A4, PageOrientation.PORTRAIT,
                     .4, .4, .4, .4);
             job.getJobSettings().setPageLayout(pageLayout);
-            webPane.webEngine().print(job);
+            webPane().webEngine().print(job);
             job.endJob();
             app.toast("已添加到系统打印队列，请检查打印结果！");
         });
         //
-        webPane.toolbar.addLeft(button);
+        webPane().toolbar.addLeft(button);
     }
 
     private Button gotoHeadings;
@@ -175,7 +148,7 @@ public class HtmlViewer extends ItemViewer {
                         }
                         final LookupExpression lookupExpression = optional.orElse(null);
                         //
-                        String headings = webPane.executeScript("getHeadings()");
+                        String headings = webPane().executeScript("getHeadings()");
                         if (null != headings && headings.length() > 0) {
                             headings.lines().forEach(str -> {
                                 String[] arr = str.split("#", 2);
@@ -211,108 +184,36 @@ public class HtmlViewer extends ItemViewer {
                     @Override
                     public void hide() {
                         super.hide();
-                        webPane.webView().requestFocus();
+                        webPane().webView().requestFocus();
                     }
                 };
             }
             gotoHeadingsLayer.show(null);
         });
         //
-        webPane.toolbar.addLeft(gotoHeadings);
+        webPane().toolbar.addLeft(gotoHeadings);
     }
 
     protected void addTool_FindInPage() {
-        webFinder = new WebPane.WebMarksFinder(this.webPane, getViewport());
+        webFinder = new WebPane.WebMarksFinder(this.webPane(), getViewport());
         webFinder.setAsciiConvertor(AppContext::ascii);
-        webPane.toolbar.addRight(webFinder);
+        webPane().toolbar.addRight(webFinder);
     }
 
-    protected void applyWebStyle(VisualEvent event) {
-        if (null == this.webPane) return;
-
-        final RawHolder<byte[]> allBytes = new RawHolder<>();
-        allBytes.value = """
-                :root {
-                    --font-family: tibetan, "%s", AUTO !important;
-                    --zoom: %.2f !important;
-                    --text-color: %s;
-                }
-                body {
-                    background-color: %s;
-                }
-                """.formatted(app.visualProvider.webFontName(),
-                app.visualProvider.webFontSize(),
-                app.visualProvider.webTextColor(),
-                app.visualProvider.webPageColor()
-        ).getBytes(StandardCharsets.UTF_8);
-        Consumer<InputStream> consumer = stream -> {
-            try (BufferedInputStream in = new BufferedInputStream(stream)) {
-                int pos = allBytes.value.length;
-                byte[] tmpBytes = new byte[pos + in.available()];
-                System.arraycopy(allBytes.value, 0, tmpBytes, 0, pos);
-                allBytes.value = tmpBytes;
-                in.read(allBytes.value, pos, in.available());
-            } catch (Exception exception) {
-                exception.printStackTrace();
-            }
-        };
-        Optional.ofNullable(VisualEvent.class.getResourceAsStream("web.css")).ifPresent(consumer);
-        Optional.ofNullable(AppContext.class.getResourceAsStream("web.css")).ifPresent(consumer);
-
-        String cssData = "data:text/css;charset=utf-8;base64," + Base64.getMimeEncoder().encodeToString(allBytes.value);
-        FxHelper.runLater(() -> {
-            webPane.webEngine().setUserStyleSheetLocation(cssData);
-            applyBodyTheme();
-        });
-    }
-
-    private void applyBodyTheme() {
-        if (null == webPane) return;
-        try {
-            webPane.executeScript("document.body.setAttribute('class','".concat(app.visualProvider.toString()).concat("');"));
-        } catch (RuntimeException e) {
-            logger.warn("applyBodyTheme failed", e);
-        }
-    }
-
-    protected void onSetAppStyle(VisualEvent event) {
-        this.applyWebStyle(null);
-    }
-
-    protected void onAppEventStopping(AppEvent event) {
-        if (null == this.webPane) return;
-        saveUserExperienceData();
-    }
-
-    protected void onSetWebStyle(VisualEvent event) {
-        if (null == this.webPane) return;
-        saveUserExperienceData();
-        this.applyWebStyle(null);
-        navigate(null);
-    }
-
-    @Override
-    public void onViewportHiding() {
-        saveUserExperienceData();
-    }
-
-    @Override
     public void onViewportClosing(Event event, boolean selected) {
-        saveUserExperienceData();
-        app.eventBus.removeEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
-        app.eventBus.removeEventHandler(AppEvent.STOPPING, onAppEventStopping);
-        app.eventBus.removeEventHandler(VisualEvent.SET_WEB_STYLE, onSetWebStyle);
+        super.onViewportClosing(event, selected);
+        //
         app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, item));
-        if (null != webPane) webPane.release();
     }
 
+    @Override
     protected void saveUserExperienceData() {
-        if (null == this.webPane) return;
+        if (null == this.webPane()) return;
         try {
-            final double scrollTopPercentage = webPane.getScrollTopPercentage();
+            final double scrollTopPercentage = webPane().getScrollTopPercentage();
             UserPrefs.recents.setProperty(item.getPath().concat(".percent"), scrollTopPercentage);
 
-            final String selector = webPane.executeScript("getScrollTop1Selector()");
+            final String selector = webPane().executeScript("getScrollTop1Selector()");
 //            System.out.println(selector + " SET selector for " + path.get());
             UserPrefs.recents.setProperty(item.getPath().concat(".selector"), selector);
         } catch (Exception ignore) {
@@ -320,30 +221,9 @@ public class HtmlViewer extends ItemViewer {
     }
 
     @Override
-    public void onViewportShowing(boolean firstTime) {
-        if (firstTime) {
-            loadingLayerHandler = ProgressLayer.show(getViewport(), progressLayer -> FxHelper.runLater(() -> {
-                webPane.webEngine().setUserDataDirectory(UserPrefs.cacheDir().toFile());
-                // apply theme
-                this.applyWebStyle(null);
-                //
-                webPane.webEngine().getLoadWorker().stateProperty().addListener((o, ov, state) -> {
-                    if (state == Worker.State.SUCCEEDED) onWebEngineLoadSucceeded();
-                    else if (state == Worker.State.FAILED) onWebEngineLoadFailed();
-                });
-                //
-                onWebEngineLoading();
-            }));
-        } else {
-            Platform.runLater(() -> webPane.webView().requestFocus());
-            app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, item));
-        }
-    }
-
     protected void onWebEngineLoading() {
         navigate(null);
     }
-
 
     private Item openedItem, navigatePos;
 
@@ -359,44 +239,42 @@ public class HtmlViewer extends ItemViewer {
             return;
         }
 
-        if (null == loadingLayerHandler) loadingLayerHandler = ProgressLayer.showIndicator(getViewport());
+        if (null == progressLayerHandler) progressLayerHandler = ProgressLayer.showIndicator(getViewport());
         openedItem = item;
         navigatePos = null != navigatePos ? navigatePos : item;
-        final URI htmlUri = prepareHtmlContent();
-        if (null != htmlUri) {
-            logger.warn("LOAD html: ".concat(htmlUri.toString()));
-            FxHelper.runLater(() -> webPane.webEngine().load(htmlUri.toString()));
+        final Object html = prepareHtmlContent();
+        if (html instanceof URI uri) {
+            logger.warn("LOAD html: ".concat(uri.toString()));
+            FxHelper.runLater(() -> webPane().webEngine().load(uri.toString()));
+        } else if (html instanceof String text) {
+            logger.warn("LOAD html, len=" + text.length());
+            FxHelper.runLater(() -> webPane().webEngine().loadContent(text));
         }
     }
 
-    protected URI prepareHtmlContent() {
+    protected Object prepareHtmlContent() {
         return Path.of(item.getPath()).toUri();
     }
 
     protected void onWebEngineLoadSucceeded() {
+        super.onWebEngineLoadSucceeded();
         // set an interface object named 'javaApp' in the web engine's page
-        final JSObject window = webPane.executeScript("window");
+        final JSObject window = webPane().executeScript("window");
         window.setMember("javaApp", javaApp);
-        // apply theme
-        applyBodyTheme();
 
-        webPane.setContextMenuBuilder(this::handleWebViewContextMenu);
+        webPane().setContextMenuBuilder(this::handleWebViewContextMenu);
         //
         position(navigatePos);
         //
-        if (null != loadingLayerHandler) {
-            loadingLayerHandler.run();
-            loadingLayerHandler = null;
-        }
-        webPane.patch();
-        //
-        webPane.widthProperty().removeListener(onWebViewBodyResize);
-        webPane.widthProperty().addListener(onWebViewBodyResize);
+        webPane().widthProperty().removeListener(onWebViewBodyResize);
+        webPane().widthProperty().addListener(onWebViewBodyResize);
 
         app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, this.item));
-    }
-
-    protected void onWebEngineLoadFailed() {
+        //
+        if (null != progressLayerHandler) {
+            progressLayerHandler.run();
+            progressLayerHandler = null;
+        }
     }
 
     protected final void position(Attributes pos) {
@@ -409,31 +287,31 @@ public class HtmlViewer extends ItemViewer {
                     posParts.sort(Comparator.comparingInt(String::length));
                     longText = posParts.get(posParts.size() - 1);
                 }
-                if (null != longText && webPane.findInPage(longText, true)) {
+                if (null != longText && webPane().findInPage(longText, true)) {
                     webFinder.mark(posTerm);
-                } else if (null != longText && webPane.findInWindow(longText, true)) {
+                } else if (null != longText && webPane().findInWindow(longText, true)) {
                     webFinder.mark(posTerm);
                 } else {
                     webFinder.find(posTerm);
                 }
             } else if (null != pos && pos.hasAttr("position.selector")) {
-                webPane.executeScript(StringHelper.concat("setScrollTop1BySelectors(\"", pos.removeAttr("position.selector"), "\")"));
+                webPane().executeScript(StringHelper.concat("setScrollTop1BySelectors(\"", pos.removeAttr("position.selector"), "\")"));
             } else if (null != pos && pos.hasAttr("anchor")) {
-                webPane.executeScript("setScrollTop1BySelectors(\"".concat(pos.removeAttr("anchor")).concat("\")"));
+                webPane().executeScript("setScrollTop1BySelectors(\"".concat(pos.removeAttr("anchor")).concat("\")"));
             } else {
                 final String selector = UserPrefs.recents.getString(item.getPath().concat(".selector"), null);
                 final double percent = UserPrefs.recents.getDouble(item.getPath().concat(".percent"), 0);
                 if (null != selector) {
 //                    System.out.println(selector + " GET selector for " + path.get());
-                    webPane.executeScript(StringHelper.concat("setScrollTop1BySelectors(\"", selector, "\")"));
+                    webPane().executeScript(StringHelper.concat("setScrollTop1BySelectors(\"", selector, "\")"));
                 } else if (openedItem.hasAttr("anchor")) {
-                    webPane.executeScript("setScrollTop1BySelectors(\"".concat(openedItem.attr("anchor")).concat("\")"));
+                    webPane().executeScript("setScrollTop1BySelectors(\"".concat(openedItem.attr("anchor")).concat("\")"));
                 }
             }
         } catch (Throwable e) {
             e.printStackTrace();
         }
-        webPane.webView().requestFocus();
+        webPane().webView().requestFocus();
     }
 
     protected void handleWebViewShortcuts(KeyEvent event) {
@@ -441,7 +319,7 @@ public class HtmlViewer extends ItemViewer {
             // Ctrl + F
             if (event.getCode() == KeyCode.F) {
                 // 如果有选中文字，则按查找选中文字处理
-                String selText = webPane.executeScript("getValidSelectionText()");
+                String selText = webPane().executeScript("getValidSelectionText()");
                 selText = null == selText ? null : selText.strip().replace('\n', ' ');
                 webFinder.find(StringHelper.isBlank(selText) ? null : selText);
                 event.consume();
@@ -450,7 +328,7 @@ public class HtmlViewer extends ItemViewer {
             // Ctrl + G, Ctrl + H
             if (event.getCode() == KeyCode.G || event.getCode() == KeyCode.H) {
                 // 如果有选中文字，则按查找选中文字处理
-                final String selText = webPane.executeScript("getValidSelectionText()");
+                final String selText = webPane().executeScript("getValidSelectionText()");
                 app.eventBus.fireEvent(event.getCode() == KeyCode.G
                         ? SearcherEvent.ofLookup(selText) // LOOKUP
                         : SearcherEvent.ofSearch(selText) // SEARCH
@@ -468,7 +346,7 @@ public class HtmlViewer extends ItemViewer {
     }
 
     protected ContextMenu handleWebViewContextMenu() {
-        final String origText = webPane.executeScript("getValidSelectionText()");
+        final String origText = webPane().executeScript("getValidSelectionText()");
         String trimText = null == origText ? null : origText.strip().replace('\n', ' ');
         final String availText = StringHelper.isBlank(trimText) ? null : trimText;
         //
@@ -516,7 +394,7 @@ public class HtmlViewer extends ItemViewer {
     }
 
     private void onWebViewBodyResize(Observable o) {
-        webPane.executeScript("beforeOnResizeBody()");
+        webPane().executeScript("beforeOnResizeBody()");
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -528,10 +406,6 @@ public class HtmlViewer extends ItemViewer {
 
     public final class JavaApp {
         private JavaApp() {
-        }
-
-        public void log(String msg) {
-            System.out.println("javaApp.LOG : " + msg);
         }
 
         public void updateFinderState(int index, int count) {

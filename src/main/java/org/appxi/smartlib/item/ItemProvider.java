@@ -25,11 +25,11 @@ public interface ItemProvider {
 
     Consumer<Item> getCreator();
 
-    default Function<Item, ItemEditor> getEditor() {
+    default Function<Item, ItemRenderer> getEditor() {
         return null;
     }
 
-    default Function<Item, ItemViewer> getViewer() {
+    default Function<Item, ItemRenderer> getViewer() {
         return null;
     }
 

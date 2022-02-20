@@ -18,7 +18,7 @@ import org.appxi.smartlib.html.HtmlViewer;
 import org.appxi.smartlib.item.FileProvider;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemProviders;
-import org.appxi.smartlib.item.ItemViewer;
+import org.appxi.smartlib.item.ItemRenderer;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -95,7 +95,7 @@ public class RecentViewsController extends WorkbenchViewController {
     private void saveRecentViews() {
         final Preferences recents = createRecentViews(false);
         workbench.mainViews.getTabs().forEach(tab -> {
-            if (tab.getUserData() instanceof ItemViewer itemView) {
+            if (tab.getUserData() instanceof ItemRenderer itemView && itemView instanceof RecentViewSupport) {
                 recents.setProperty(itemView.item.getPath(),
                         String.valueOf(itemView.item.provider.providerId())
                                 .concat("|").concat(String.valueOf(tab.isSelected()))
