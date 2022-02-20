@@ -8,9 +8,9 @@ public abstract class ItemEditor extends ItemController {
     public ItemEditor(Item item, WorkbenchPane workbench) {
         super(item, workbench);
         //
-        this.id.bind(Bindings.concat("Edit@", item.path));
+        this.id.bind(Bindings.createStringBinding(() -> "Edit@".concat(item.typedPath()), item.path));
         //
-        this.title.bind(Bindings.concat("编辑: ", item.name));
+        this.title.bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.getName()), item.name));
         this.tooltip.bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.typedPath()), item.path));
     }
 }
