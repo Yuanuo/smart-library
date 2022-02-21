@@ -52,8 +52,8 @@ public interface PiecesRepository extends PieceRepository {
 
         if (null != categories && !categories.isEmpty()) {
             query.addFilterQuery(new SimpleFilterQuery(new SimpleStringCriteria("category_ss:(" +
-                                                                                categories.stream().map(PieceRepository::wrapWhitespace).collect(Collectors.joining(" OR "))
-                                                                                + ")")));
+                    categories.stream().map(PieceRepository::wrapWhitespace).collect(Collectors.joining(" OR "))
+                    + ")")));
         }
 
         if (facet) {
@@ -103,8 +103,8 @@ public interface PiecesRepository extends PieceRepository {
 
         if (null != categories && !categories.isEmpty()) {
             query.addFilterQuery(new SimpleFilterQuery(new SimpleStringCriteria("category_ss:(" +
-                                                                                categories.stream().map(PieceRepository::wrapWhitespace).collect(Collectors.joining(" OR "))
-                                                                                + ")")));
+                    categories.stream().map(PieceRepository::wrapWhitespace).collect(Collectors.joining(" OR "))
+                    + ")")));
         }
 
         final SolrTemplate solrTemplate = AppContext.getBean(SolrTemplate.class);

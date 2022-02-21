@@ -257,7 +257,6 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
     }
 
     protected void onWebEngineLoadSucceeded() {
-        super.onWebEngineLoadSucceeded();
         // set an interface object named 'javaApp' in the web engine's page
         final JSObject window = webPane().executeScript("window");
         window.setMember("javaApp", javaApp);
@@ -268,13 +267,10 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
         //
         webPane().widthProperty().removeListener(onWebViewBodyResize);
         webPane().widthProperty().addListener(onWebViewBodyResize);
+        //
+        super.onWebEngineLoadSucceeded();
 
         app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, this.item));
-        //
-        if (null != progressLayerHandler) {
-            progressLayerHandler.run();
-            progressLayerHandler = null;
-        }
     }
 
     protected final void position(Attributes pos) {

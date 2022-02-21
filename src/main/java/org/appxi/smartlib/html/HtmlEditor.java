@@ -3,6 +3,7 @@ package org.appxi.smartlib.html;
 import javafx.application.Platform;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.DataFormat;
+import javafx.scene.layout.StackPane;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import netscape.javascript.JSObject;
@@ -15,12 +16,23 @@ import org.appxi.smartlib.App;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
 
-import java.nio.file.Path;
 import java.util.Map;
 
-public abstract class HtmlEditor extends HtmlEditorBase {
+public abstract class HtmlEditor extends HtmlRendererEx {
     public HtmlEditor(Item item, WorkbenchPane workbench) {
         super(item, workbench);
+    }
+
+    @Override
+    protected void bindProperties() {
+        super.bindPropertiesForEdit();
+    }
+
+    @Override
+    protected void onViewportInitOnce(StackPane viewport) {
+        super.onViewportInitOnce(viewport);
+        //
+        super.initTopAreaForEdit();
     }
 
     private WebView cachedWebView;
@@ -43,6 +55,11 @@ public abstract class HtmlEditor extends HtmlEditorBase {
     /* //////////////////////////////////////////////////////////////////// */
 
     @Override
+    public final void navigate(Item item) {
+        //
+    }
+
+    @Override
     protected void onWebEngineLoading() {
         loadEditor();
     }
@@ -50,7 +67,7 @@ public abstract class HtmlEditor extends HtmlEditorBase {
     protected void loadEditor() {
         String template = """
                 <!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8">
-                <link rel="stylesheet" href="${webIncl}"/>
+                <link rel="stylesheet" href="${appDir}template/web-incl/app.css"/>
                 <style>
                 /* For other boilerplate styles, see: /docs/general-configuration-guide/boilerplate-content-css/ */
                 /*
@@ -88,7 +105,7 @@ public abstract class HtmlEditor extends HtmlEditorBase {
                   float: right;
                 }
                 </style>
-                <script src='${tinymce}'></script>
+                <script src='${appDir}template/tinymce/tinymce.js'></script>
                 <script type="text/javascript">
                 var useDarkMode = ${useDarkMode};
 
@@ -135,8 +152,7 @@ public abstract class HtmlEditor extends HtmlEditorBase {
                 </head>
                 <body><textarea id="editor"></textarea></body></html>
                 """;
-        template = template.replace("${webIncl}", WebIncl.webIncl)
-                .replace("${tinymce}", WebIncl.tinymce)
+        template = template.replace("${appDir}", DesktopApp.appDir().toUri().toString())
                 .replace("${useDarkMode}", String.valueOf(app.visualProvider.theme().name().contains("DARK")))
         ;
         webEngine().loadContent(template);
@@ -151,8 +167,6 @@ public abstract class HtmlEditor extends HtmlEditorBase {
 
     @Override
     protected void onWebEngineLoadSucceeded() {
-        super.onWebEngineLoadSucceeded();
-        //
         // set an interface object named 'javaApp' in the web engine's page
         final JSObject window = (JSObject) webEngine().executeScript("window");
         window.setMember("javaApp", javaApp);
@@ -168,10 +182,7 @@ public abstract class HtmlEditor extends HtmlEditorBase {
         if (cachedEditorIsDirty)
             webEngine().executeScript("setTimeout(function(){tinymce.activeEditor.setDirty(true)}, 120)");
         //
-        if (null != progressLayerHandler) {
-            progressLayerHandler.run();
-            progressLayerHandler = null;
-        }
+        super.onWebEngineLoadSucceeded();
     }
 
     @Override
@@ -209,11 +220,5 @@ public abstract class HtmlEditor extends HtmlEditorBase {
 //            System.out.println(mime + " >>> " + data);
             Platform.runLater(() -> Clipboard.getSystemClipboard().setContent(Map.of(DataFormat.PLAIN_TEXT, text)));
         }
-    }
-
-    private final static class WebIncl {
-        static final Path template = DesktopApp.appDir().resolve("template");
-        static final String webIncl = template.resolve("web-incl/app.css").toUri().toString();
-        static final String tinymce = template.resolve("tinymce/tinymce.js").toUri().toString();
     }
 }

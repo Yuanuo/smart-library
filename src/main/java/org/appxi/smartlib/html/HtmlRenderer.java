@@ -4,7 +4,6 @@ import javafx.concurrent.Worker;
 import javafx.event.Event;
 import javafx.event.EventHandler;
 import javafx.scene.layout.StackPane;
-import netscape.javascript.JSObject;
 import org.appxi.holder.RawHolder;
 import org.appxi.javafx.app.AppEvent;
 import org.appxi.javafx.control.ProgressLayer;
@@ -81,13 +80,15 @@ public abstract class HtmlRenderer extends ItemRenderer {
     protected abstract void onWebEngineLoading();
 
     protected void onWebEngineLoadSucceeded() {
-        // set an interface object named 'console' in the web engine's page for debug
-        final JSObject window = webPane.executeScript("window");
-        window.setMember("console", consoleWrapper);
         // apply theme
         applyWebStyleByBodyClass();
         //
         webPane().patch();
+        //
+        if (null != progressLayerHandler) {
+            progressLayerHandler.run();
+            progressLayerHandler = null;
+        }
     }
 
     protected void onWebEngineLoadFailed() {
@@ -101,6 +102,7 @@ public abstract class HtmlRenderer extends ItemRenderer {
 
     @Override
     public void onViewportClosing(Event event, boolean selected) {
+        if (event.isConsumed()) return;
         saveUserExperienceData();
         app.eventBus.removeEventHandler(VisualEvent.SET_STYLE, onSetAppStyle);
         app.eventBus.removeEventHandler(AppEvent.STOPPING, onAppEventStopping);
@@ -176,19 +178,5 @@ public abstract class HtmlRenderer extends ItemRenderer {
         saveUserExperienceData();
         this.applyWebStyle(null);
         navigate(null);
-    }
-
-    /**
-     * for communication from the Javascript engine.
-     */
-    private final ConsoleWrapper consoleWrapper = new ConsoleWrapper();
-
-    public static final class ConsoleWrapper {
-        private ConsoleWrapper() {
-        }
-
-        public void log(String msg) {
-            logger.warn(msg);
-        }
     }
 }

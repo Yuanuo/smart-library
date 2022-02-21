@@ -16,7 +16,6 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.layout.StackPane;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
 import org.appxi.javafx.control.ProgressLayer;
@@ -46,30 +45,25 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-abstract class HtmlEditorBase extends HtmlRenderer {
-    public HtmlEditorBase(Item item, WorkbenchPane workbench) {
+public abstract class HtmlRendererEx extends HtmlRenderer {
+    public HtmlRendererEx(Item item, WorkbenchPane workbench) {
         super(item, workbench);
-        //
-        this.id.unbind();
+    }
+
+    /* //////////////////////////////////////////////////////////////////// */
+
+    protected void bindPropertiesForEdit() {
         this.id.bind(Bindings.createStringBinding(() -> "Edit@".concat(item.typedPath()), item.path));
-        this.title.unbind();
         this.title.bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.getName()), item.name));
-        this.tooltip.unbind();
         this.tooltip.bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.typedPath()), item.path));
     }
 
-    @Override
-    protected void onViewportInitOnce(StackPane viewport) {
-        super.onViewportInitOnce(viewport);
-        //
+    protected void initTopAreaForEdit() {
         HBox topArea = new HBox(8);
         topArea.setAlignment(Pos.CENTER_LEFT);
         topArea.setStyle("-fx-padding: .5em;");
-        this.initTopArea(viewport, topArea);
         this.webPane().setTop(topArea);
-    }
-
-    protected void initTopArea(StackPane viewport, HBox topArea) {
+        //
         edit_NameEdit(topArea);
         edit_Metadata(topArea);
     }
@@ -123,19 +117,16 @@ abstract class HtmlEditorBase extends HtmlRenderer {
         topArea.getChildren().add(button);
     }
 
-    protected abstract void editMetadata();
+    protected void editMetadata() {
+        throw new UnsupportedOperationException("Not implements");
+    }
 
     @Override
     public void onViewportClosing(Event event, boolean selected) {
         super.onViewportClosing(event, selected);
         //
-        if (null != this.nameChangeListener)
+        if (!event.isConsumed() && null != this.nameChangeListener)
             item.name.removeListener(this.nameChangeListener);
-    }
-
-    @Override
-    public final void navigate(Item item) {
-        //
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -261,7 +252,9 @@ abstract class HtmlEditorBase extends HtmlRenderer {
         }
     }
 
-    protected abstract void insertHtmlAtCursor(String html);
+    protected void insertHtmlAtCursor(String html) {
+        throw new UnsupportedOperationException("Not implements");
+    }
 
     private String wrapImageToBase64Img(String imageType, int imageWidth, byte[] imageBytes) {
         try {
