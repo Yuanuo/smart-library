@@ -6,6 +6,7 @@ import org.appxi.smartlib.explorer.ItemActions;
 import org.appxi.smartlib.html.HtmlHelper;
 import org.appxi.smartlib.html.HtmlRepairer;
 import org.appxi.smartlib.item.Item;
+import org.appxi.smartlib.item.MetadataApi;
 import org.appxi.smartlib.search.Searchable;
 import org.appxi.util.DigestHelper;
 import org.appxi.util.FileHelper;
@@ -29,14 +30,14 @@ import java.util.Locale;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-class ArticleDocument {
+class ArticleDocument implements MetadataApi {
     private static final String VERSION = "21.08.30";
 
-    Item item;
+    final Item item;
     private Document document;
     private long edition = 1;
 
-    public ArticleDocument(Item item) {
+    ArticleDocument(Item item) {
         this.item = item;
     }
 
@@ -46,19 +47,18 @@ class ArticleDocument {
     }
 
     public Document getDocument() {
-        if (null != this.document)
-            return this.document;
+        if (null != this.document) return this.document;
+
         try (InputStream stream = DataApi.dataAccess().getContent(this.item)) {
-            try (InputStream stream1 = (null != stream && stream.available() > 160) ? stream : getDefaultFileContent()) {
-                document = Jsoup.parse(stream1, StandardCharsets.UTF_8.name(), "/", Parser.htmlParser());
-            }
+            InputStream stream1 = stream;
+            if (null == stream1 || stream1.available() < 160)
+                stream1 = new ByteArrayInputStream("<!doctype html><html><head><meta charset=\"utf-8\"></head><body><p></p></body></html>".getBytes());
+            document = Jsoup.parse(stream1, StandardCharsets.UTF_8.name(), "/", Parser.htmlParser());
         } catch (Throwable e) {
             e.printStackTrace();
         }
+        if (null == this.document) this.document = Jsoup.parse("");
         //
-        if (null == this.document)
-            this.document = Jsoup.parse("");
-
         Element html = html();
         if (html.id().isBlank()) html.id(DigestHelper.uid62s());
         edition = NumberHelper.toLong(html.attr("data-ver"), 1);
@@ -67,18 +67,6 @@ class ArticleDocument {
         item.attr(Searchable.class, Searchable.of(getMetadata("searchable", "all")));
         //
         return document;
-    }
-
-    protected InputStream getDefaultFileContent() {
-        return new ByteArrayInputStream("""
-                <!doctype html>
-                <html id="%s">
-                <head>
-                  <meta charset="utf-8">
-                </head>
-                <body><p></p></body>
-                </html>
-                """.formatted(DigestHelper.uid62s()).getBytes(StandardCharsets.UTF_8));
     }
 
     public ArticleDocument setDocumentBody(String html) {
@@ -120,31 +108,38 @@ class ArticleDocument {
         return this.getDocument().body();
     }
 
+    @Override
+    public Item item() {
+        return this.item;
+    }
+
+    @Override
     public List<String> getMetadata(String key) {
         final Elements metas = this.head().select("> meta[".concat(key).concat("]"));
         return metas.stream().map(v -> v.attr(key).strip()).filter(v -> !v.isBlank()).distinct().sorted().toList();
     }
 
+    @Override
     public String getMetadata(String key, String defaultValue) {
         final Element ele = this.head().selectFirst("> meta[".concat(key).concat("]"));
         return null == ele ? defaultValue : ele.attrOr(key, defaultValue);
     }
 
-    public ArticleDocument setMetadata(String key, String value) {
+    @Override
+    public void setMetadata(String key, String value) {
         Element ele = this.head().selectFirst("> meta[".concat(key).concat("]"));
         if (null == ele) ele = this.head().appendElement("meta");
         ele.attr(key, value);
-        return this;
     }
 
-    public ArticleDocument addMetadata(String key, String value) {
+    @Override
+    public void addMetadata(String key, String value) {
         this.head().appendElement("meta").attr(key, value);
-        return this;
     }
 
-    public ArticleDocument removeMetadata(String key) {
+    @Override
+    public void removeMetadata(String key) {
         this.head().select("> meta[".concat(key).concat("]")).remove();
-        return this;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -254,14 +249,5 @@ class ArticleDocument {
             result.add(new ArticleDocument(item, doc));
         });
         return result;
-    }
-
-    public Searchable getSearchable() {
-        return this.item.attrOr(Searchable.class, () -> Searchable.all);
-    }
-
-    public void setSearchable(Searchable searchable) {
-        this.setMetadata("searchable", searchable.name());
-        this.item.attr(Searchable.class, searchable);
     }
 }

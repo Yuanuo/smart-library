@@ -1,5 +1,6 @@
 package org.appxi.smartlib.item.article;
 
+import javafx.scene.layout.StackPane;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.html.HtmlEditor;
 import org.appxi.smartlib.item.Item;
@@ -13,6 +14,13 @@ class ArticleEditor extends HtmlEditor {
     }
 
     @Override
+    protected void onViewportInitOnce(StackPane viewport) {
+        super.onViewportInitOnce(viewport);
+        //
+        addEdit_Metadata(document);
+    }
+
+    @Override
     protected String loadEditorContent() {
         return this.document.body().html();
     }
@@ -21,10 +29,5 @@ class ArticleEditor extends HtmlEditor {
     protected void saveEditorContent(String content) {
         document.setDocumentBody(content);
         document.save();
-    }
-
-    @Override
-    protected void editMetadata() {
-        new ArticleMetadata(document).showDialog();
     }
 }

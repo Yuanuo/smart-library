@@ -1,4 +1,4 @@
-package org.appxi.smartlib.item.article;
+package org.appxi.smartlib.item;
 
 import javafx.geometry.Pos;
 import javafx.scene.control.ButtonType;
@@ -20,8 +20,9 @@ import org.appxi.util.StringHelper;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-class ArticleMetadata extends DialogPane {
-    final ArticleDocument document;
+public class MetadataEditor extends DialogPane {
+    final MetadataApi dataApi;
+
     final VBox form;
     TextField library, album;
     TextArea catalog;
@@ -30,12 +31,12 @@ class ArticleMetadata extends DialogPane {
     ChoiceBox<Integer> priority;
     ChoiceBox<Searchable> searchable;
 
-    public ArticleMetadata(ArticleDocument document) {
+    public MetadataEditor(MetadataApi dataApi) {
         super();
-        this.document = document;
+        this.dataApi = dataApi;
 
         this.setMinSize(1280, 576);
-        this.setHeaderText(document.item.typedPath());
+        this.setHeaderText(dataApi.item().typedPath());
         this.getButtonTypes().add(ButtonType.OK);
 
         this.form = new VBox(10);
@@ -47,7 +48,7 @@ class ArticleMetadata extends DialogPane {
         this.edit_periods();
         this.edit_authors();
         this.edit_priority();
-        this.edit_indexable();
+        this.edit_searchable();
         //
         this.setContent(form);
     }
@@ -59,7 +60,7 @@ class ArticleMetadata extends DialogPane {
         library = new TextField("unknown");
         HBox.setHgrow(library, Priority.ALWAYS);
         //
-        final String val = document.getMetadata("library", null);
+        final String val = dataApi.getMetadata("library", null);
         if (StringHelper.isNotBlank(val)) {
             library.setText(val);
         }
@@ -80,7 +81,7 @@ class ArticleMetadata extends DialogPane {
         album = new TextField();
         HBox.setHgrow(album, Priority.ALWAYS);
         //
-        final String val = document.getMetadata("album", null);
+        final String val = dataApi.getMetadata("album", null);
         if (StringHelper.isNotBlank(val)) {
             album.setText(val);
         }
@@ -102,7 +103,7 @@ class ArticleMetadata extends DialogPane {
         catalog.setPrefRowCount(3);
         HBox.setHgrow(catalog, Priority.ALWAYS);
         //
-        catalog.setText(String.join("\n", document.getMetadata("catalog")));
+        catalog.setText(String.join("\n", dataApi.getMetadata("catalog")));
 
         //
         final Label tipInfo = new Label("""
@@ -125,7 +126,7 @@ class ArticleMetadata extends DialogPane {
         periods.setPrefRowCount(3);
         HBox.setHgrow(periods, Priority.ALWAYS);
         //
-        periods.setText(String.join("\n", document.getMetadata("period")));
+        periods.setText(String.join("\n", dataApi.getMetadata("period")));
 
         //
         final Label tipInfo = new Label("""
@@ -148,7 +149,7 @@ class ArticleMetadata extends DialogPane {
         authors.setPrefRowCount(4);
         HBox.setHgrow(authors, Priority.ALWAYS);
         //
-        authors.setText(String.join("\n", document.getMetadata("author")));
+        authors.setText(String.join("\n", dataApi.getMetadata("author")));
 
         //
         final Label tipInfo = new Label("""
@@ -170,7 +171,7 @@ class ArticleMetadata extends DialogPane {
         priority = new ChoiceBox<>();
         priority.getItems().setAll(IntStream.iterate(0, v -> v <= 10, v -> v + 1).boxed().collect(Collectors.toList()));
         //
-        int val = NumberHelper.toInt(document.getMetadata("priority", "5"), 5);
+        int val = NumberHelper.toInt(dataApi.getMetadata("priority", "5"), 5);
         if (val < 0) val = 0;
         else if (val > 10) val = 10;
         priority.getSelectionModel().select(val);
@@ -184,14 +185,14 @@ class ArticleMetadata extends DialogPane {
         this.form.getChildren().addAll(hBox);
     }
 
-    private void edit_indexable() {
+    private void edit_searchable() {
         final Label label = new Label("搜索范围");
         label.getStyleClass().add("field-name");
 
         searchable = new ChoiceBox<>();
         searchable.getItems().setAll(Searchable.values());
         //
-        searchable.getSelectionModel().select(document.getSearchable());
+        searchable.getSelectionModel().select(dataApi.getSearchable());
 
         //
         final Label tipInfo = new Label("搜索可见范围，默认为全部范围，若无必要不需修改");
@@ -204,35 +205,35 @@ class ArticleMetadata extends DialogPane {
 
     public boolean showDialog() {
         final Dialog<?> dialog = new Dialog<>();
-        dialog.setTitle("编辑".concat(document.item.provider.providerName()).concat("元数据"));
+        dialog.setTitle("编辑 ".concat(dataApi.item().provider.providerName()).concat(" 元数据"));
         dialog.setDialogPane(this);
         final BoolHolder result = new BoolHolder(false);
         dialog.initOwner(App.app().getPrimaryStage());
         dialog.showAndWait().ifPresent(v -> {
             result.value = true;
             //
-            document.removeMetadata("library");
+            dataApi.removeMetadata("library");
             library.getText().lines().map(String::strip).filter(s -> !s.isEmpty()).distinct().sorted()
-                    .forEach(s -> document.addMetadata("library", s));
-            document.removeMetadata("catalog");
+                    .forEach(s -> dataApi.addMetadata("library", s));
+            dataApi.removeMetadata("catalog");
             catalog.getText().lines().map(String::strip).filter(s -> !s.isEmpty()).distinct().sorted()
-                    .forEach(s -> document.addMetadata("catalog", s));
-            document.removeMetadata("album");
+                    .forEach(s -> dataApi.addMetadata("catalog", s));
+            dataApi.removeMetadata("album");
             album.getText().lines().map(String::strip).filter(s -> !s.isEmpty()).distinct().sorted()
-                    .forEach(s -> document.addMetadata("album", s));
-            document.removeMetadata("period");
+                    .forEach(s -> dataApi.addMetadata("album", s));
+            dataApi.removeMetadata("period");
             periods.getText().lines().map(String::strip).filter(s -> !s.isEmpty()).distinct().sorted()
-                    .forEach(s -> document.addMetadata("period", s));
-            document.removeMetadata("author");
+                    .forEach(s -> dataApi.addMetadata("period", s));
+            dataApi.removeMetadata("author");
             authors.getText().lines().map(String::strip).filter(s -> !s.isEmpty()).distinct().sorted()
-                    .forEach(s -> document.addMetadata("author", s));
+                    .forEach(s -> dataApi.addMetadata("author", s));
             //
-            document.setMetadata("priority", priority.getSelectionModel().getSelectedItem().toString());
+            dataApi.setMetadata("priority", priority.getSelectionModel().getSelectedItem().toString());
             //
-            document.setSearchable(searchable.getSelectionModel().getSelectedItem());
+            dataApi.setSearchable(searchable.getSelectionModel().getSelectedItem());
 
             //
-            App.app().toast("数据已修改，请手动保存生效！");
+            App.app().toast("元数据已修改，请手动保存文档生效！");
         });
         return result.value;
     }

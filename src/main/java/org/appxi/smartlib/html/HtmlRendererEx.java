@@ -1,10 +1,8 @@
 package org.appxi.smartlib.html;
 
-import javafx.beans.binding.Bindings;
 import javafx.beans.value.ChangeListener;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.event.Event;
-import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.TextField;
@@ -16,6 +14,7 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.StackPane;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
 import org.appxi.javafx.control.ProgressLayer;
@@ -25,6 +24,8 @@ import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.App;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
+import org.appxi.smartlib.item.MetadataApi;
+import org.appxi.smartlib.item.MetadataEditor;
 import org.appxi.util.FileHelper;
 import org.appxi.util.StringHelper;
 import org.jsoup.Jsoup;
@@ -46,43 +47,36 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 public abstract class HtmlRendererEx extends HtmlRenderer {
-    public HtmlRendererEx(Item item, WorkbenchPane workbench) {
-        super(item, workbench);
+    public HtmlRendererEx(Item item, WorkbenchPane workbench, boolean editing) {
+        super(item, workbench, editing);
     }
 
     /* //////////////////////////////////////////////////////////////////// */
 
-    protected void bindPropertiesForEdit() {
-        this.id.bind(Bindings.createStringBinding(() -> "Edit@".concat(item.typedPath()), item.path));
-        this.title.bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.getName()), item.name));
-        this.tooltip.bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.typedPath()), item.path));
-    }
-
-    protected void initTopAreaForEdit() {
-        HBox topArea = new HBox(8);
-        topArea.setAlignment(Pos.CENTER_LEFT);
-        topArea.setStyle("-fx-padding: .5em;");
-        this.webPane().setTop(topArea);
+    @Override
+    protected void onViewportInitOnce(StackPane viewport) {
+        super.onViewportInitOnce(viewport);
         //
-        edit_NameEdit(topArea);
-        edit_Metadata(topArea);
+        if (this.editing) {
+            addEdit_Rename();
+        }
     }
 
-    private ChangeListener<String> nameChangeListener;
+    private ChangeListener<String> outsideRenamedListener;
 
-    private void edit_NameEdit(HBox topArea) {
-        final TextField nameEditor = new TextField(item.getName());
-        nameEditor.setPromptText("在此输入");
-        nameEditor.setTooltip(new Tooltip("在此处输入后按回车应用修改"));
-        HBox.setHgrow(nameEditor, Priority.ALWAYS);
-        nameChangeListener = (o, ov, nv) -> nameEditor.setText(nv);
-        item.name.addListener(nameChangeListener);
-        nameEditor.addEventHandler(KeyEvent.KEY_RELEASED, event -> {
+    private void addEdit_Rename() {
+        final TextField nameField = new TextField(item.getName());
+        nameField.setPromptText("在此输入");
+        nameField.setTooltip(new Tooltip("在此处输入后按回车应用修改"));
+        HBox.setHgrow(nameField, Priority.ALWAYS);
+        outsideRenamedListener = (o, ov, nv) -> nameField.setText(nv);
+        item.name.addListener(outsideRenamedListener);
+        nameField.addEventHandler(KeyEvent.KEY_RELEASED, event -> {
             if (event.getCode() == KeyCode.ENTER) {
                 event.consume();
-                String inputText = FileHelper.toValidName(nameEditor.getText()).strip().replaceAll("^[.]", "");
+                String inputText = FileHelper.toValidName(nameField.getText()).strip().replaceAll("^[.]+", "");
                 if (inputText.isBlank()) {
-                    nameEditor.setText(item.getName());
+                    nameField.setText(item.getName());
                     return;
                 }
                 String targetName = StringHelper.trimChars(inputText, 80);
@@ -106,27 +100,23 @@ public abstract class HtmlRendererEx extends HtmlRenderer {
                 });
             }
         });
-        topArea.getChildren().addAll(nameEditor);
+        webPane().getTopAsBox().addLeft(nameField);
     }
 
-    private void edit_Metadata(HBox topArea) {
+    protected final void addEdit_Metadata(MetadataApi metadataApi) {
         final Button button = new Button("元数据");
         button.setTooltip(new Tooltip("编辑此文档的类目、作者等信息"));
         button.setGraphic(MaterialIcon.STYLE.graphic());
-        button.setOnAction(event -> editMetadata());
-        topArea.getChildren().add(button);
-    }
-
-    protected void editMetadata() {
-        throw new UnsupportedOperationException("Not implements");
+        button.setOnAction(event -> new MetadataEditor(metadataApi).showDialog());
+        webPane().getTopAsBox().addRight(button);
     }
 
     @Override
     public void onViewportClosing(Event event, boolean selected) {
         super.onViewportClosing(event, selected);
         //
-        if (!event.isConsumed() && null != this.nameChangeListener)
-            item.name.removeListener(this.nameChangeListener);
+        if (!event.isConsumed() && null != this.outsideRenamedListener)
+            item.name.removeListener(this.outsideRenamedListener);
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -233,7 +223,7 @@ public abstract class HtmlRendererEx extends HtmlRenderer {
         });
     }
 
-    protected final void insertImageFileAtCursor(File file) {
+    private void insertImageFileAtCursor(File file) {
         if (file.length() > 10 * 1024 * 1024) {
             app.toast("无法添加大于10MB的文件，请使用小文件！");
             return;
@@ -250,10 +240,6 @@ public abstract class HtmlRendererEx extends HtmlRenderer {
             e.printStackTrace();
             app.toast("无法读取所选图片文件，请更换重试！");
         }
-    }
-
-    protected void insertHtmlAtCursor(String html) {
-        throw new UnsupportedOperationException("Not implements");
     }
 
     private String wrapImageToBase64Img(String imageType, int imageWidth, byte[] imageBytes) {
@@ -311,5 +297,9 @@ public abstract class HtmlRendererEx extends HtmlRenderer {
                         ele.attr("src", src);
                     }
                 });
+    }
+
+    protected void insertHtmlAtCursor(String html) {
+        throw new UnsupportedOperationException("Not implemented");
     }
 }

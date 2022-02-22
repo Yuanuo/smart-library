@@ -3,7 +3,6 @@ package org.appxi.smartlib.html;
 import javafx.application.Platform;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.DataFormat;
-import javafx.scene.layout.StackPane;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import netscape.javascript.JSObject;
@@ -20,19 +19,7 @@ import java.util.Map;
 
 public abstract class HtmlEditor extends HtmlRendererEx {
     public HtmlEditor(Item item, WorkbenchPane workbench) {
-        super(item, workbench);
-    }
-
-    @Override
-    protected void bindProperties() {
-        super.bindPropertiesForEdit();
-    }
-
-    @Override
-    protected void onViewportInitOnce(StackPane viewport) {
-        super.onViewportInitOnce(viewport);
-        //
-        super.initTopAreaForEdit();
+        super(item, workbench, true);
     }
 
     private WebView cachedWebView;

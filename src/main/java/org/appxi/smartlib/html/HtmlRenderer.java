@@ -35,8 +35,8 @@ public abstract class HtmlRenderer extends ItemRenderer {
     private WebPane webPane;
     protected Runnable progressLayerHandler;
 
-    public HtmlRenderer(Item item, WorkbenchPane workbench) {
-        super(item, workbench);
+    public HtmlRenderer(Item item, WorkbenchPane workbench, boolean editing) {
+        super(item, workbench, editing);
     }
 
     protected final WebPane webPane() {

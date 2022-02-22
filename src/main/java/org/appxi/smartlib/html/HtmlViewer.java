@@ -56,7 +56,7 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
     protected WebPane.WebMarksFinder webFinder;
 
     public HtmlViewer(Item item, WorkbenchPane workbench) {
-        super(item, workbench);
+        super(item, workbench, false);
     }
 
     @Override
@@ -90,7 +90,7 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
             app.toast("已添加到系统打印队列，请检查打印结果！");
         });
         //
-        webPane().toolbar.addLeft(button);
+        webPane().getTopAsBar().addLeft(button);
     }
 
     private Button gotoHeadings;
@@ -191,13 +191,13 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
             gotoHeadingsLayer.show(null);
         });
         //
-        webPane().toolbar.addLeft(gotoHeadings);
+        webPane().getTopAsBar().addLeft(gotoHeadings);
     }
 
     protected void addTool_FindInPage() {
         webFinder = new WebPane.WebMarksFinder(this.webPane(), getViewport());
         webFinder.setAsciiConvertor(AppContext::ascii);
-        webPane().toolbar.addRight(webFinder);
+        webPane().getTopAsBar().addRight(webFinder);
     }
 
     public void onViewportClosing(Event event, boolean selected) {

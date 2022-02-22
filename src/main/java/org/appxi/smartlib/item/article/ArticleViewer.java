@@ -32,7 +32,7 @@ class ArticleViewer extends HtmlViewer {
         button.setGraphic(MaterialIcon.EDIT.graphic());
         button.setOnAction(event -> app.eventBus.fireEvent(new ItemEvent(ItemEvent.EDITING, item)));
         //
-        webPane().toolbar.addLeft(button);
+        webPane().getTopAsBar().addLeft(button);
     }
 
     @Override
