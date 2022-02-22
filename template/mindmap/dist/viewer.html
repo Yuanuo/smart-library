@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <!-- bower:css -->
+    <link rel="stylesheet" href="../bower_components/bootstrap/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="../bower_components/codemirror/lib/codemirror.css"/>
+    <link rel="stylesheet" href="../bower_components/hotbox/hotbox.css"/>
+    <link rel="stylesheet" href="../bower_components/color-picker/dist/color-picker.css"/>
+    <!-- endbower -->
+
+    <link rel="stylesheet" href="../node_modules/kityminder-core/dist/kityminder.core.css"/>
+    <link rel="stylesheet" href="kityminder.editor.css">
+
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .km-view text {
+            transform: translateY(-3px);
+        }
+    </style>
+
+    <!-- bower:js -->
+    <script src="../bower_components/jquery/dist/jquery.min.js"></script>
+    <script src="../bower_components/bootstrap/dist/js/bootstrap.min.js"></script>
+    <script src="../bower_components/angular/angular.min.js"></script>
+    <script src="../bower_components/angular-bootstrap/ui-bootstrap-tpls.min.js"></script>
+    <script src="../bower_components/codemirror/lib/codemirror.js"></script>
+    <script src="../bower_components/codemirror/mode/xml/xml.js"></script>
+    <script src="../bower_components/codemirror/mode/javascript/javascript.js"></script>
+    <script src="../bower_components/codemirror/mode/css/css.js"></script>
+    <script src="../bower_components/codemirror/mode/htmlmixed/htmlmixed.js"></script>
+    <script src="../bower_components/codemirror/mode/markdown/markdown.js"></script>
+    <script src="../bower_components/codemirror/addon/mode/overlay.js"></script>
+    <script src="../bower_components/codemirror/mode/gfm/gfm.js"></script>
+    <script src="../bower_components/angular-ui-codemirror/ui-codemirror.min.js"></script>
+    <script src="../bower_components/marked/marked.min.js"></script>
+    <script src="../bower_components/hotbox/hotbox.min.js"></script>
+    <script src="../bower_components/color-picker/dist/color-picker.min.js"></script>
+    <!-- endbower -->
+
+    <script src="../node_modules/kity/dist/kity.js"></script>
+    <script src="../node_modules/kityminder-core/dist/kityminder.core.js"></script>
+    <script src="kityminder.editor.js"></script>
+</head>
+<body ng-app="kityminderApp" ng-controller="MainController">
+<kityminder-viewer on-init="initEditor(editor, minder)"></kityminder-viewer>
+</body>
+
+<script type="text/javascript">
+    angular.module('kityminderApp', ['kityminderEditor'])
+        .config(function (configProvider) {
+            configProvider.set('lang', 'zh_CN');
+        })
+        .controller('MainController', function ($scope) {
+            $scope.initEditor = function (editor, minder) {
+                window.editor = editor;
+                window.minder = minder;
+
+                if (window.javaApp) javaApp.initEditor();
+                minder.execCommand('hand');
+            };
+        });
+</script>
+</html>

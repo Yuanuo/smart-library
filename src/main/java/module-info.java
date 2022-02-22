@@ -13,6 +13,7 @@ module appxi.smartLibrary {
     requires appxi.timeago;
     requires appxi.smartcn.pinyin;
     requires org.jsoup;
+    requires org.json;
 
     requires java.sql;
 
@@ -43,6 +44,7 @@ module appxi.smartLibrary {
     exports org.appxi.smartlib; // for application launch
     exports org.appxi.smartlib.html;
     exports org.appxi.smartlib.item;
+    exports org.appxi.smartlib.item.mindmap;
 
     opens org.appxi.smartlib;
     opens org.appxi.smartlib.dao;

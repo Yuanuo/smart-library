@@ -46,6 +46,11 @@
             <version>[1.14.3,)</version>
         </dependency>
         <dependency>
+            <groupId>org.json</groupId>
+            <artifactId>json</artifactId>
+            <version>22.02.20</version>
+        </dependency>
+        <dependency>
             <groupId>org.appxi</groupId>
             <artifactId>search-solr</artifactId>
             <version>[1.0.0,)</version>

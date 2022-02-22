@@ -1,6 +1,7 @@
 package org.appxi.smartlib.item;
 
 import org.appxi.smartlib.item.article.ArticleProvider;
+import org.appxi.smartlib.item.mindmap.MindmapProvider;
 import org.appxi.smartlib.item.tika.DocProvider;
 import org.appxi.smartlib.item.tika.DocxProvider;
 import org.appxi.smartlib.item.tika.PdfProvider;
@@ -22,6 +23,7 @@ public abstract class ItemProviders {
 
     static {
         addProviders(ArticleProvider.ONE);
+        addProviders(MindmapProvider.ONE);
         //
         addProviders(DocxProvider.ONE, DocProvider.ONE,
                 PptxProvider.ONE, PptProvider.ONE,
