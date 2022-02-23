@@ -2,7 +2,6 @@ package org.appxi.smartlib;
 
 import javafx.application.Application;
 import org.appxi.javafx.app.DesktopApp;
-import org.appxi.prefs.PreferencesInProperties;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.util.DateHelper;
 import org.appxi.util.FileHelper;
@@ -15,7 +14,7 @@ import java.util.List;
 public class AppLauncher {
     protected static void beforeLaunch(String dataDirName) {
         // 0, set data home
-        UserPrefs.localDataDirectory(null != dataDirName ? dataDirName : ".".concat(App.ID), null);
+        UserPrefs.localDataDirectory((null != dataDirName ? dataDirName : ".".concat(App.ID)).concat(".d"), null);
         // 由于在配置文件中不能使用动态变量作为路径，故在此设置日志文件路径
         if (DesktopApp.productionMode) {
             final Path logFile = UserPrefs.dataDir().resolve(".logs")
@@ -34,7 +33,6 @@ public class AppLauncher {
                 e.printStackTrace();
             }
         }
-        UserPrefs.prefs = new PreferencesInProperties(UserPrefs.confDir().resolve(".prefs"));
         //
         System.setProperty("javafx.preloader", "org.appxi.smartlib.AppPreloader");
     }

@@ -8,8 +8,6 @@ import org.appxi.javafx.visual.VisualEvent;
 import org.appxi.javafx.workbench.WorkbenchApp;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.WorkbenchViewController;
-import org.appxi.prefs.UserPrefs;
-import org.appxi.smartlib.dao.DataApi;
 import org.appxi.smartlib.explorer.LibraryExplorer;
 import org.appxi.smartlib.home.AboutController;
 import org.appxi.smartlib.home.PreferencesController;
@@ -44,8 +42,6 @@ public class App extends WorkbenchApp {
         super.init();
         //
         Locale.setDefault(Locale.SIMPLIFIED_CHINESE);
-        // 在此设置数据库基本环境，以供后续的功能正常使用
-        DataApi.setupInitialize(UserPrefs.dataDir().resolve(".db"));
         new Thread(() -> {
             AppContext.ascii("init");
             WebPane.preloadLibrary();
