@@ -67,6 +67,23 @@ public class AppPreloader extends Preloader {
         Optional.ofNullable(AppPreloader.class.getResource("app_desktop.css"))
                 .ifPresent(v -> primaryStage.getScene().getStylesheets().add(v.toExternalForm()));
         //
+        final Path oldDataDir = Path.of(System.getProperty("user.home")).resolve(".".concat(App.ID));
+        if (FileHelper.exists(oldDataDir)) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, """
+                    只需调整数据目录即可，不会影响数据内容！
+                    1、将目录“%s”移动到其他位置并重命名；
+                       比如移到“C:\\”变成“C:\\我的研藏项目”。
+                    2、将目录“%s”移动到重命名后的目录中即可；
+                       比如移动后变成“C:\\我的研藏项目\\.smartLibrary”。
+                    3、启动程序并打开重命名后的目录即可。
+                    """.formatted(oldDataDir.resolve(".db").toString(), oldDataDir.toString()));
+            alert.setTitle("数据升级提醒");
+            alert.setHeaderText("检测到旧版本数据结构，请按以下步骤手动调整：");
+            alert.initOwner(primaryStage);
+            alert.showAndWait();
+        }
+
+        //
         while (true) {
             final CardChooser cardChooser = CardChooser.of("选择数据空间 - ".concat(App.NAME))
                     .header("数据空间，适用于多开、数据隔离、提升性能和效率的使用方式！", null)
@@ -127,7 +144,7 @@ public class AppPreloader extends Preloader {
             } catch (Throwable e) {
                 Alert alert = new Alert(Alert.AlertType.ERROR, "无法锁定目录，可能正在使用！请尝试其他选项。");
                 alert.initOwner(primaryStage);
-                alert.show();
+                alert.showAndWait();
                 continue;
             }
             //
