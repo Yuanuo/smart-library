@@ -142,7 +142,8 @@ class DataAccessImpl implements DataAccess {
 
     @Override
     public boolean exists(String itemPath) {
-        return FileHelper.exists(repository.resolve(itemPath));
+        final Path path = repository.resolve(itemPath);
+        return FileHelper.exists(path) && path.startsWith(repository);
     }
 
     @Override

@@ -13,6 +13,7 @@ import org.appxi.javafx.workbench.WorkbenchViewController;
 import org.appxi.javafx.workbench.views.WorkbenchMainViewController;
 import org.appxi.javafx.workbench.views.WorkbenchSideViewController;
 import org.appxi.prefs.UserPrefs;
+import org.appxi.smartlib.dao.DataApi;
 import org.appxi.smartlib.item.FolderProvider;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
@@ -233,6 +234,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
     public Item preferFolder() {
         Item result = preferItem();
         if (result.provider.isDirectory()) return result;
+        if (!DataApi.dataAccess().exists(result.getPath())) return treeView.root().getValue();
 
         Path path = Path.of(result.getPath());
         path = path.getParent();
