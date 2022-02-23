@@ -15,6 +15,8 @@ import org.json.JSONObject;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -83,8 +85,17 @@ class MindmapDocument implements MetadataApi {
 
     void save(boolean reindex) {
         this.document.put("metadata", this.metadata);
+        // fill id
+        walkJson(root(), jsonData -> {
+            if (!jsonData.has("id")) jsonData.put("id", DigestHelper.uid());
+            if (!jsonData.has("created")) jsonData.put("created", System.currentTimeMillis());
+        });
         //
         ItemActions.setContent(this.item, new ByteArrayInputStream(this.document.toString(1).getBytes(StandardCharsets.UTF_8)), reindex);
+    }
+
+    JSONObject root() {
+        return getDocument().getJSONObject("root");
     }
 
     String id() {
@@ -100,7 +111,7 @@ class MindmapDocument implements MetadataApi {
     public List<String> getMetadata(String key) {
         JSONArray array = getMetadata().optJSONArray(key);
         if (null == array) array = new JSONArray();
-        return array.toList().stream().map(v -> v.toString().strip()).filter(v -> !v.isBlank()).distinct().sorted().toList();
+        return new ArrayList<>(array.toList().stream().map(v -> v.toString().strip()).filter(v -> !v.isBlank()).distinct().sorted().toList());
     }
 
     @Override
@@ -138,13 +149,27 @@ class MindmapDocument implements MetadataApi {
     String getDocumentText() {
         try {
             StringBuilder buff = new StringBuilder();
-            JSONObject root = getDocument().getJSONObject("root");
-            walkJson(root, json -> buff.append(json.optString("text")).append("\n"));
+            walkJson(root(), json -> buff.append(json.optString("text")).append("\n"));
             return buff.toString();
         } catch (Throwable t) {
             t.printStackTrace();
         }
         return null;
+    }
+
+    LinkedHashMap<String, String> getTagged(String tag) {
+        final LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        walkJson(root(), jsonData -> {
+            JSONArray arr = jsonData.optJSONArray("resource");
+            if (null == arr || arr.isEmpty()) return;
+            for (int i = 0; i < arr.length(); i++) {
+                if (arr.opt(i) instanceof String str && tag.equalsIgnoreCase(str)) {
+                    result.put(jsonData.optString("id"), jsonData.optString("text"));
+                    break;
+                }
+            }
+        });
+        return result;
     }
 
     void walkJson(JSONObject json, Consumer<JSONObject> consumer) {

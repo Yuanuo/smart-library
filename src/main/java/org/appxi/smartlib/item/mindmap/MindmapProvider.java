@@ -17,6 +17,7 @@ import org.appxi.util.StringHelper;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -107,6 +108,7 @@ public class MindmapProvider extends AbstractProvider {
             else metaList.forEach(v -> addCategories(mainPiece, "period", v));
             //
             metaList = mainDocument.getMetadata("author");
+            metaList.addAll(mainDocument.getTagged("author").values()); // detect authors from tagged
             if (metaList.isEmpty()) {
                 addCategories(mainPiece, "author", "unknown");
                 mainPiece.field("authors_s", "unknown");
@@ -129,16 +131,19 @@ public class MindmapProvider extends AbstractProvider {
                 MindmapDocument document = documents.get(j);
                 Piece piece = mainPiece.clone();
                 // detect topic title
-//                final Elements headings = document.body().select(HtmlHelper.headings);
+                Map<String, String> headings = document.getTagged("heading");
                 if (articleDocumentOnly) {
                     piece.id = mainDocument.id();
                     piece.title = mainPiece.title;
                 } else {
                     piece.id = DigestHelper.uid62s();
                     piece.type = "topic";
-                    piece.title = "<HR but no HEADING>";
-//                    Optional.ofNullable(headings.first())
-//                            .ifPresent(h -> piece.setTitle(h.text().strip()).field("anchor_s", h.id()));
+                    piece.title = "<alias but no HEADING>";
+                    if (!headings.isEmpty()) {
+                        String id = headings.keySet().iterator().next();
+                        piece.title = headings.get(id);
+                        piece.field("anchor_s", id);
+                    }
                     if (j == 0) {
                         if (mainPiece.title.startsWith(piece.title) || mainPiece.title.endsWith(piece.title))
                             piece.setTitle(mainPiece.title).setType("article");
@@ -160,13 +165,14 @@ public class MindmapProvider extends AbstractProvider {
                 //
                 result.add(piece);
 
-//                for (int i = 0; i < headings.size(); i++) {
-//                    Element head = headings.get(i);
-//                    String headText = head.text().strip();
-//                    if (headText.isBlank()) continue;
-//                    if (i == 0 && (piece.title.endsWith(headText) || headText.endsWith(piece.title))) continue;
-//                    result.add(createPiece(piece.path, head.id(), headText, "label"));
-//                }
+                int i = -1;
+                for (Map.Entry<String, String> head : headings.entrySet()) {
+                    i++;
+                    String headText = head.getValue().strip();
+                    if (headText.isBlank()) continue;
+                    if (i == 0 && (piece.title.endsWith(headText) || headText.endsWith(piece.title))) continue;
+                    result.add(createPiece(piece.path, head.getKey(), headText, "label"));
+                }
             }
 
             return result;
