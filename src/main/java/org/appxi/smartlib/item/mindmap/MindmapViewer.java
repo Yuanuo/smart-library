@@ -6,8 +6,9 @@ import javafx.scene.layout.StackPane;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.item.Item;
+import org.appxi.smartlib.recent.RecentViewSupport;
 
-class MindmapViewer extends MindmapRenderer {
+class MindmapViewer extends MindmapRenderer implements RecentViewSupport {
     public MindmapViewer(Item item, WorkbenchPane workbench) {
         super(item, workbench, false);
     }
