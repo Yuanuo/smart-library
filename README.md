@@ -79,9 +79,9 @@
 
 提供三种平台的主程序，在[此处最新版](https://github.com/Yuanuo/smart-library/releases/latest)下载：
 
-1. Windows版（仅64位）：smartLibrary-22.02.07-Windows-x64.msi
-2. MacOS版：smartLibrary-22.02.07-MacOS.dmg
-3. Linux版（Ubuntu、Debian等）：smart-library_22.02.07_amd64-Linux.deb
+1. Windows版（仅64位）：smartLibrary-xx.xx.xx-Windows-x64.msi
+2. MacOS版：smartLibrary-xx.xx.xx-MacOS.dmg
+3. Linux版（Ubuntu、Debian等）：smart-library_xx.xx.xx_amd64-Linux.deb
 
 暂时提供一个数据包：
 
