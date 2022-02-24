@@ -31,6 +31,7 @@ import java.util.Optional;
 public class AppPreloader extends Preloader {
     private static Stage primaryStage;
     static FileLock profileLocker;
+    static String dataDirName;
 
     @Override
     public void start(Stage primaryStage) throws Exception {
@@ -60,6 +61,7 @@ public class AppPreloader extends Preloader {
     }
 
     static void setupChooser(Stage primaryStage) {
+        dataDirName = ".".concat(App.ID);
         UserPrefs.prefsEx = new PreferencesInProperties(UserPrefs.dataDir().resolve(".prefs"));
         final Preferences profileMgr = new PreferencesInProperties(UserPrefs.dataDir().resolve(".profile"));
 
@@ -96,7 +98,8 @@ public class AppPreloader extends Preloader {
                         try {
                             final String dir = val.getKey();
                             final Path path = Path.of(dir);
-                            if (!Files.isDirectory(path) || Files.notExists(path)) {
+                            if (!Files.isDirectory(path) || FileHelper.notExists(path)
+                                    || FileHelper.exists(path) && FileHelper.notExists(path.resolve(dataDirName))) {
                                 profileMgr.removeProperty(dir);
                                 return;
                             }
@@ -120,25 +123,27 @@ public class AppPreloader extends Preloader {
                 System.exit(0);
                 return;
             }
-            String selectedDir = null;
+            Path selectedPath = null;
             // 选择数据目录
             if (optional.get().userData() == Boolean.TRUE) {
                 final DirectoryChooser chooser = new DirectoryChooser();
                 chooser.setTitle("打开文件夹");
                 final File selected = chooser.showDialog(primaryStage);
                 if (null == selected) continue;
-                selectedDir = selected.getAbsolutePath();
+                selectedPath = selected.toPath();
             } else if (optional.get().userData() instanceof String str) {
-                selectedDir = str;
+                selectedPath = Path.of(str);
+            } else if (optional.get().userData() instanceof Path path) {
+                selectedPath = path;
             }
-            if (null == selectedDir) continue;
-            if (tryLoadProfile(profileMgr, Path.of(selectedDir))) break;
+            if (null == selectedPath) continue;
+            if (tryLoadProfile(profileMgr, selectedPath)) break;
         }
     }
 
     static boolean tryLoadProfile(Preferences profileMgr, Path basePath) {
         try {
-            final Path lockFile = basePath.resolve(".".concat(App.ID)).resolve(".lock");
+            final Path lockFile = basePath.resolve(dataDirName).resolve(".lock");
             FileHelper.makeParents(lockFile);
             FileHelper.setHidden(lockFile.getParent(), true);
 
