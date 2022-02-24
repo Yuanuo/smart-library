@@ -4,16 +4,13 @@ import javafx.application.Preloader;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.appxi.javafx.control.CardChooser;
 import org.appxi.javafx.visual.MaterialIcon;
-import org.appxi.javafx.visual.Swatch;
-import org.appxi.javafx.visual.Theme;
-import org.appxi.javafx.visual.Visual;
+import org.appxi.javafx.visual.VisualProvider;
 import org.appxi.prefs.Preferences;
 import org.appxi.prefs.PreferencesInProperties;
 import org.appxi.prefs.UserPrefs;
@@ -22,6 +19,7 @@ import org.appxi.util.FileHelper;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.AbstractMap;
@@ -31,23 +29,26 @@ import java.util.Optional;
 
 public class AppPreloader extends Preloader {
     private static Stage primaryStage;
-    static FileOutputStream profileLocker;
+    static FileLock profileLocker;
 
     @Override
     public void start(Stage primaryStage) throws Exception {
         AppPreloader.primaryStage = primaryStage;
 
-        final ImageView imageView = new ImageView();
-        Optional.ofNullable(AppPreloader.class.getResourceAsStream("splash.jpg"))
-                .ifPresent(v -> imageView.setImage(new Image(v)));
-
         primaryStage.initStyle(StageStyle.TRANSPARENT);
-        primaryStage.setScene(new Scene(new BorderPane(imageView), 800, 533));
+        primaryStage.setOpacity(0);
+        primaryStage.setScene(new Scene(new BorderPane(), 800, 600));
 
+        primaryStage.setTitle(App.NAME);
         Optional.ofNullable(getClass().getResourceAsStream("icon-32.png"))
                 .ifPresent(v -> primaryStage.getIcons().setAll(new Image(v)));
         primaryStage.centerOnScreen();
         primaryStage.show();
+        //
+        new VisualProvider(null, primaryStage::getScene).initialize();
+        Optional.ofNullable(AppPreloader.class.getResource("app_desktop.css"))
+                .ifPresent(v -> primaryStage.getScene().getStylesheets().add(v.toExternalForm()));
+        //
         setupChooser(primaryStage);
         new javafx.scene.control.TextField("");
         new javax.swing.JTextField("");
@@ -59,13 +60,6 @@ public class AppPreloader extends Preloader {
 
     static void setupChooser(Stage primaryStage) {
         final Preferences profileMgr = new PreferencesInProperties(UserPrefs.dataDir().resolve(".profile"));
-        //
-        primaryStage.getScene().getRoot().setStyle("-fx-font-size: 16px;");
-        Theme.getDefault().assignTo(primaryStage.getScene());
-        Swatch.getDefault().assignTo(primaryStage.getScene());
-        Visual.getDefault().assignTo(primaryStage.getScene());
-        Optional.ofNullable(AppPreloader.class.getResource("app_desktop.css"))
-                .ifPresent(v -> primaryStage.getScene().getStylesheets().add(v.toExternalForm()));
         //
         final Path oldDataDir = Path.of(System.getProperty("user.home")).resolve(".".concat(App.ID));
         if (FileHelper.exists(oldDataDir)) {
@@ -139,10 +133,12 @@ public class AppPreloader extends Preloader {
             FileHelper.makeParents(lockFile);
 
             try {
-                profileLocker = new FileOutputStream(lockFile.toFile());
-                profileLocker.getChannel().lock();
+                profileLocker = new FileOutputStream(lockFile.toFile()).getChannel().tryLock();
+                if (null == profileLocker) throw new IllegalAccessException("cannot lock");
             } catch (Throwable e) {
-                Alert alert = new Alert(Alert.AlertType.ERROR, "无法锁定目录，可能正在使用！请尝试其他选项。");
+                Alert alert = new Alert(Alert.AlertType.ERROR, basePath.toString());
+                alert.setTitle("操作失败");
+                alert.setHeaderText("无法锁定目录，可能正在使用！请尝试其他选项。");
                 alert.initOwner(primaryStage);
                 alert.showAndWait();
                 continue;
