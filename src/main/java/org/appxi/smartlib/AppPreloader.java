@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.AbstractMap;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 
 public class AppPreloader extends Preloader {
@@ -59,42 +60,46 @@ public class AppPreloader extends Preloader {
     }
 
     static void setupChooser(Stage primaryStage) {
+        UserPrefs.prefsEx = new PreferencesInProperties(UserPrefs.dataDir().resolve(".prefs"));
         final Preferences profileMgr = new PreferencesInProperties(UserPrefs.dataDir().resolve(".profile"));
-        //
-        final Path oldDataDir = Path.of(System.getProperty("user.home")).resolve(".".concat(App.ID));
+
+        String dataDirStr = UserPrefs.dataDir().toString();
+        dataDirStr = dataDirStr.substring(0, dataDirStr.length() - 2);
+        final Path oldDataDir = Path.of(dataDirStr);
+        final Path newDataDir = Path.of(dataDirStr.concat(".dd"));
         if (FileHelper.exists(oldDataDir)) {
-            Alert alert = new Alert(Alert.AlertType.WARNING, """
-                    只需调整数据目录即可，不会影响数据内容！
-                    1、将目录“%s”移动到其他位置并重命名；
-                       比如移到“C:\\”变成“C:\\我的研藏项目”。
-                    2、将目录“%s”移动到重命名后的目录中即可；
-                       比如移动后变成“C:\\我的研藏项目\\.smartLibrary”。
-                    3、启动程序并打开重命名后的目录即可。
-                    """.formatted(oldDataDir.resolve(".db").toString(), oldDataDir.toString()));
-            alert.setTitle("数据升级提醒");
-            alert.setHeaderText("检测到旧版本数据结构，请按以下步骤手动调整：");
-            alert.initOwner(primaryStage);
-            alert.showAndWait();
+            try {
+                Files.move(oldDataDir.resolve(".db"), newDataDir);
+                Files.move(oldDataDir, newDataDir.resolve(oldDataDir.getFileName()));
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
         }
 
+        if ("simple".equals(UserPrefs.prefsEx.getString("profile.mode", "simple"))) {
+            if (tryLoadProfile(profileMgr, newDataDir)) return;
+        }
         //
         while (true) {
-            final CardChooser cardChooser = CardChooser.of("选择数据空间 - ".concat(App.NAME))
-                    .header("数据空间，适用于多开、数据隔离、提升性能和效率的使用方式！", null)
+            final CardChooser cardChooser = CardChooser.of("选择项目位置 - ".concat(App.NAME))
+                    .header("使用项目管理数据，适用于多开、数据隔离、提升性能和效率的使用方式！", null)
                     .owner(primaryStage);
-            cardChooser.cards(CardChooser.ofCard("打开目录")
-                    .description("作为数据空间的目录用于存放数据，必须具有写入权限和可用容量！")
+            cardChooser.cards(CardChooser.ofCard("打开文件夹")
+                    .description("选择文件夹作为项目，必须具备写入权限和可用容量以存放所有数据！")
                     .graphic(MaterialIcon.FOLDER.graphic())
                     .userData(Boolean.TRUE)
                     .get());
-            profileMgr.getPropertyKeys().stream()
+            List.copyOf(profileMgr.getPropertyKeys()).stream()
                     .map(k -> new AbstractMap.SimpleEntry<>(k, profileMgr.getLong(k, -1)))
                     .sorted(Collections.reverseOrder(Comparator.comparingLong(AbstractMap.SimpleEntry::getValue)))
                     .forEach(val -> {
                         try {
                             final String dir = val.getKey();
                             final Path path = Path.of(dir);
-                            if (!Files.isDirectory(path)) return;
+                            if (!Files.isDirectory(path) || Files.notExists(path)) {
+                                profileMgr.removeProperty(dir);
+                                return;
+                            }
 
                             cardChooser.cards(CardChooser.ofCard(path.getFileName().toString())
                                     .description(path.toString())
@@ -119,7 +124,7 @@ public class AppPreloader extends Preloader {
             // 选择数据目录
             if (optional.get().userData() == Boolean.TRUE) {
                 final DirectoryChooser chooser = new DirectoryChooser();
-                chooser.setTitle("打开目录");
+                chooser.setTitle("打开文件夹");
                 final File selected = chooser.showDialog(primaryStage);
                 if (null == selected) continue;
                 selectedDir = selected.getAbsolutePath();
@@ -127,31 +132,33 @@ public class AppPreloader extends Preloader {
                 selectedDir = str;
             }
             if (null == selectedDir) continue;
-            //
-            final Path basePath = Path.of(selectedDir);
+            if (tryLoadProfile(profileMgr, Path.of(selectedDir))) break;
+        }
+    }
+
+    static boolean tryLoadProfile(Preferences profileMgr, Path basePath) {
+        try {
             final Path lockFile = basePath.resolve(".".concat(App.ID)).resolve(".lock");
             FileHelper.makeParents(lockFile);
+            FileHelper.setHidden(lockFile.getParent(), true);
 
-            try {
-                profileLocker = new FileOutputStream(lockFile.toFile()).getChannel().tryLock();
-                if (null == profileLocker) throw new IllegalAccessException("cannot lock");
-            } catch (Throwable e) {
-                Alert alert = new Alert(Alert.AlertType.ERROR, basePath.toString());
-                alert.setTitle("操作失败");
-                alert.setHeaderText("无法锁定目录，可能正在使用！请尝试其他选项。");
-                alert.initOwner(primaryStage);
-                alert.showAndWait();
-                continue;
-            }
+            profileLocker = new FileOutputStream(lockFile.toFile()).getChannel().tryLock();
+            if (null == profileLocker) throw new IllegalAccessException("cannot lock");
             //
-            profileMgr.setProperty(selectedDir, System.currentTimeMillis());
+            profileMgr.setProperty(basePath.toString(), System.currentTimeMillis());
             profileMgr.save();
 
             UserPrefs.setupDataDirectory(lockFile.getParent(), null);
             UserPrefs.prefs = new PreferencesInProperties(UserPrefs.confDir().resolve(".prefs"));
             // 在此设置数据库基本环境，以供后续的功能正常使用
             DataApi.setupInitialize(basePath);
-            break;
+            return true;
+        } catch (Throwable e) {
+            Alert alert = new Alert(Alert.AlertType.ERROR, basePath.toString());
+            alert.setHeaderText("无法锁定项目位置，可能正在使用！请尝试其他选项。");
+            alert.initOwner(primaryStage);
+            alert.showAndWait();
+            return false;
         }
     }
 }

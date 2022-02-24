@@ -28,6 +28,12 @@ public class PreferencesController extends WorkbenchSideToolController {
     public void onViewportShowing(boolean firstTime) {
         SettingsPane settingsPane = new SettingsPane();
 
+        final ObjectProperty<ProfileMode> profileModeProperty = new SimpleObjectProperty<>();
+        profileModeProperty.setValue(ProfileMode.of(UserPrefs.prefsEx.getString("profile.mode", "simple")));
+        profileModeProperty.addListener((o, ov, nv) -> UserPrefs.prefsEx.setProperty("profile.mode", nv.name()).save());
+        settingsPane.getOptions().add(new DefaultOption<ProfileMode>("项目位置", "切换项目位置选择方式", "PROJECT", true)
+                .setValueProperty(profileModeProperty));
+
         settingsPane.getOptions().add(app.visualProvider.optionForFontSmooth());
         settingsPane.getOptions().add(app.visualProvider.optionForFontName());
         settingsPane.getOptions().add(app.visualProvider.optionForFontSize());
@@ -86,4 +92,26 @@ public class PreferencesController extends WorkbenchSideToolController {
         }
     }
 
+    private enum ProfileMode {
+        simple("默认项目位置"),
+        advanced("启动时选择项目位置");
+        final String title;
+
+        ProfileMode(String title) {
+            this.title = title;
+        }
+
+        @Override
+        public String toString() {
+            return title;
+        }
+
+        static ProfileMode of(String name) {
+            try {
+                return valueOf(name);
+            } catch (Exception ignore) {
+            }
+            return simple;
+        }
+    }
 }
