@@ -104,11 +104,12 @@ public class MindmapProvider extends AbstractProvider {
             else metaList.forEach(v -> addCategories(mainPiece, "catalog", v));
             //
             metaList = mainDocument.getMetadata("period");
+            metaList.addAll(mainDocument.getTagged("period").values()); // detect periods from tagged
             if (metaList.isEmpty()) addCategories(mainPiece, "period", "unknown");
             else metaList.forEach(v -> addCategories(mainPiece, "period", v));
             //
             metaList = mainDocument.getMetadata("author");
-            metaList.addAll(mainDocument.getTagged("author").values()); // detect authors from tagged
+            metaList.addAll(mainDocument.getTagged("author", "translator").values()); // detect authors from tagged
             if (metaList.isEmpty()) {
                 addCategories(mainPiece, "author", "unknown");
                 mainPiece.field("authors_s", "unknown");
@@ -131,7 +132,7 @@ public class MindmapProvider extends AbstractProvider {
                 MindmapDocument document = documents.get(j);
                 Piece piece = mainPiece.clone();
                 // detect topic title
-                Map<String, String> headings = document.getTagged("heading");
+                Map<String, String> headings = document.getTagged("heading", "alias");
                 if (articleDocumentOnly) {
                     piece.id = mainDocument.id();
                     piece.title = mainPiece.title;

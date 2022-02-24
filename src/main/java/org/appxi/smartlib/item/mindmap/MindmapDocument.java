@@ -157,13 +157,13 @@ class MindmapDocument implements MetadataApi {
         return null;
     }
 
-    LinkedHashMap<String, String> getTagged(String tag) {
+    LinkedHashMap<String, String> getTagged(String... tags) {
         final LinkedHashMap<String, String> result = new LinkedHashMap<>();
         walkJson(root(), jsonData -> {
             JSONArray arr = jsonData.optJSONArray("resource");
             if (null == arr || arr.isEmpty()) return;
             for (int i = 0; i < arr.length(); i++) {
-                if (arr.opt(i) instanceof String str && tag.equalsIgnoreCase(str)) {
+                if (arr.opt(i) instanceof String str && StringHelper.indexOf(str, tags)) {
                     result.put(jsonData.optString("id"), jsonData.optString("text"));
                     break;
                 }
