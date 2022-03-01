@@ -1,11 +1,13 @@
 package org.appxi.smartlib.item.mindmap;
 
+import javafx.event.Event;
 import javafx.scene.control.Button;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.StackPane;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.item.Item;
+import org.appxi.smartlib.item.ItemEvent;
 import org.appxi.smartlib.recent.RecentViewSupport;
 
 class MindmapViewer extends MindmapRenderer implements RecentViewSupport {
@@ -29,5 +31,19 @@ class MindmapViewer extends MindmapRenderer implements RecentViewSupport {
 
         });
         webPane().getTopAsBar().addLeft(button);
+    }
+
+    @Override
+    protected void onWebEngineLoadSucceeded() {
+        super.onWebEngineLoadSucceeded();
+        //
+        app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, this.item));
+    }
+
+    @Override
+    public void onViewportClosing(Event event, boolean selected) {
+        super.onViewportClosing(event, selected);
+        //
+        app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, this.item));
     }
 }
