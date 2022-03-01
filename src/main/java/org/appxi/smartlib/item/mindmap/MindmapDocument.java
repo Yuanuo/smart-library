@@ -17,6 +17,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -170,6 +171,10 @@ class MindmapDocument implements MetadataApi {
             }
         });
         return result;
+    }
+
+    LinkedHashSet<String> getTaggedUnique(String... tags) {
+        return new LinkedHashSet<>(getTagged(tags).values());
     }
 
     void walkJson(JSONObject json, Consumer<JSONObject> consumer) {

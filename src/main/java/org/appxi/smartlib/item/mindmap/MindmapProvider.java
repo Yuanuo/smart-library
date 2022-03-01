@@ -16,6 +16,7 @@ import org.appxi.util.NumberHelper;
 import org.appxi.util.StringHelper;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -95,21 +96,23 @@ public class MindmapProvider extends AbstractProvider {
                 mainPiece.title = matcher.group(3);
             } else mainPiece.title = item.getName();
             //
-            List<String> metaList = mainDocument.getMetadata("library");
+            LinkedHashSet<String> metaList = new LinkedHashSet<>(mainDocument.getMetadata("library"));
+            metaList.addAll(mainDocument.getTaggedUnique("library")); // detect libraries from tagged
             if (metaList.isEmpty()) addCategories(mainPiece, "library", "unknown");
             else metaList.forEach(v -> addCategories(mainPiece, "library", v));
             //
-            metaList = mainDocument.getMetadata("catalog");
+            metaList = new LinkedHashSet<>(mainDocument.getMetadata("catalog"));
+            metaList.addAll(mainDocument.getTaggedUnique("catalog")); // detect catalogs from tagged
             if (metaList.isEmpty()) addCategories(mainPiece, "catalog", "unknown");
             else metaList.forEach(v -> addCategories(mainPiece, "catalog", v));
             //
-            metaList = mainDocument.getMetadata("period");
-            metaList.addAll(mainDocument.getTagged("period").values()); // detect periods from tagged
+            metaList = new LinkedHashSet<>(mainDocument.getMetadata("period"));
+            metaList.addAll(mainDocument.getTaggedUnique("period")); // detect periods from tagged
             if (metaList.isEmpty()) addCategories(mainPiece, "period", "unknown");
             else metaList.forEach(v -> addCategories(mainPiece, "period", v));
             //
-            metaList = mainDocument.getMetadata("author");
-            metaList.addAll(mainDocument.getTagged("author", "translator").values()); // detect authors from tagged
+            metaList = new LinkedHashSet<>(mainDocument.getMetadata("author"));
+            metaList.addAll(mainDocument.getTaggedUnique("author", "translator")); // detect authors from tagged
             if (metaList.isEmpty()) {
                 addCategories(mainPiece, "author", "unknown");
                 mainPiece.field("authors_s", "unknown");
@@ -212,13 +215,17 @@ public class MindmapProvider extends AbstractProvider {
         return this.toucher = item -> {
             MindmapDocument document = new MindmapDocument(item);
             //
-            if (document.getMetadata("library").isEmpty()) document.setMetadata("library", "unknown");
+            if (document.getMetadata("library").isEmpty() && document.getTaggedUnique("library").isEmpty())
+                document.setMetadata("library", "unknown");
             //
-            if (document.getMetadata("catalog").isEmpty()) document.setMetadata("catalog", "unknown");
+            if (document.getMetadata("catalog").isEmpty() && document.getTaggedUnique("catalog").isEmpty())
+                document.setMetadata("catalog", "unknown");
             //
-            if (document.getMetadata("period").isEmpty()) document.setMetadata("period", "unknown");
+            if (document.getMetadata("period").isEmpty() && document.getTaggedUnique("period").isEmpty())
+                document.setMetadata("period", "unknown");
             //
-            if (document.getMetadata("author").isEmpty()) document.setMetadata("author", "unknown");
+            if (document.getMetadata("author").isEmpty() && document.getTaggedUnique("author", "translator").isEmpty())
+                document.setMetadata("author", "unknown");
 
             document.save(false);
         };
