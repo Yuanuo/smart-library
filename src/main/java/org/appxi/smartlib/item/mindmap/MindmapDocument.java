@@ -179,7 +179,11 @@ class MindmapDocument implements MetadataApi {
 
     void walkJson(JSONObject json, Consumer<JSONObject> consumer) {
         JSONObject data = json.optJSONObject("data");
-        if (null != data) consumer.accept(data);
+        JSONArray resArr = null == data ? null : data.optJSONArray("resource");
+        if (null != data && (null == resArr || !resArr.has("exclude") && !resArr.has("excludes")))
+            consumer.accept(data);
+
+        if (null != resArr && resArr.has("excludes")) return;
 
         JSONArray array = json.optJSONArray("children");
         if (null != array && !array.isEmpty()) {
