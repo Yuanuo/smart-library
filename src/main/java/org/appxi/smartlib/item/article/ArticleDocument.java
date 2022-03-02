@@ -18,6 +18,7 @@ import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
 import org.jsoup.parser.Parser;
 import org.jsoup.select.Elements;
+import org.jsoup.select.NodeFilter;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -249,5 +250,16 @@ class ArticleDocument implements MetadataApi {
             result.add(new ArticleDocument(item, doc));
         });
         return result;
+    }
+
+    String getDocumentText() {
+        this.body().filter(((node, depth) -> {
+            if (node instanceof Element ele) {
+                if (ele.attrIs("data-searchable", "exclude"))
+                    return NodeFilter.FilterResult.SKIP_ENTIRELY;
+            }
+            return NodeFilter.FilterResult.CONTINUE;
+        }));
+        return this.body().text();
     }
 }

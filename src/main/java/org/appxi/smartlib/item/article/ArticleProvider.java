@@ -155,7 +155,7 @@ public class ArticleProvider extends AbstractProvider {
                 piece.field("title_txt_en", AppContext.ascii(piece.title));
 
                 if (searchable == Searchable.all) {
-                    piece.text("text_txt_aio", document.body().text());
+                    piece.text("text_txt_aio", document.getDocumentText());
                 }
                 //
                 //
