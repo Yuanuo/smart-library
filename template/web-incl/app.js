@@ -99,6 +99,15 @@ $(document).ready(function () {
     handleOnPrettyIndent();
     if (rangy) rangy.init();
 
+    $('a[data-note]').each(function () {
+        const $this = $(this);
+        if ($this.attr('id').startsWith('inline-')) {
+            const noteText = decodeURIComponent($this.attr('data-note'));
+            $this.removeAttr("data-note");
+            $this.html('<blockquote>' + noteText.replace(/\n/g, '<br>') + '</blockquote>');
+        }
+    });
+
     tippy('a[data-note]', {
         allowHTML: true,
         animation: false,
