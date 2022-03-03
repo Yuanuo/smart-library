@@ -105,6 +105,8 @@ $(document).ready(function () {
             const noteText = decodeURIComponent($this.attr('data-note'));
             $this.removeAttr("data-note");
             $this.html('<blockquote>' + noteText.replace(/\n/g, '<br>') + '</blockquote>');
+            if ($this.attr('id').startsWith("inline-alert-"))
+                setTimeout(function () { alert(noteText); }, 500);
         }
     });
 
