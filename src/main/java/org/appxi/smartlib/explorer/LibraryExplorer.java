@@ -1,5 +1,7 @@
 package org.appxi.smartlib.explorer;
 
+import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.scene.control.Button;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeItem;
@@ -7,6 +9,8 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import org.appxi.javafx.helper.FxHelper;
+import org.appxi.javafx.settings.DefaultOptions;
+import org.appxi.javafx.settings.SettingsList;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.WorkbenchViewController;
@@ -19,8 +23,11 @@ import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
 import org.appxi.smartlib.item.ItemRenderer;
 import org.appxi.smartlib.item.article.ArticleProvider;
+import org.appxi.util.ext.RawVal;
 
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 
 public class LibraryExplorer extends WorkbenchSideViewController {
@@ -168,6 +175,36 @@ public class LibraryExplorer extends WorkbenchSideViewController {
         app.eventBus.addEventHandler(ItemEvent.RESTORED, event -> {
             LibraryTreeItem treeItem = (LibraryTreeItem) treeView.getSelectionModel().getSelectedItem();
             reload(treeItem);
+        });
+        //
+        SettingsList.add(() -> {
+            final List<RawVal<String>> list = Arrays.asList(
+                    new RawVal<>("simple", "默认项目位置"),
+                    new RawVal<>("advanced", "启动时选择项目位置")
+            );
+            final String usedVal = UserPrefs.prefsEx.getString("profile.mode", "simple");
+            //
+            final ObjectProperty<RawVal<String>> valueProperty = new SimpleObjectProperty<>();
+            valueProperty.setValue(list.stream().filter(v -> usedVal.equalsIgnoreCase(v.value())).findFirst().orElse(list.get(0)));
+            valueProperty.addListener((o, ov, nv) -> UserPrefs.prefsEx.setProperty("profile.mode", nv.value()).save());
+            return new DefaultOptions<RawVal<String>>("项目位置", "切换项目位置选择方式", "PROJECT", true)
+                    .setValues(list)
+                    .setValueProperty(valueProperty);
+        });
+        SettingsList.add(() -> {
+            final List<RawVal<String>> list = Arrays.asList(
+                    new RawVal<>("view", "查看"),
+                    new RawVal<>("edit", "编辑"),
+                    new RawVal<>("none", "无操作")
+            );
+            final String usedVal = UserPrefs.prefs.getString("explorer.enterAction", "view");
+            //
+            final ObjectProperty<RawVal<String>> valueProperty = new SimpleObjectProperty<>();
+            valueProperty.setValue(list.stream().filter(v -> usedVal.equalsIgnoreCase(v.value())).findFirst().orElse(list.get(0)));
+            valueProperty.addListener((o, ov, nv) -> UserPrefs.prefs.setProperty("explorer.enterAction", nv.value()));
+            return new DefaultOptions<RawVal<String>>("打开方式", "资源管理器默认双击动作", "资源管理器", true)
+                    .setValues(list)
+                    .setValueProperty(valueProperty);
         });
     }
 
