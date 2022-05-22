@@ -26,6 +26,7 @@ module appxi.smartLibrary {
     exports org.appxi.smartlib.html;
     exports org.appxi.smartlib.item;
     exports org.appxi.smartlib.item.mindmap;
+    exports org.appxi.smartlib.dict;
 
     opens org.appxi.smartlib;
     opens org.appxi.smartlib.dao;
