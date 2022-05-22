@@ -21,12 +21,15 @@ import org.appxi.util.FileHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.*;
+import java.awt.Desktop;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
@@ -224,30 +227,39 @@ public class ItemActions {
             fileChooser.setInitialDirectory(new File(lastDir));
         fileChooser.setTitle("打开文件...");
         fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(App.NAME.concat("数据包"), "*.smartlib"));
-        final File file = fileChooser.showOpenDialog(App.app().getPrimaryStage());
-        if (null == file)
+        final List<File> files = fileChooser.showOpenMultipleDialog(App.app().getPrimaryStage());
+        if (null == files || files.isEmpty())
             return;
-        UserPrefs.prefs.setProperty("exchange.dir", file.getParent());
+        UserPrefs.prefs.setProperty("exchange.dir", files.get(0).getParent());
         //
         Alert dialog = new Alert(Alert.AlertType.CONFIRMATION, "此操作将覆盖已经存在的数据，确认继续？");
         dialog.getDialogPane().setPrefWidth(800);
         dialog.initOwner(App.app().getPrimaryStage());
         dialog.showAndWait().filter(t -> t == ButtonType.OK).ifPresent(t -> ProgressLayer.showAndWait(App.app().getPrimaryGlass(), progressLayer -> {
-            try (ZipFile zipFile = new ZipFile(file)) {
-                final String msg = DataApi.dataAccess().restore(item, zipFile, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
-                if (null != msg) {
-                    App.app().toastError(msg);
-                    return;
+            final Set<String> rootPaths = new HashSet<>();
+            // unpack zip files
+            for (File file : files) {
+                try (ZipFile zipFile = new ZipFile(file)) {
+                    final String msg = DataApi.dataAccess().restore(item, zipFile, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
+                    if (null != msg) {
+                        App.app().toastError(msg);
+                    }
+                    rootPaths.addAll(zipFile.stream().filter(zipEntry -> !zipEntry.getName().contains("/"))
+                            .map(ZipEntry::getName)
+                            .toList());
+                } catch (Exception e) {
+                    logger.error("restore", e);
+                    App.app().toastError(e.getMessage());
                 }
-                // update indexes
-                DataApi.dataAccess().reindex(item, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
-
-                App.app().toast("已导入");
-                App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.RESTORED, item));
-            } catch (Exception e) {
-                logger.warn("restore", e);
-                App.app().toastError(e.getMessage());
             }
+            // 更新索引，避免重建父级全目录耗时太长
+            for (String rootPath : rootPaths) {
+                Item rootItem = DataApi.dataAccess().resolve(item.getPath() + "/" + rootPath);
+                DataApi.dataAccess().reindex(rootItem, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
+            }
+
+            App.app().toast("已导入");
+            App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.RESTORED, item));
         }));
     }
 
