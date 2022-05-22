@@ -360,6 +360,12 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
         MenuItem search = new MenuItem("全文检索".concat(textTip));
         search.setOnAction(event -> app.eventBus.fireEvent(SearcherEvent.ofSearch(availText)));
 
+        MenuItem searchInAbs = new MenuItem("全文检索（精确检索）".concat(textTip));
+        searchInAbs.setOnAction(event -> app.eventBus.fireEvent(SearcherEvent.ofSearch("\"".concat(availText).concat("\""))));
+
+        MenuItem searchInBook = new MenuItem("全文检索（检索本书）".concat(textTip));
+        searchInBook.setOnAction(event -> app.eventBus.fireEvent(SearcherEvent.ofSearch(availText, item.parent())));
+
         MenuItem lookup = new MenuItem("快捷检索".concat(textTip));
         lookup.setOnAction(event -> app.eventBus.fireEvent(SearcherEvent.ofLookup(availText)));
 
@@ -381,7 +387,7 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
         //
         return new ContextMenu(copy, copyRef,
                 new SeparatorMenuItem(),
-                search, lookup, finder,
+                search, searchInAbs, searchInBook, lookup, finder,
                 new SeparatorMenuItem(),
                 dictionary,
                 new SeparatorMenuItem(),
