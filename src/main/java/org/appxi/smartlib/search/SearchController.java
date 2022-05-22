@@ -4,6 +4,7 @@ import javafx.geometry.Pos;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
+import org.appxi.javafx.control.OpaqueLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
@@ -59,6 +60,9 @@ public class SearchController extends WorkbenchSideToolController {
     }
 
     private void openSearcherWithText(String text, Item scope) {
+        // 有从外部打开的全文搜索，此时需要隐藏透明层
+        OpaqueLayer.hideOpaqueLayer(app.getPrimaryGlass());
+
         // 优先查找可用的搜索视图，以避免打开太多未使用的搜索视图
         SearcherController searcher = workbench.mainViews.getTabs().stream()
                 .map(tab -> (tab.getUserData() instanceof SearcherController view && view.isNeverSearched()) ? view : null)
