@@ -12,12 +12,12 @@ import java.util.regex.Pattern;
 public abstract class ItemHelper {
     private static final Pattern P_INDEX_PART = Pattern.compile("^(\\d+)(.*)");
     private static final Pattern P_ASCII_PART = Pattern.compile("^([ .a-zA-Z]+)(.*)");
-    public static Comparator<? super TreeItem<Item>> sortByName = Comparator.comparing(v -> {
+    public static final Comparator<? super TreeItem<Item>> sortByName = Comparator.comparing(v -> {
         final Item item = v.getValue();
         String name = item.getName();
 
         final StringBuilder buff = new StringBuilder();
-        buff.append(item.provider.isDirectory() ? '0' : '1').append('!');
+//        buff.append(item.provider.isDirectory() ? '0' : '1').append('!');
 
         Matcher matcher = P_INDEX_PART.matcher(name);
         if (matcher.matches()) {
