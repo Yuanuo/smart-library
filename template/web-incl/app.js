@@ -341,3 +341,7 @@ function getHeadings() {
     });
     return result.join('\n');
 }
+
+function _dict_SeeAlso(dictId, obj) {
+    if (window.javaApp) javaApp.seeAlso(dictId, $(obj).text());
+}

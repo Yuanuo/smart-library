@@ -9,6 +9,7 @@ module appxi.smartLibrary {
     requires appxi.shared;
     requires appxi.javafx;
     requires appxi.timeago;
+    requires appxi.smartcn.convert;
     requires appxi.smartcn.pinyin;
     requires org.jsoup;
     requires org.json;
@@ -16,6 +17,8 @@ module appxi.smartLibrary {
     requires java.sql;
 
     requires appxi.search.solr;
+    requires static appxi.search.tika.aio;
+    requires appxi.dictionary;
 
 //    requires org.scenicview.scenicview; // for debug
 

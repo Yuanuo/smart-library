@@ -30,6 +30,7 @@ import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.AppContext;
+import org.appxi.smartlib.dict.DictionaryEvent;
 import org.appxi.smartlib.event.SearcherEvent;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
@@ -312,6 +313,17 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
 
     protected void handleWebViewShortcuts(KeyEvent event) {
         if (!event.isConsumed() && event.isShortcutDown()) {
+            // Ctrl + D
+            if (event.getCode() == KeyCode.D) {
+                // 如果有选中文字，则按选中文字处理
+                String origText = webPane().executeScript("getValidSelectionText()");
+                String trimText = null == origText ? null : origText.strip().replace('\n', ' ');
+                final String availText = StringHelper.isBlank(trimText) ? null : trimText;
+
+                final String str = null == availText ? null : StringHelper.trimChars(availText, 20, "");
+                app.eventBus.fireEvent(DictionaryEvent.ofSearch(str));
+                event.consume();
+            }
             // Ctrl + F
             if (event.getCode() == KeyCode.F) {
                 // 如果有选中文字，则按查找选中文字处理
@@ -372,8 +384,17 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
         MenuItem finder = new MenuItem("页内查找".concat(textTip));
         finder.setOnAction(event -> webFinder.find(availText));
         //
-        MenuItem dictionary = new MenuItem("查词典");
-        dictionary.setDisable(true);
+        MenuItem dictionary = new MenuItem();
+        if (null != availText) {
+            final String str = StringHelper.trimChars(availText, 10);
+            dictionary.setText("查词典：" + str);
+        } else {
+            dictionary.setText("查词典");
+        }
+        dictionary.setOnAction(event -> {
+            final String str = null == availText ? null : StringHelper.trimChars(availText, 20, "");
+            app.eventBus.fireEvent(DictionaryEvent.ofSearch(str));
+        });
 
         MenuItem pinyin = new MenuItem();
         if (null != availText) {
@@ -429,7 +450,7 @@ public class HtmlViewer extends HtmlRenderer implements RecentViewSupport {
         }
     }
 
-    protected final static class WebIncl {
+    public final static class WebIncl {
         private static final String[] includeNames = {
                 "jquery.min.js", "jquery.ext.js",
                 "jquery.isinviewport.js", "jquery.scrollto.js",

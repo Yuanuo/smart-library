@@ -8,6 +8,7 @@ import org.appxi.javafx.visual.VisualEvent;
 import org.appxi.javafx.workbench.WorkbenchApp;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.WorkbenchViewController;
+import org.appxi.smartlib.dict.DictionaryController;
 import org.appxi.smartlib.explorer.LibraryExplorer;
 import org.appxi.smartlib.home.AboutController;
 import org.appxi.smartlib.home.PreferencesController;
@@ -43,10 +44,11 @@ public class App extends WorkbenchApp {
         //
         Locale.setDefault(Locale.SIMPLIFIED_CHINESE);
         new Thread(() -> {
-            AppContext.ascii("init");
             WebPane.preloadLibrary();
             AppContext.setupInitialize();
         }).start();
+        //
+        AppContext.ascii("init");
     }
 
     @Override
@@ -125,6 +127,7 @@ public class App extends WorkbenchApp {
 
         result.add(new LookupController(workbench));
         result.add(new SearchController(workbench));
+        result.add(new DictionaryController(workbench));
 
         result.add(new RecentViewsController(workbench));
         result.add(new RecentItemsController(workbench));
