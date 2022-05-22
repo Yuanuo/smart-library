@@ -9,6 +9,7 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.appxi.javafx.control.CardChooser;
+import org.appxi.javafx.helper.FontFaceHelper;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.visual.VisualProvider;
 import org.appxi.prefs.Preferences;
@@ -16,6 +17,7 @@ import org.appxi.prefs.PreferencesInProperties;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.dao.DataApi;
 import org.appxi.util.FileHelper;
+import org.appxi.util.OSVersions;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -52,8 +54,13 @@ public class AppPreloader extends Preloader {
                 .ifPresent(v -> primaryStage.getScene().getStylesheets().add(v.toExternalForm()));
         //
         setupChooser(primaryStage);
-        new javafx.scene.control.TextField("");
-        new javax.swing.JTextField("");
+        //
+        FontFaceHelper.fixing();
+        //
+        if (OSVersions.isLinux) {
+            new javafx.scene.control.TextField("");
+            new javax.swing.JTextField("");
+        }
     }
 
     public static void hide() {
