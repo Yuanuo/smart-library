@@ -76,4 +76,13 @@ public class Item extends Attributes {
         int idx = path.lastIndexOf('/');
         return idx == -1 ? "" : path.substring(0, idx);
     }
+
+    public final Item parent() {
+        String path = this.parentPath();
+        if (path.isBlank())
+            return ROOT;
+
+        int idx = path.lastIndexOf('/');
+        return new Item(idx == -1 ? path : path.substring(idx + 1), path, FolderProvider.ONE);
+    }
 }
