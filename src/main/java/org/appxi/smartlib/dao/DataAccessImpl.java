@@ -63,6 +63,11 @@ class DataAccessImpl implements DataAccess {
         return result;
     }
 
+    @Override
+    public Item resolve(String itemPath) {
+        return toItem(repository.resolve(itemPath));
+    }
+
     private Item toItem(Path path) {
         final String fileName = path.getFileName().toString();
         final String itemPath = FileHelper.subPath(path, rootLevels);

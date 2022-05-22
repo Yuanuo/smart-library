@@ -11,6 +11,8 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 public interface DataAccess {
+    Item resolve(String itemPath);
+
     List<Item> list(Item parent);
 
     String walk(Item parent, Consumer<Item> consumer);

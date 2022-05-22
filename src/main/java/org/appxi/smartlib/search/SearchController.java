@@ -8,11 +8,11 @@ import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.views.WorkbenchSideToolController;
+import org.appxi.smartlib.dao.DataApi;
 import org.appxi.smartlib.event.SearchedEvent;
 import org.appxi.smartlib.event.SearcherEvent;
 import org.appxi.smartlib.item.Item;
 import org.appxi.smartlib.item.ItemEvent;
-import org.appxi.smartlib.item.ItemProviders;
 import org.appxi.util.DigestHelper;
 
 import java.util.Objects;
@@ -38,13 +38,13 @@ public class SearchController extends WorkbenchSideToolController {
             if (null == event.piece)
                 return;
 
-            final Item item = new Item(event.piece.title, event.piece.path, ItemProviders.find(event.piece.provider));
+            final Item item = DataApi.dataAccess().resolve(event.piece.path);
 
             String anchor = event.piece.field("anchor_s");
             if (null != anchor)
                 item.attr("position.selector", anchor);
             if (null != event.highlightTerm)
-                item.attr("position.term", event.highlightTerm.replace("…", ""));
+                item.attr("position.term", event.highlightTerm.replaceAll("…|^\"|\"$", ""));
             if (null != event.highlightSnippet)
                 item.attr("position.text", event.highlightSnippet
                         .replace("§§hl#end§§", "").replace("…", ""));
