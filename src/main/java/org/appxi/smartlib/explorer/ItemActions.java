@@ -29,7 +29,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.zip.ZipEntry;
+import java.util.stream.Collectors;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
@@ -236,7 +236,7 @@ public class ItemActions {
         dialog.getDialogPane().setPrefWidth(800);
         dialog.initOwner(App.app().getPrimaryStage());
         dialog.showAndWait().filter(t -> t == ButtonType.OK).ifPresent(t -> ProgressLayer.showAndWait(App.app().getPrimaryGlass(), progressLayer -> {
-            final Set<String> rootPaths = new HashSet<>();
+            final Set<String> rootNames = new HashSet<>();
             // unpack zip files
             for (File file : files) {
                 try (ZipFile zipFile = new ZipFile(file)) {
@@ -244,17 +244,18 @@ public class ItemActions {
                     if (null != msg) {
                         App.app().toastError(msg);
                     }
-                    rootPaths.addAll(zipFile.stream().filter(zipEntry -> !zipEntry.getName().contains("/"))
-                            .map(ZipEntry::getName)
-                            .toList());
+                    rootNames.addAll(zipFile.stream().map(zipEntry -> zipEntry.getName().split("/", 2)[0])
+                            .collect(Collectors.toSet()));
                 } catch (Exception e) {
                     logger.error("restore", e);
                     App.app().toastError(e.getMessage());
                 }
             }
             // 更新索引，避免重建父级全目录耗时太长
-            for (String rootPath : rootPaths) {
-                Item rootItem = DataApi.dataAccess().resolve(item.getPath() + "/" + rootPath);
+            String itemPath = item.getPath();
+            itemPath = itemPath.isEmpty() ? "" : itemPath + "/";
+            for (String rootName : rootNames) {
+                Item rootItem = DataApi.dataAccess().resolve(itemPath + rootName);
                 DataApi.dataAccess().reindex(rootItem, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
             }
 
