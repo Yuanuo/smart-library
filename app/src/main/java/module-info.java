@@ -19,6 +19,7 @@ module appxi.smartLibrary {
     requires appxi.search.solr;
     requires static appxi.search.tika.aio;
     requires appxi.dictionary;
+    requires appxi.smartLibrary.api;
 
 //    requires org.scenicview.scenicview; // for debug
 
