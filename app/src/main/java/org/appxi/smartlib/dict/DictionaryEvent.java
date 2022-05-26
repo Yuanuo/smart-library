@@ -1,7 +1,7 @@
 package org.appxi.smartlib.dict;
 
-import javafx.event.Event;
-import javafx.event.EventType;
+import org.appxi.event.Event;
+import org.appxi.event.EventType;
 
 public class DictionaryEvent extends Event {
     public static final EventType<DictionaryEvent> SEARCH = new EventType<>(Event.ANY, "SEARCH_DICT");

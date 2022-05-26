@@ -41,7 +41,7 @@ public class DictionaryController extends WorkbenchSideToolController {
             if (DesktopApp.productionMode) {
                 dictRepo = DesktopApp.appDir().resolve("template/dict");
             } else {
-                dictRepo = Path.of("../appxi-dictionary/repo");
+                dictRepo = Path.of("../../appxi-dictionary/repo");
             }
             DictionaryApi.setupDefaultApi(dictRepo);
         });

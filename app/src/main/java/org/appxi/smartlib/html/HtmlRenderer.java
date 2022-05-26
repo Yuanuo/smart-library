@@ -2,8 +2,8 @@ package org.appxi.smartlib.html;
 
 import javafx.concurrent.Worker;
 import javafx.event.Event;
-import javafx.event.EventHandler;
 import javafx.scene.layout.StackPane;
+import org.appxi.event.EventHandler;
 import org.appxi.holder.RawHolder;
 import org.appxi.javafx.app.AppEvent;
 import org.appxi.javafx.control.ProgressLayer;

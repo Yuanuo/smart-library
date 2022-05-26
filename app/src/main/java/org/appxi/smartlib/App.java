@@ -60,7 +60,7 @@ public class App extends WorkbenchApp {
         } else {
             Scene scene = primaryStage.getScene();
             visualProvider.visual().unAssign(scene);
-            watchCss(scene, Path.of("../appxi-javafx/src/main/resources/org/appxi/javafx/visual/visual_desktop.css"));
+            watchCss(scene, Path.of("../../appxi-javafx/src/main/resources/org/appxi/javafx/visual/visual_desktop.css"));
             watchCss(scene, Path.of("src/main/resources/org/appxi/smartlib/app_desktop.css"));
             scene.getStylesheets().forEach(System.out::println);
         }

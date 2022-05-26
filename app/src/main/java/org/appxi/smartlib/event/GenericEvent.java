@@ -1,7 +1,7 @@
 package org.appxi.smartlib.event;
 
-import javafx.event.Event;
-import javafx.event.EventType;
+import org.appxi.event.Event;
+import org.appxi.event.EventType;
 
 public class GenericEvent extends Event {
     private static final long serialVersionUID = 1L;

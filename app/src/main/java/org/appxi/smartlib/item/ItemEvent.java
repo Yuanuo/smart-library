@@ -1,7 +1,7 @@
 package org.appxi.smartlib.item;
 
-import javafx.event.Event;
-import javafx.event.EventType;
+import org.appxi.event.Event;
+import org.appxi.event.EventType;
 
 public class ItemEvent extends Event {
     private static final long serialVersionUID = 8183534581997098428L;
