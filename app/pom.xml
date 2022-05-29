@@ -6,7 +6,7 @@
 
     <groupId>org.appxi</groupId>
     <artifactId>smart-library-lite</artifactId>
-    <version>22.05.23</version>
+    <version>22.06.01</version>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -42,11 +42,6 @@
             <version>[1.0.0,)</version>
         </dependency>
         <dependency>
-            <groupId>org.appxi</groupId>
-            <artifactId>smartcn-pinyin</artifactId>
-            <version>[1.0.0,)</version>
-        </dependency>
-        <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-swing</artifactId>
             <version>${javafx.version}</version>
@@ -56,26 +51,6 @@
 <!--            <artifactId>javafx-fxml</artifactId>-->
 <!--            <version>${javafx.version}</version>-->
 <!--        </dependency>-->
-        <dependency>
-            <groupId>org.jsoup</groupId>
-            <artifactId>jsoup</artifactId>
-            <version>[1.14.3,)</version>
-        </dependency>
-        <dependency>
-            <groupId>org.json</groupId>
-            <artifactId>json</artifactId>
-            <version>20220302</version>
-        </dependency>
-        <dependency>
-            <groupId>org.appxi</groupId>
-            <artifactId>search-solr</artifactId>
-            <version>[1.0.0,)</version>
-        </dependency>
-        <dependency>
-            <groupId>org.appxi</groupId>
-            <artifactId>search-tika-aio</artifactId>
-            <version>[1.0.0,)</version>
-        </dependency>
         <dependency>
             <groupId>org.appxi</groupId>
             <artifactId>dictionary</artifactId>
