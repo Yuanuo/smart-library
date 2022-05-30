@@ -233,10 +233,18 @@ public class ItemActions {
         dialog.initOwner(App.app().getPrimaryStage());
         dialog.getDialogPane().setPrefWidth(800);
         dialog.showAndWait().filter(t -> t == ButtonType.OK).ifPresent(t -> ProgressLayer.showAndWait(App.app().getPrimaryGlass(), progressLayer -> {
-            final String msg = ItemsDao.items().delete(item, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
-            if (msg != null) {
-                App.app().toastError(msg);
-                return;
+            boolean deleted = false;
+            // move to trash
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH)) {
+                deleted = Desktop.getDesktop().moveToTrash(ItemsDao.items().filePath(item));
+            }
+            // delete from disk
+            if (!deleted) {
+                final String msg = ItemsDao.items().delete(item, (d, s) -> Platform.runLater(() -> progressLayer.message.setText(s)));
+                if (msg != null) {
+                    App.app().toastError(msg);
+                    return;
+                }
             }
             // update indexes
             final PiecesRepository repository = BeansContext.getBean(PiecesRepository.class);
