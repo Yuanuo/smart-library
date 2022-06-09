@@ -8,18 +8,20 @@ import javafx.scene.control.TreeItem;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
+import javafx.scene.layout.BorderPane;
+import org.appxi.javafx.app.web.WebViewer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.settings.DefaultOptions;
 import org.appxi.javafx.settings.SettingsList;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
-import org.appxi.javafx.workbench.WorkbenchViewController;
-import org.appxi.javafx.workbench.views.WorkbenchMainViewController;
-import org.appxi.javafx.workbench.views.WorkbenchSideViewController;
+import org.appxi.javafx.workbench.WorkbenchPart;
+import org.appxi.javafx.workbench.WorkbenchPartController;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.FolderProvider;
 import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
+import org.appxi.smartlib.app.item.ItemEx;
 import org.appxi.smartlib.app.item.ItemRenderer;
 import org.appxi.smartlib.article.ArticleProvider;
 import org.appxi.smartlib.dao.ItemsDao;
@@ -30,12 +32,15 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
-public class LibraryExplorer extends WorkbenchSideViewController {
+public class LibraryExplorer extends WorkbenchPartController.SideView {
     LibraryTreeView treeView;
 
     public LibraryExplorer(WorkbenchPane workbench) {
-        super("EXPLORER", workbench);
-        this.setTitles("资源管理器");
+        super(workbench);
+
+        this.id.set("EXPLORER");
+        this.title.set("资源管理器");
+        this.tooltip.set("资源管理器");
         this.graphic.set(MaterialIcon.LOCAL_LIBRARY.graphic());
     }
 
@@ -57,18 +62,20 @@ public class LibraryExplorer extends WorkbenchSideViewController {
             }
 
             final ItemRenderer newViewer = ItemActions.getViewer(item.provider).apply(item);
-            final WorkbenchMainViewController oldViewer = workbench.findMainViewController(newViewer.id.get());
+            final WorkbenchPart.MainView oldViewer = workbench.findMainViewPart(newViewer.id().get());
             if (null != oldViewer) {
-                workbench.selectMainView(oldViewer.id.get());
+                workbench.selectMainView(oldViewer.id().get());
                 if (oldViewer instanceof ItemRenderer itemRenderer)
                     FxHelper.runLater(() -> itemRenderer.navigate(item));
                 return;
             }
             FxHelper.runLater(() -> {
-                workbench.addWorkbenchViewAsMainView(newViewer, false);
+                workbench.addWorkbenchPartAsMainView(newViewer, false);
                 newViewer.initialize();
-                newViewer.attr(Item.class, item);
-                workbench.selectMainView(newViewer.id.get());
+                if (newViewer instanceof WebViewer webViewer) {
+                    webViewer.setPosition(item);
+                }
+                workbench.selectMainView(newViewer.id().get());
             });
         });
         app.eventBus.addEventHandler(ItemEvent.EDITING, event -> {
@@ -79,15 +86,15 @@ public class LibraryExplorer extends WorkbenchSideViewController {
                 return;
             }
             final ItemRenderer newEditor = ItemActions.getEditor(item.provider).apply(item);
-            final WorkbenchMainViewController oldEditor = workbench.findMainViewController(newEditor.id.get());
+            final WorkbenchPart.MainView oldEditor = workbench.findMainViewPart(newEditor.id().get());
             if (null != oldEditor) {
-                workbench.selectMainView(oldEditor.id.get());
+                workbench.selectMainView(oldEditor.id().get());
                 return;
             }
             FxHelper.runLater(() -> {
-                workbench.addWorkbenchViewAsMainView(newEditor, false);
+                workbench.addWorkbenchPartAsMainView(newEditor, false);
                 newEditor.initialize();
-                workbench.selectMainView(newEditor.id.get());
+                workbench.selectMainView(newEditor.id().get());
             });
         });
         //
@@ -100,7 +107,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
                 if (i == paths.length - 1) {
                     item = event.item;
                 } else {
-                    item = new Item(FolderProvider.ONE);
+                    item = new ItemEx(FolderProvider.ONE);
                     item.setName(paths[i]);
                     if (null == path) item.setPath(paths[i]);
                     else item.setPath(path.concat("/").concat(paths[i]));
@@ -165,8 +172,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
             treeView.getSelectionModel().clearSelection();
             // remove from main-views
             FxHelper.runLater(() -> workbench.mainViews.removeTabs(tab ->
-                    tab.getUserData() instanceof ItemRenderer c
-                            && c.item.getPath().startsWith(event.item.getPath())));
+                    tab.getUserData() instanceof ItemRenderer c && c.item().getPath().startsWith(event.item.getPath())));
             // remove from recents
             Set.copyOf(UserPrefs.recents.getPropertyKeys()).forEach(k -> {
                 if (k.startsWith(event.item.getPath())) {
@@ -211,7 +217,8 @@ public class LibraryExplorer extends WorkbenchSideViewController {
     }
 
     @Override
-    protected void onViewportInitOnce() {
+    public void createViewport(BorderPane viewport) {
+        super.createViewport(viewport);
         //
         app.getPrimaryScene().getAccelerators().put(
                 new KeyCodeCombination(KeyCode.E, KeyCombination.SHORTCUT_DOWN),
@@ -248,30 +255,30 @@ public class LibraryExplorer extends WorkbenchSideViewController {
         btnLocate.setGraphic(MaterialIcon.GPS_FIXED.graphic());
         btnLocate.getStyleClass().add("flat");
         btnLocate.setOnAction(event -> {
-            final WorkbenchViewController controller1 = workbench.getSelectedMainViewController();
-            if (controller1 instanceof ItemRenderer controller) locate(controller.item);
+            final WorkbenchPart.MainView controller1 = workbench.getSelectedMainViewPart();
+            if (controller1 instanceof ItemRenderer controller) {
+                locate(controller.item());
+            }
         });
         //
         this.topBar.addRight(btnNewArticle, btnNewFolder, btnLocate);
         //
         this.treeView = new LibraryTreeView(this);
-        this.viewport.setCenter(this.treeView);
+        viewport.setCenter(this.treeView);
     }
 
     @Override
-    public void onViewportShowing(boolean firstTime) {
-        if (firstTime) reload(null);
-    }
-
-    @Override
-    public void onViewportHiding() {
+    public void activeViewport(boolean firstTime) {
+        if (firstTime) {
+            reload(null);
+        }
     }
 
     public Item preferItem() {
         TreeItem<Item> treeItem = treeView.getSelectionModel().getSelectedItem();
         Item result = null == treeItem ? null : treeItem.getValue();
 
-        if (null == result && workbench.getSelectedMainViewController() instanceof ItemRenderer c) result = c.item;
+        if (null == result && workbench.getSelectedMainViewPart() instanceof ItemRenderer c) result = c.item();
         if (null == result) result = treeView.getRoot().getValue();
         return result;
     }
@@ -284,7 +291,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
         Path path = Path.of(result.getPath());
         path = path.getParent();
         if (null == path) return treeView.getRoot().getValue();
-        return new Item(path.getFileName().toString(), path.toString().replace('\\', '/'), FolderProvider.ONE);
+        return new ItemEx(path.getFileName().toString(), path.toString().replace('\\', '/'), FolderProvider.ONE);
     }
 
     void locate(Item item) {
@@ -298,7 +305,7 @@ public class LibraryExplorer extends WorkbenchSideViewController {
     void reload(LibraryTreeItem treeItem) {
         if (null == treeItem) treeItem = treeView.root();
         if (null == treeItem) {
-            final LibraryTreeItem rootItem = new LibraryTreeItem(Item.ROOT);
+            final LibraryTreeItem rootItem = new LibraryTreeItem(ItemEx.ROOT);
             rootItem.setExpanded(true);
             FxHelper.runLater(() -> this.treeView.setRoot(rootItem));
         } else {

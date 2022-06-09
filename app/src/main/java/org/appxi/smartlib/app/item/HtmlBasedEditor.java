@@ -1,26 +1,27 @@
-package org.appxi.smartlib.app.html;
+package org.appxi.smartlib.app.item;
 
 import javafx.application.Platform;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.DataFormat;
+import javafx.scene.layout.StackPane;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
-import netscape.javascript.JSObject;
 import org.appxi.javafx.app.DesktopApp;
+import org.appxi.javafx.app.web.WebCallback;
+import org.appxi.javafx.app.web.WebRenderer;
 import org.appxi.javafx.control.ProgressLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.VisualEvent;
 import org.appxi.javafx.workbench.WorkbenchPane;
-import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.app.App;
 import org.appxi.smartlib.html.HtmlHelper;
 
 import java.util.Map;
 
-public abstract class HtmlEditor extends HtmlRendererEx {
-    public HtmlEditor(Item item, WorkbenchPane workbench) {
-        super(item, workbench, true);
+public abstract class HtmlBasedEditor extends WebBasedEditor {
+    public HtmlBasedEditor(WorkbenchPane workbench, StackPane viewport, ItemEx item) {
+        super(workbench, viewport, item);
     }
 
     private WebView cachedWebView;
@@ -43,16 +44,7 @@ public abstract class HtmlEditor extends HtmlRendererEx {
     /* //////////////////////////////////////////////////////////////////// */
 
     @Override
-    public final void navigate(Item item) {
-        //
-    }
-
-    @Override
-    protected void onWebEngineLoading() {
-        loadEditor();
-    }
-
-    protected void loadEditor() {
+    protected Object createWebContent() {
         String template = """
                 <!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8">
                 <link rel="stylesheet" href="${appDir}template/web-incl/app.css"/>
@@ -143,7 +135,12 @@ public abstract class HtmlEditor extends HtmlRendererEx {
         template = template.replace("${appDir}", DesktopApp.appDir().toUri().toString())
                 .replace("${useDarkMode}", String.valueOf(app.visualProvider.theme().name().contains("DARK")))
         ;
-        webEngine().loadContent(template);
+        return template;
+    }
+
+    @Override
+    protected WebCallback createWebCallback() {
+        return new WebCallbackImpl(this);
     }
 
     protected abstract String loadEditorContent();
@@ -155,10 +152,8 @@ public abstract class HtmlEditor extends HtmlRendererEx {
 
     @Override
     protected void onWebEngineLoadSucceeded() {
-        // set an interface object named 'javaApp' in the web engine's page
-        final JSObject window = (JSObject) webEngine().executeScript("window");
-        window.setMember("javaApp", javaApp);
-
+        super.onWebEngineLoadSucceeded();
+        //
         webPane().webView().setContextMenuEnabled(false);
 
         String editorContent = cachedEditorContent != null ? cachedEditorContent : loadEditorContent();
@@ -169,30 +164,23 @@ public abstract class HtmlEditor extends HtmlRendererEx {
                     .concat("')}, 100)"));
         if (cachedEditorIsDirty)
             webEngine().executeScript("setTimeout(function(){tinymce.activeEditor.setDirty(true)}, 120)");
-        //
-        super.onWebEngineLoadSucceeded();
     }
 
     @Override
-    protected void onSetAppStyle(VisualEvent event) {
+    protected void onAppStyleSetting(VisualEvent event) {
         if (null == this.webPane()) return;
         FxHelper.runLater(() -> {
             cachedEditorIsDirty = (boolean) webEngine().executeScript("tinymce.activeEditor.isDirty()");
             cachedEditorContent = (String) webEngine().executeScript("tinymce.activeEditor.getContent()");
-            loadEditor();
-            super.onSetAppStyle(event);
+            super.navigating(null, false);
+            super.onAppStyleSetting(event);
         });
     }
-
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    /**
-     * for communication from the Javascript engine.
-     */
-    private final JavaApp javaApp = new JavaApp();
-
-    public final class JavaApp {
-        private JavaApp() {
+    public class WebCallbackImpl extends WebCallback {
+        public WebCallbackImpl(WebRenderer webRenderer) {
+            super(webRenderer);
         }
 
         public void save(String content) {

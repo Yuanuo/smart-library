@@ -4,7 +4,6 @@ import javafx.application.Platform;
 import javafx.beans.InvalidationListener;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleBooleanProperty;
-import javafx.event.Event;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -35,17 +34,17 @@ import javafx.scene.text.Text;
 import javafx.scene.text.TextAlignment;
 import javafx.scene.text.TextFlow;
 import javafx.util.Callback;
+import org.appxi.javafx.app.search.SearchedEvent;
 import org.appxi.javafx.control.ListViewEx;
 import org.appxi.javafx.control.ProgressLayer;
 import org.appxi.javafx.control.TabPaneEx;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
-import org.appxi.javafx.workbench.views.WorkbenchMainViewController;
+import org.appxi.javafx.workbench.WorkbenchPartController;
 import org.appxi.search.solr.Piece;
 import org.appxi.smartcn.pinyin.PinyinHelper;
 import org.appxi.smartlib.Item;
-import org.appxi.smartlib.app.event.SearchedEvent;
 import org.appxi.smartlib.dao.BeansContext;
 import org.appxi.smartlib.dao.PiecesRepository;
 import org.appxi.util.StringHelper;
@@ -63,20 +62,22 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-class SearcherController extends WorkbenchMainViewController {
+class SearcherController extends WorkbenchPartController.MainView {
     static final int PAGE_SIZE = 10;
 
     public SearcherController(String viewId, WorkbenchPane workbench) {
-        super(viewId, workbench);
+        super(workbench);
+
+        this.id.set(viewId);
         this.setTitles(null);
     }
 
-    @Override
     protected void setTitles(String appendText) {
         String title = "搜索";
         if (null != appendText)
-            title = title.concat("：").concat(appendText.isBlank() ? "*" : appendText);
-        super.setTitles(title);
+            title = title + "：" + (appendText.isBlank() ? "*" : StringHelper.trimChars(appendText, 16));
+        this.title.set(title);
+        this.tooltip.set(title);
     }
 
     @Override
@@ -98,7 +99,9 @@ class SearcherController extends WorkbenchMainViewController {
     private final List<String> searchTypes = List.of("article", "topic"), searchScope = new ArrayList<>();
 
     @Override
-    protected void onViewportInitOnce(StackPane viewport) {
+    protected void createViewport(StackPane viewport) {
+        super.createViewport(viewport);
+        //
         inputView = new InputView(this::search);
         //
         final SplitPane splitPane = new SplitPane();
@@ -181,18 +184,14 @@ class SearcherController extends WorkbenchMainViewController {
     }
 
     @Override
-    public void onViewportShowing(boolean firstTime) {
+    public void activeViewport(boolean firstTime) {
         if (null != inputView) {
             FxHelper.runThread(30, () -> inputView.input.requestFocus());
         }
     }
 
     @Override
-    public void onViewportHiding() {
-    }
-
-    @Override
-    public void onViewportClosing(Event event, boolean selected) {
+    public void inactiveViewport(boolean closing) {
     }
 
     boolean isNeverSearched() {

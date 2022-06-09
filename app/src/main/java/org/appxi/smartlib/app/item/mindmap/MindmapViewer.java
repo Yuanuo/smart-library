@@ -1,23 +1,31 @@
 package org.appxi.smartlib.app.item.mindmap;
 
-import javafx.event.Event;
 import javafx.scene.control.Button;
 import javafx.scene.control.Tooltip;
-import javafx.scene.layout.StackPane;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
-import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
+import org.appxi.smartlib.app.AppContext;
+import org.appxi.smartlib.app.item.ItemEx;
 import org.appxi.smartlib.app.recent.RecentViewSupport;
 
 public class MindmapViewer extends MindmapRenderer implements RecentViewSupport {
-    public MindmapViewer(Item item, WorkbenchPane workbench) {
-        super(item, workbench, false);
+    public MindmapViewer(WorkbenchPane workbench, ItemEx item) {
+        super(workbench, item, true);
+
+        AppContext.bindingViewer(this, item);
     }
 
     @Override
-    protected void onViewportInitOnce(StackPane viewport) {
-        super.onViewportInitOnce(viewport);
+    public void uninstall() {
+        super.uninstall();
+        //
+        app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, this.item));
+    }
+
+    @Override
+    public void install() {
+        super.install();
         //
         //addTool_ExportPng();
     }
@@ -30,19 +38,12 @@ public class MindmapViewer extends MindmapRenderer implements RecentViewSupport 
         button.setOnAction(event -> {
 
         });
-        webPane().getTopAsBar().addLeft(button);
+        webPane().getTopBar().addLeft(button);
     }
 
     @Override
     protected void onWebEngineLoadSucceeded() {
         super.onWebEngineLoadSucceeded();
-        //
-        app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, this.item));
-    }
-
-    @Override
-    public void onViewportClosing(Event event, boolean selected) {
-        super.onViewportClosing(event, selected);
         //
         app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, this.item));
     }

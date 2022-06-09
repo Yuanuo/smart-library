@@ -20,6 +20,7 @@ import org.appxi.smartlib.ItemHelper;
 import org.appxi.smartlib.ItemProvider;
 import org.appxi.smartlib.ItemProviders;
 import org.appxi.smartlib.app.App;
+import org.appxi.smartlib.app.item.ItemEx;
 import org.appxi.smartlib.app.item.ItemRenderer;
 import org.appxi.smartlib.app.item.article.ArticleEditor;
 import org.appxi.smartlib.app.item.article.ArticleViewer;
@@ -30,6 +31,7 @@ import org.appxi.smartlib.article.ArticleProvider;
 import org.appxi.smartlib.dao.BeansContext;
 import org.appxi.smartlib.dao.ItemsDao;
 import org.appxi.smartlib.dao.PiecesRepository;
+import org.appxi.smartlib.mindmap.MindmapOldProvider;
 import org.appxi.smartlib.mindmap.MindmapProvider;
 import org.appxi.smartlib.tika.DocProvider;
 import org.appxi.smartlib.tika.DocxProvider;
@@ -46,7 +48,7 @@ import org.appxi.util.ext.Attributes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.*;
+import java.awt.Desktop;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.Arrays;
@@ -72,7 +74,7 @@ public class ItemActions {
 
     public static void setupInitialize() {
         ItemProviders.add(ArticleProvider.ONE,
-                MindmapProvider.ONE,
+                MindmapProvider.ONE, MindmapOldProvider.ONE,
                 DocxProvider.ONE, DocProvider.ONE,
                 PptxProvider.ONE, PptProvider.ONE,
                 XlsxProvider.ONE, XlsProvider.ONE,
@@ -85,17 +87,20 @@ public class ItemActions {
 
         // article
         ArticleProvider.ONE.attr(AK_CREATOR, (Consumer<Item>) parent -> ItemActions.create(ArticleProvider.ONE, parent));
-        ArticleProvider.ONE.attr(AK_EDITOR, (Function<Item, ItemRenderer>) item -> new ArticleEditor(item, App.app().workbench()));
-        ArticleProvider.ONE.attr(AK_VIEWER, (Function<Item, ItemRenderer>) item -> new ArticleViewer(item, App.app().workbench()));
+        ArticleProvider.ONE.attr(AK_EDITOR, (Function<ItemEx, ItemRenderer>) item -> new ArticleEditor(App.app().workbench(), item));
+        ArticleProvider.ONE.attr(AK_VIEWER, (Function<ItemEx, ItemRenderer>) item -> new ArticleViewer(App.app().workbench(), item));
 
         // mindmap
-        MindmapProvider.ONE.attr(AK_EDITOR, (Function<Item, ItemRenderer>) item -> new MindmapEditor(item, App.app().workbench()));
-        MindmapProvider.ONE.attr(AK_VIEWER, (Function<Item, ItemRenderer>) item -> new MindmapViewer(item, App.app().workbench()));
+        MindmapProvider.ONE.attr(AK_CREATOR, (Consumer<Item>) parent -> ItemActions.create(MindmapProvider.ONE, parent));
+        MindmapProvider.ONE.attr(AK_EDITOR, (Function<ItemEx, ItemRenderer>) item -> new MindmapEditor(App.app().workbench(), item));
+        MindmapProvider.ONE.attr(AK_VIEWER, (Function<ItemEx, ItemRenderer>) item -> new MindmapViewer(App.app().workbench(), item));
+
+        MindmapOldProvider.ONE.attr(AK_VIEWER, (Function<ItemEx, ItemRenderer>) item -> new MindmapViewer(App.app().workbench(), item));
 
         // tika
         ItemProviders.list().forEach(provider -> {
             if (provider instanceof TikaProvider tikaProvider) {
-                tikaProvider.attr(AK_VIEWER, (Function<Item, ItemRenderer>) item -> new TikaViewer(item, App.app().workbench()));
+                tikaProvider.attr(AK_VIEWER, (Function<ItemEx, ItemRenderer>) item -> new TikaViewer(App.app().workbench(), item));
             }
         });
     }
@@ -175,7 +180,7 @@ public class ItemActions {
                     .replace("//", "/")
                     .replaceFirst("/$", "");
             //
-            Item item = new Item(itemProvider);
+            Item item = new ItemEx(itemProvider);
             item.setName(FilenameUtils.getName(str));
             item.setPath(str);
             //

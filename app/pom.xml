@@ -37,24 +37,9 @@
             <version>[1.0.0,)</version>
         </dependency>
         <dependency>
-            <groupId>org.appxi</groupId>
-            <artifactId>smartcn-convert</artifactId>
-            <version>[1.0.0,)</version>
-        </dependency>
-        <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-swing</artifactId>
             <version>${javafx.version}</version>
-        </dependency>
-<!--        <dependency>-->
-<!--            <groupId>org.openjfx</groupId>-->
-<!--            <artifactId>javafx-fxml</artifactId>-->
-<!--            <version>${javafx.version}</version>-->
-<!--        </dependency>-->
-        <dependency>
-            <groupId>org.appxi</groupId>
-            <artifactId>dictionary</artifactId>
-            <version>[22.05.14,)</version>
         </dependency>
     </dependencies>
 

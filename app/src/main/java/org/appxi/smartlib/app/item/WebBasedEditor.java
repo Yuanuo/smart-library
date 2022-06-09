@@ -1,7 +1,7 @@
-package org.appxi.smartlib.app.html;
+package org.appxi.smartlib.app.item;
 
+import javafx.beans.value.ChangeListener;
 import javafx.embed.swing.SwingFXUtils;
-import javafx.event.Event;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.TextField;
@@ -16,6 +16,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
+import org.appxi.javafx.app.web.WebRendererPart;
 import org.appxi.javafx.control.ProgressLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
@@ -24,7 +25,7 @@ import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.MetadataApi;
 import org.appxi.smartlib.app.App;
-import org.appxi.smartlib.app.item.MetadataEditor;
+import org.appxi.smartlib.app.AppContext;
 import org.appxi.smartlib.dao.ItemsDao;
 import org.appxi.smartlib.html.HtmlHelper;
 import org.appxi.util.FileHelper;
@@ -44,35 +45,43 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-public abstract class HtmlRendererEx extends HtmlRenderer {
-    public HtmlRendererEx(Item item, WorkbenchPane workbench, boolean editing) {
-        super(item, workbench, editing);
+public abstract class WebBasedEditor extends WebRendererPart.MainView implements ItemRenderer {
+    public final ItemEx item;
+    private ChangeListener<String> _outsideRenamedListener;
+
+    public WebBasedEditor(WorkbenchPane workbench, StackPane viewport, ItemEx item) {
+        super(workbench, viewport);
+        this.item = item;
+        AppContext.bindingEditor(this, item);
     }
 
-    /* //////////////////////////////////////////////////////////////////// */
+    public final ItemEx item() {
+        return item;
+    }
 
     @Override
-    protected void onViewportInitOnce(StackPane viewport) {
-        super.onViewportInitOnce(viewport);
-        //
-        if (this.editing) {
-            addEdit_Rename();
-        }
+    protected List<InputStream> getAdditionalStyleSheets() {
+        return AppContext.getWebIncludeCSSs();
     }
 
-    private BiConsumer<String, String> outsideRenamedListener;
+    @Override
+    public void uninstall() {
+        if (null != this._outsideRenamedListener) {
+            item.name.removeListener(this._outsideRenamedListener);
+        }
+        super.uninstall();
+    }
 
-    private void addEdit_Rename() {
+    protected void addEdit_Renamer() {
         final TextField nameField = new TextField(item.getName());
         nameField.setPromptText("在此输入");
         nameField.setTooltip(new Tooltip("在此处输入后按回车应用修改"));
         HBox.setHgrow(nameField, Priority.ALWAYS);
-        outsideRenamedListener = (ov, nv) -> nameField.setText(nv);
-        item.name.addListener(outsideRenamedListener);
+        _outsideRenamedListener = (o, ov, nv) -> nameField.setText(nv);
+        item.name.addListener(_outsideRenamedListener);
         nameField.addEventHandler(KeyEvent.KEY_RELEASED, event -> {
             if (event.getCode() == KeyCode.ENTER) {
                 event.consume();
@@ -87,7 +96,7 @@ public abstract class HtmlRendererEx extends HtmlRenderer {
 
                 final Item oldItem = item.clone(), newItem = item.clone();
                 final String newName = targetName;
-                ProgressLayer.showAndWait(getViewport(), progressLayer -> {
+                ProgressLayer.showAndWait(viewport, progressLayer -> {
                     final String msg = ItemsDao.items().rename(newItem, newName);
                     if (msg != null) {
                         app.toastError(msg);
@@ -102,7 +111,7 @@ public abstract class HtmlRendererEx extends HtmlRenderer {
                 });
             }
         });
-        webPane().getTopAsBox().addLeft(nameField);
+        webPane().getTopBox().addLeft(nameField);
     }
 
     protected final void addEdit_Metadata(MetadataApi metadataApi) {
@@ -110,18 +119,10 @@ public abstract class HtmlRendererEx extends HtmlRenderer {
         button.setTooltip(new Tooltip("编辑此文档的类目、作者等信息"));
         button.setGraphic(MaterialIcon.STYLE.graphic());
         button.setOnAction(event -> new MetadataEditor(metadataApi).showDialog());
-        webPane().getTopAsBox().addRight(button);
+        webPane().getTopBox().addRight(button);
     }
 
-    @Override
-    public void onViewportClosing(Event event, boolean selected) {
-        super.onViewportClosing(event, selected);
-        //
-        if (!event.isConsumed() && null != this.outsideRenamedListener)
-            item.name.removeListener(this.outsideRenamedListener);
-    }
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     protected final void attachAdvancedPasteShortcuts(Node node, Supplier<Boolean> editorFocusedSupplier) {
         if (null == node) return;

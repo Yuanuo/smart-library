@@ -6,6 +6,7 @@ import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TreeItem;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import org.appxi.javafx.app.search.SearcherEvent;
 import org.appxi.javafx.control.TreeViewEx;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchApp;
@@ -14,10 +15,9 @@ import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.ItemProviders;
-import org.appxi.smartlib.app.event.SearcherEvent;
 import org.appxi.smartlib.dao.ItemsDao;
 
-import java.awt.*;
+import java.awt.Desktop;
 import java.util.ArrayList;
 import java.util.List;
 

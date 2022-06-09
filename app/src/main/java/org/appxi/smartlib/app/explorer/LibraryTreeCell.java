@@ -20,6 +20,7 @@ import org.appxi.smartlib.FileProvider;
 import org.appxi.smartlib.FolderProvider;
 import org.appxi.smartlib.Item;
 import org.appxi.smartlib.article.ArticleProvider;
+import org.appxi.smartlib.mindmap.MindmapOldProvider;
 import org.appxi.smartlib.mindmap.MindmapProvider;
 import org.appxi.smartlib.tika.TikaProvider;
 import org.appxi.util.StringHelper;
@@ -44,6 +45,8 @@ class LibraryTreeCell implements Callback<TreeView<Item>, TreeCell<Item>> {
             return MaterialIcon.TEXT_SNIPPET.graphic();
         } else if (item.provider == MindmapProvider.ONE) {
             return MaterialIcon.ACCOUNT_TREE.graphic();
+        } else if (item.provider == MindmapOldProvider.ONE) {
+            return MaterialIcon.AUTO_AWESOME_MOSAIC.graphic();
         } else if (item.provider instanceof TikaProvider) {
             return MaterialIcon.PLAGIARISM.graphic();
         }

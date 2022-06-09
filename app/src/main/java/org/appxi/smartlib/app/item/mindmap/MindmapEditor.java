@@ -2,24 +2,26 @@ package org.appxi.smartlib.app.item.mindmap;
 
 import javafx.scene.control.Button;
 import javafx.scene.control.Tooltip;
-import javafx.scene.layout.StackPane;
 import org.appxi.javafx.control.ProgressLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
-import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.app.App;
+import org.appxi.smartlib.app.AppContext;
+import org.appxi.smartlib.app.item.ItemEx;
 
 public class MindmapEditor extends MindmapRenderer {
-    public MindmapEditor(Item item, WorkbenchPane workbench) {
-        super(item, workbench, true);
+    public MindmapEditor(WorkbenchPane workbench, ItemEx item) {
+        super(workbench, item, false);
+        AppContext.bindingEditor(this, item);
     }
 
     @Override
-    protected void onViewportInitOnce(StackPane viewport) {
-        super.onViewportInitOnce(viewport);
+    public void install() {
+        super.install();
         //
+        addEdit_Renamer();
         addEdit_Metadata(document);
         addEdit_Save();
     }
@@ -41,6 +43,6 @@ public class MindmapEditor extends MindmapRenderer {
             app.toast("已保存");
             App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.UPDATED, item));
         })));
-        webPane().getTopAsBox().addRight(button);
+        webPane().getTopBox().addRight(button);
     }
 }

@@ -1,29 +1,29 @@
 package org.appxi.smartlib.app.item.article;
 
 import javafx.scene.control.Button;
-import javafx.scene.layout.StackPane;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
-import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
-import org.appxi.smartlib.app.html.HtmlViewer;
+import org.appxi.smartlib.app.AppContext;
+import org.appxi.smartlib.app.item.HtmlBasedViewer;
+import org.appxi.smartlib.app.item.ItemEx;
 import org.appxi.smartlib.article.ArticleDocument;
 import org.appxi.util.StringHelper;
 
 import java.nio.file.Path;
 
-public class ArticleViewer extends HtmlViewer {
+public class ArticleViewer extends HtmlBasedViewer {
     final ArticleDocument document;
 
-    public ArticleViewer(Item item, WorkbenchPane workbench) {
-        super(item, workbench);
+    public ArticleViewer(WorkbenchPane workbench, ItemEx item) {
+        super(workbench, null, item);
         this.document = new ArticleDocument(item);
     }
 
     @Override
-    protected void onViewportInitOnce(StackPane viewport) {
-        super.onViewportInitOnce(viewport);
-
+    public void install() {
+        super.install();
+        //
         addTool_EditArticle();
     }
 
@@ -33,15 +33,15 @@ public class ArticleViewer extends HtmlViewer {
         button.setGraphic(MaterialIcon.EDIT.graphic());
         button.setOnAction(event -> app.eventBus.fireEvent(new ItemEvent(ItemEvent.EDITING, item)));
         //
-        webPane().getTopAsBar().addLeft(button);
+        webPane().getTopBar().addLeft(button);
     }
 
     @Override
-    protected Object prepareHtmlContent() {
+    protected Object createWebContent() {
         String htmlFile = this.document.toViewableHtmlFile(null,
                 body -> StringHelper.concat("<body><article>", body.html(), "</article></body>"),
-                WebIncl.getIncludePaths()
+                AppContext.getWebIncludeURIs().toArray(new String[0])
         );
-        return Path.of(htmlFile).toUri();
+        return Path.of(htmlFile);
     }
 }

@@ -1,55 +1,57 @@
 package org.appxi.smartlib.app.item.mindmap;
 
-import netscape.javascript.JSObject;
 import org.appxi.javafx.app.DesktopApp;
-import org.appxi.javafx.visual.VisualEvent;
+import org.appxi.javafx.app.web.WebCallback;
+import org.appxi.javafx.app.web.WebRenderer;
 import org.appxi.javafx.workbench.WorkbenchPane;
-import org.appxi.smartlib.Item;
-import org.appxi.smartlib.app.html.HtmlRendererEx;
+import org.appxi.smartlib.app.item.ItemEx;
+import org.appxi.smartlib.app.item.ItemRenderer;
+import org.appxi.smartlib.app.item.WebBasedEditor;
 import org.appxi.smartlib.mindmap.MindmapDocument;
 
-abstract class MindmapRenderer extends HtmlRendererEx {
+abstract class MindmapRenderer extends WebBasedEditor implements ItemRenderer {
+    final boolean readonly;
     final MindmapDocument document;
 
-    public MindmapRenderer(Item item, WorkbenchPane workbench, boolean editing) {
-        super(item, workbench, editing);
+    public MindmapRenderer(WorkbenchPane workbench, ItemEx item, boolean readonly) {
+        super(workbench, null, item);
+        this.readonly = readonly;
         this.document = new MindmapDocument(item);
     }
 
     @Override
-    public void navigate(Item item) {
-        //TODO
+    public void initialize() {
     }
 
     @Override
-    protected final void applyWebStyle(VisualEvent event) {
-        //TODO
-    }
-
-    @Override
-    protected void onWebEngineLoading() {
-        webPane().webEngine().load(DesktopApp.appDir().resolve("template/mindmap/dist/" + (editing ? "editor" : "viewer") + ".html").toUri().toString());
+    protected void navigating(Object location, boolean firstTime) {
+        webPane().webEngine().load(DesktopApp.appDir().resolve("template/mindmap/dist/" + (readonly ? "viewer" : "editor") + ".html").toUri().toString());
     }
 
     @Override
     protected void onWebEngineLoadSucceeded() {
-        // set an interface object named 'javaApp' in the web engine's page
-        final JSObject window = webPane().executeScript("window");
-        window.setMember("javaApp", javaApp);
-        //
         super.onWebEngineLoadSucceeded();
         //
         webPane().webView().setContextMenuEnabled(false);
     }
 
+    @Override
+    protected WebCallback createWebCallback() {
+        return new WebCallbackImpl(this);
+    }
+
+    @Override
+    protected final Object createWebContent() {
+        throw new UnsupportedOperationException("Should never happen");
+    }
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    /**
-     * for communication from the Javascript engine.
-     */
-    private final JavaApp javaApp = new JavaApp();
+    public class WebCallbackImpl extends WebCallback {
+        public WebCallbackImpl(WebRenderer webRenderer) {
+            super(webRenderer);
+        }
 
-    public final class JavaApp {
         public void initEditor() {
             webPane().executeScript("minder.importJson(".concat(document.getDocument().toString()).concat(")"));
         }

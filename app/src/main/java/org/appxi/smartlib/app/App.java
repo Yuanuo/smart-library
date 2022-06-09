@@ -3,14 +3,14 @@ package org.appxi.smartlib.app;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 import org.appxi.file.FileWatcher;
-import org.appxi.javafx.control.WebPane;
+import org.appxi.javafx.app.dict.DictionaryController;
 import org.appxi.javafx.visual.VisualEvent;
+import org.appxi.javafx.web.WebPane;
 import org.appxi.javafx.workbench.WorkbenchApp;
 import org.appxi.javafx.workbench.WorkbenchPane;
-import org.appxi.javafx.workbench.WorkbenchViewController;
+import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartcn.pinyin.PinyinHelper;
-import org.appxi.smartlib.app.dict.DictionaryController;
 import org.appxi.smartlib.app.explorer.LibraryExplorer;
 import org.appxi.smartlib.app.home.AboutController;
 import org.appxi.smartlib.app.home.PreferencesController;
@@ -112,7 +112,7 @@ public class App extends WorkbenchApp {
     }
 
     @Override
-    protected String getAppName() {
+    public String getAppName() {
         return NAME;
     }
 
@@ -127,14 +127,14 @@ public class App extends WorkbenchApp {
     }
 
     @Override
-    protected List<WorkbenchViewController> createWorkbenchViews(WorkbenchPane workbench) {
-        final List<WorkbenchViewController> result = new ArrayList<>();
+    protected List<WorkbenchPart> createWorkbenchParts(WorkbenchPane workbench) {
+        final List<WorkbenchPart> result = new ArrayList<>();
 
         result.add(new LibraryExplorer(workbench));
 
         result.add(new LookupController(workbench));
         result.add(new SearchController(workbench));
-        result.add(new DictionaryController(workbench));
+        result.add(new DictionaryController(workbench, AppContext::getWebIncludeCSSs, AppContext::getWebIncludeURIs));
 
         result.add(new RecentViewsController(workbench));
         result.add(new RecentItemsController(workbench));

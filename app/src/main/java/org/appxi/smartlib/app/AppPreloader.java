@@ -15,6 +15,7 @@ import org.appxi.javafx.visual.VisualProvider;
 import org.appxi.prefs.Preferences;
 import org.appxi.prefs.PreferencesInProperties;
 import org.appxi.prefs.UserPrefs;
+import org.appxi.smartlib.app.item.ItemEx;
 import org.appxi.smartlib.dao.ItemsDao;
 import org.appxi.util.FileHelper;
 import org.appxi.util.OSVersions;
@@ -163,7 +164,7 @@ public class AppPreloader extends Preloader {
             UserPrefs.setupDataDirectory(lockFile.getParent(), null);
             UserPrefs.prefs = new PreferencesInProperties(UserPrefs.confDir().resolve(".prefs"));
             // 在此设置数据库基本环境，以供后续的功能正常使用
-            ItemsDao.setupInitialize(basePath);
+            ItemsDao.setupInitialize(basePath, ItemEx.ROOT);
             //
             return true;
         } catch (Throwable e) {
