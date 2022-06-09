@@ -455,23 +455,22 @@ public class ItemActions {
         dialog.getDialogPane().setPrefWidth(800);
         dialog.initOwner(App.app().getPrimaryStage());
 
-//        dialog.showAndWait().filter(t -> t == ButtonType.OK)
-//                .ifPresent(t -> ProgressLayer.showAndWait(App.app().getPrimaryGlass(), progressLayer -> {
-//                    final String msg = ItemDao.items().walk(item, itm -> {
-//                        if (null == itm || null == itm.provider || itm.provider.isFolder()) return;
-//                        if (null == itm.provider.getToucher()) return;
-//                        try {
-//                            Platform.runLater(() -> progressLayer.message.setText(itm.toPrettyPath()));
-//                            itm.provider.getToucher().accept(itm);
-//                        } catch (Throwable ex) {
-//                            logger.warn("touch", ex);
-//                        }
-//                    });
-//                    if (msg != null) {
-//                        App.app().toastError(msg);
-//                        return;
-//                    }
-//                    App.app().toast("已接触");
-//                }));
+        dialog.showAndWait().filter(t -> t == ButtonType.OK)
+                .ifPresent(t -> ProgressLayer.showAndWait(App.app().getPrimaryGlass(), progressLayer -> {
+                    final String msg = ItemsDao.items().walk(item, itm -> {
+                        if (null == itm || null == itm.provider || itm.provider.isFolder()) return;
+                        try {
+                            Platform.runLater(() -> progressLayer.message.setText(itm.toDetail()));
+                            itm.provider.touching(itm);
+                        } catch (Throwable ex) {
+                            logger.warn("touch", ex);
+                        }
+                    });
+                    if (msg != null) {
+                        App.app().toastError(msg);
+                        return;
+                    }
+                    App.app().toast("已接触");
+                }));
     }
 }
