@@ -69,19 +69,19 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
     }
 
     @Override
-    public void initialize() {
+    public void postConstruct() {
     }
 
     @Override
-    public void uninstall() {
-        super.uninstall();
+    public void deinitialize() {
+        super.deinitialize();
         //
         app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, item));
     }
 
     @Override
-    public void install() {
-        super.install();
+    public void initialize() {
+        super.initialize();
         //
         addTool_GotoHeadings();
     }
@@ -100,7 +100,7 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
             gotoHeadingsLayer.show(null);
         });
         //
-        webPane().getTopBar().addLeft(gotoHeadings);
+        this.webPane.getTopBar().addLeft(gotoHeadings);
     }
 
     @Override
@@ -155,7 +155,7 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
 
     @Override
     protected ContextMenu createWebViewContextMenu() {
-        String origText = webPane().executeScript("getValidSelectionText()");
+        String origText = this.webPane.executeScript("getValidSelectionText()");
         String trimText = null == origText ? null : origText.strip().replace('\n', ' ');
         final String availText = StringHelper.isBlank(trimText) ? null : trimText;
         //
@@ -246,7 +246,7 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
             }
             final LookupExpression lookupExpression = optional.orElse(null);
             //
-            String headings = webPane().executeScript("getHeadings()");
+            String headings = HtmlBasedViewer.this.webPane.executeScript("getHeadings()");
             if (null != headings && headings.length() > 0) {
                 headings.lines().forEach(str -> {
                     String[] arr = str.split("#", 2);
@@ -282,7 +282,7 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
         @Override
         public void hide() {
             super.hide();
-            webPane().webView().requestFocus();
+            HtmlBasedViewer.this.webPane.webView().requestFocus();
         }
     }
 

@@ -32,7 +32,7 @@ public class RecentViewsController extends WorkbenchPartController {
     }
 
     @Override
-    public void initialize() {
+    public void postConstruct() {
         app.eventBus.addEventHandler(AppEvent.STOPPING, event -> saveRecentViews());
         app.getPrimaryScene().getAccelerators().put(new KeyCodeCombination(KeyCode.F1), this::showWelcome);
         //
@@ -75,7 +75,7 @@ public class RecentViewsController extends WorkbenchPartController {
             if (swapRecentViews.isEmpty()) {
                 showWelcome();
             } else {
-                swapRecentViews.forEach(WorkbenchPart::initialize);
+                swapRecentViews.forEach(WorkbenchPart::postConstruct);
                 if (null != swapRecentViewSelected.value)
                     workbench.selectMainView(swapRecentViewSelected.value.id().get());
             }
@@ -114,7 +114,7 @@ public class RecentViewsController extends WorkbenchPartController {
             }
 
             workbench.addWorkbenchPartAsMainView(newViewer, false);
-            newViewer.initialize();
+            newViewer.postConstruct();
             workbench.selectMainView(newViewer.id.get());
         });
     }

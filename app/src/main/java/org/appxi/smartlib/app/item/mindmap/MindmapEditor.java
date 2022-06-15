@@ -18,8 +18,8 @@ public class MindmapEditor extends MindmapRenderer {
     }
 
     @Override
-    public void install() {
-        super.install();
+    public void initialize() {
+        super.initialize();
         //
         addEdit_Renamer();
         addEdit_Metadata(document);
@@ -31,7 +31,7 @@ public class MindmapEditor extends MindmapRenderer {
         button.setTooltip(new Tooltip("保存修改（Ctrl + S）"));
         button.setGraphic(MaterialIcon.SAVE.graphic());
         button.setOnAction(event -> ProgressLayer.showAndWait(app.getPrimaryGlass(), progressLayer -> FxHelper.runLater(() -> {
-            String json = webPane().executeScript("JSON.stringify(minder.exportJson())");
+            String json = this.webPane.executeScript("JSON.stringify(minder.exportJson())");
             document.setDocumentBody(json);
             try {
                 document.save();
@@ -43,6 +43,6 @@ public class MindmapEditor extends MindmapRenderer {
             app.toast("已保存");
             App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.UPDATED, item));
         })));
-        webPane().getTopBox().addRight(button);
+        this.webPane.getTopBox().addRight(button);
     }
 }

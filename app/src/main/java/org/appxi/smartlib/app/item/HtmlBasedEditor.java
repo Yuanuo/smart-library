@@ -28,10 +28,10 @@ public abstract class HtmlBasedEditor extends WebBasedEditor {
 
     private WebEngine webEngine() {
         if (null == this.cachedWebView) {
-            this.cachedWebView = this.webPane().webView();
-            attachAdvancedPasteShortcuts(this.cachedWebView, () -> webPane().executeScript("tinymce.activeEditor.hasFocus()"));
+            this.cachedWebView = this.webPane.webView();
+            attachAdvancedPasteShortcuts(this.cachedWebView, () -> this.webPane.executeScript("tinymce.activeEditor.hasFocus()"));
         }
-        return this.webPane().webEngine();
+        return this.webPane.webEngine();
     }
 
     @Override
@@ -154,7 +154,7 @@ public abstract class HtmlBasedEditor extends WebBasedEditor {
     protected void onWebEngineLoadSucceeded() {
         super.onWebEngineLoadSucceeded();
         //
-        webPane().webView().setContextMenuEnabled(false);
+        this.webPane.webView().setContextMenuEnabled(false);
 
         String editorContent = cachedEditorContent != null ? cachedEditorContent : loadEditorContent();
         cachedEditorContent = null;
@@ -168,7 +168,7 @@ public abstract class HtmlBasedEditor extends WebBasedEditor {
 
     @Override
     protected void onAppStyleSetting(VisualEvent event) {
-        if (null == this.webPane()) return;
+        if (null == this.webPane) return;
         FxHelper.runLater(() -> {
             cachedEditorIsDirty = (boolean) webEngine().executeScript("tinymce.activeEditor.isDirty()");
             cachedEditorContent = (String) webEngine().executeScript("tinymce.activeEditor.getContent()");

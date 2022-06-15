@@ -21,8 +21,8 @@ public class ArticleViewer extends HtmlBasedViewer {
     }
 
     @Override
-    public void install() {
-        super.install();
+    public void initialize() {
+        super.initialize();
         //
         addTool_EditArticle();
     }
@@ -33,7 +33,7 @@ public class ArticleViewer extends HtmlBasedViewer {
         button.setGraphic(MaterialIcon.EDIT.graphic());
         button.setOnAction(event -> app.eventBus.fireEvent(new ItemEvent(ItemEvent.EDITING, item)));
         //
-        webPane().getTopBar().addLeft(button);
+        this.webPane.getTopBar().addLeft(button);
     }
 
     @Override

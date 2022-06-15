@@ -31,7 +31,7 @@ public class RecentItemsController extends WorkbenchPartController.SideView {
     }
 
     @Override
-    public void initialize() {
+    public void postConstruct() {
         app.eventBus.addEventHandler(ItemEvent.VISITED, event -> UserPrefs.recents.setProperty(
                 event.item.getPath().concat(".v"),
                 String.valueOf(event.item.provider.providerId())

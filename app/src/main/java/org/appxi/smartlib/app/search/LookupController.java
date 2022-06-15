@@ -1,6 +1,5 @@
 package org.appxi.smartlib.app.search;
 
-import javafx.geometry.HPos;
 import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.Label;
 import javafx.scene.control.Labeled;
@@ -47,14 +46,14 @@ public class LookupController extends WorkbenchPartController implements Workben
     }
 
     @Override
-    public HPos sideToolAlignment() {
-        return HPos.LEFT;
+    public boolean sideToolAlignTop() {
+        return true;
     }
 
     private long lastShiftKeyPressedTime;
 
     @Override
-    public void initialize() {
+    public void postConstruct() {
         app.getPrimaryScene().getAccelerators().put(new KeyCodeCombination(KeyCode.G, KeyCombination.SHORTCUT_DOWN),
                 () -> this.activeViewport(false));
         app.getPrimaryScene().addEventHandler(KeyEvent.KEY_PRESSED, evt -> {

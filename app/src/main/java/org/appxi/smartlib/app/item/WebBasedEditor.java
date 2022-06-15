@@ -68,11 +68,11 @@ public abstract class WebBasedEditor extends WebRendererPart.MainView implements
     }
 
     @Override
-    public void uninstall() {
+    public void deinitialize() {
         if (null != this._outsideRenamedListener) {
             item.name.removeListener(this._outsideRenamedListener);
         }
-        super.uninstall();
+        super.deinitialize();
     }
 
     protected void addEdit_Renamer() {
@@ -111,7 +111,7 @@ public abstract class WebBasedEditor extends WebRendererPart.MainView implements
                 });
             }
         });
-        webPane().getTopBox().addLeft(nameField);
+        this.webPane.getTopBox().addLeft(nameField);
     }
 
     protected final void addEdit_Metadata(MetadataApi metadataApi) {
@@ -119,7 +119,7 @@ public abstract class WebBasedEditor extends WebRendererPart.MainView implements
         button.setTooltip(new Tooltip("编辑此文档的类目、作者等信息"));
         button.setGraphic(MaterialIcon.STYLE.graphic());
         button.setOnAction(event -> new MetadataEditor(metadataApi).showDialog());
-        webPane().getTopBox().addRight(button);
+        this.webPane.getTopBox().addRight(button);
     }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -20,19 +20,19 @@ abstract class MindmapRenderer extends WebBasedEditor implements ItemRenderer {
     }
 
     @Override
-    public void initialize() {
+    public void postConstruct() {
     }
 
     @Override
     protected void navigating(Object location, boolean firstTime) {
-        webPane().webEngine().load(DesktopApp.appDir().resolve("template/mindmap/dist/" + (readonly ? "viewer" : "editor") + ".html").toUri().toString());
+        this.webPane.webEngine().load(DesktopApp.appDir().resolve("template/mindmap/dist/" + (readonly ? "viewer" : "editor") + ".html").toUri().toString());
     }
 
     @Override
     protected void onWebEngineLoadSucceeded() {
         super.onWebEngineLoadSucceeded();
         //
-        webPane().webView().setContextMenuEnabled(false);
+        this.webPane.webView().setContextMenuEnabled(false);
     }
 
     @Override
@@ -53,7 +53,7 @@ abstract class MindmapRenderer extends WebBasedEditor implements ItemRenderer {
         }
 
         public void initEditor() {
-            webPane().executeScript("minder.importJson(".concat(document.getDocument().toString()).concat(")"));
+            MindmapRenderer.this.webPane.executeScript("minder.importJson(".concat(document.getDocument().toString()).concat(")"));
         }
     }
 }

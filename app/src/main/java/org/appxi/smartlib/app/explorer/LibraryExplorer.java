@@ -45,7 +45,7 @@ public class LibraryExplorer extends WorkbenchPartController.SideView {
     }
 
     @Override
-    public void initialize() {
+    public void postConstruct() {
         ItemActions.setupInitialize();
         //
         app.eventBus.addEventHandler(ItemEvent.VIEWING, event -> {
@@ -71,7 +71,7 @@ public class LibraryExplorer extends WorkbenchPartController.SideView {
             }
             FxHelper.runLater(() -> {
                 workbench.addWorkbenchPartAsMainView(newViewer, false);
-                newViewer.initialize();
+                newViewer.postConstruct();
                 if (newViewer instanceof WebViewer webViewer) {
                     webViewer.setPosition(item);
                 }
@@ -93,7 +93,7 @@ public class LibraryExplorer extends WorkbenchPartController.SideView {
             }
             FxHelper.runLater(() -> {
                 workbench.addWorkbenchPartAsMainView(newEditor, false);
-                newEditor.initialize();
+                newEditor.postConstruct();
                 workbench.selectMainView(newEditor.id().get());
             });
         });

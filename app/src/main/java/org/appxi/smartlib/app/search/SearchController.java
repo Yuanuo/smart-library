@@ -1,6 +1,5 @@
 package org.appxi.smartlib.app.search;
 
-import javafx.geometry.HPos;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
@@ -31,12 +30,12 @@ public class SearchController extends WorkbenchPartController implements Workben
     }
 
     @Override
-    public HPos sideToolAlignment() {
-        return HPos.LEFT;
+    public boolean sideToolAlignTop() {
+        return true;
     }
 
     @Override
-    public void initialize() {
+    public void postConstruct() {
         // 响应快捷键 Ctrl+H 事件，以打开搜索视图
         app.getPrimaryScene().getAccelerators().put(new KeyCodeCombination(KeyCode.H, KeyCombination.SHORTCUT_DOWN),
                 () -> openSearcherWithText(null, null));
@@ -81,7 +80,7 @@ public class SearchController extends WorkbenchPartController implements Workben
         FxHelper.runLater(() -> {
             if (!workbench.existsMainView(searcher.id.get())) {
                 workbench.addWorkbenchPartAsMainView(searcher, false);
-                searcher.initialize();
+                searcher.postConstruct();
             }
             workbench.selectMainView(searcher.id.get());
             searcher.setSearchScope(scope);

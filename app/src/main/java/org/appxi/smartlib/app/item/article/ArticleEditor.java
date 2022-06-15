@@ -14,12 +14,12 @@ public class ArticleEditor extends HtmlBasedEditor {
     }
 
     @Override
-    public void initialize() {
+    public void postConstruct() {
     }
 
     @Override
-    public void install() {
-        super.install();
+    public void initialize() {
+        super.initialize();
         //
         addEdit_Renamer();
         addEdit_Metadata(document);

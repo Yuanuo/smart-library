@@ -81,7 +81,7 @@ class SearcherController extends WorkbenchPartController.MainView {
     }
 
     @Override
-    public void initialize() {
+    public void postConstruct() {
     }
 
     private InputView inputView;

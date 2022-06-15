@@ -17,15 +17,15 @@ public class MindmapViewer extends MindmapRenderer implements RecentViewSupport 
     }
 
     @Override
-    public void uninstall() {
-        super.uninstall();
+    public void deinitialize() {
+        super.deinitialize();
         //
         app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, this.item));
     }
 
     @Override
-    public void install() {
-        super.install();
+    public void initialize() {
+        super.initialize();
         //
         //addTool_ExportPng();
     }
@@ -38,7 +38,7 @@ public class MindmapViewer extends MindmapRenderer implements RecentViewSupport 
         button.setOnAction(event -> {
 
         });
-        webPane().getTopBar().addLeft(button);
+        this.webPane.getTopBar().addLeft(button);
     }
 
     @Override
