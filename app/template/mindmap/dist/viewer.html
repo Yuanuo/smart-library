@@ -19,10 +19,6 @@
             height: 100%;
             overflow: hidden;
         }
-
-        .km-view text {
-            transform: translateY(-3px);
-        }
     </style>
 
     <!-- bower:js -->
@@ -47,12 +43,19 @@
     <script src="../node_modules/kity/dist/kity.js"></script>
     <script src="../node_modules/kityminder-core/dist/kityminder.core.js"></script>
     <script src="kityminder.editor.js"></script>
+
+    <!-- 引入特殊字体支持 -->
+    <link rel="stylesheet" href="../../web-incl/app-base.css">
+    <link rel="stylesheet" href="../../../../../appxi-javafx/repo/web-incl/app-base.css">
 </head>
-<body ng-app="kityminderApp" ng-controller="MainController">
+<body ng-app="kityminderApp" ng-controller="MainController" style="letter-spacing: unset;">
 <kityminder-viewer on-init="initEditor(editor, minder)"></kityminder-viewer>
 </body>
 
 <script type="text/javascript">
+var javaApp;
+
+function onDocumentReady(javaApp) {
     angular.module('kityminderApp', ['kityminderEditor'])
         .config(function (configProvider) {
             configProvider.set('lang', 'zh_CN');
@@ -62,9 +65,9 @@
                 window.editor = editor;
                 window.minder = minder;
 
-                if (window.javaApp) javaApp.initEditor();
-                minder.execCommand('hand');
+                minder.importJson(JSON.parse(javaApp.initEditor()));
             };
         });
+}
 </script>
 </html>

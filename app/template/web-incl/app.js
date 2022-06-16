@@ -1,5 +1,7 @@
 $(document).ready(function () {
-    handleOnPrettyIndent();
+    if (typeof handleOnPrettyIndent !== 'undefined') {
+        handleOnPrettyIndent();
+    }
     $('a[data-note]').each(function () {
         const $this = $(this);
         if ($this.attr('id').startsWith('inline-')) {

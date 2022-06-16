@@ -122,7 +122,15 @@ public abstract class WebBasedEditor extends WebRendererPart.MainView implements
         this.webPane.getTopBox().addRight(button);
     }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    @Override
+    protected void navigating(Object location, boolean firstTime) {
+        if (firstTime) {
+            webPane.webView().setContextMenuEnabled(false);
+        }
+        super.navigating(location, firstTime);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     protected final void attachAdvancedPasteShortcuts(Node node, Supplier<Boolean> editorFocusedSupplier) {
         if (null == node) return;

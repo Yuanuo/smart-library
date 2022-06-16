@@ -1,8 +1,6 @@
 package org.appxi.smartlib.app.item.mindmap;
 
 import org.appxi.javafx.app.DesktopApp;
-import org.appxi.javafx.app.web.WebCallback;
-import org.appxi.javafx.app.web.WebRenderer;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.app.item.ItemEx;
 import org.appxi.smartlib.app.item.ItemRenderer;
@@ -25,35 +23,25 @@ abstract class MindmapRenderer extends WebBasedEditor implements ItemRenderer {
 
     @Override
     protected void navigating(Object location, boolean firstTime) {
-        this.webPane.webEngine().load(DesktopApp.appDir().resolve("template/mindmap/dist/" + (readonly ? "viewer" : "editor") + ".html").toUri().toString());
+        // 目前未实现定位功能，仅首次时加载内容
+        if (firstTime) {
+            super.navigating(location, true);
+        }
     }
 
     @Override
-    protected void onWebEngineLoadSucceeded() {
-        super.onWebEngineLoadSucceeded();
-        //
-        this.webPane.webView().setContextMenuEnabled(false);
-    }
-
-    @Override
-    protected WebCallback createWebCallback() {
-        return new WebCallbackImpl(this);
+    protected WebCallbackImpl createWebCallback() {
+        return new WebCallbackImpl();
     }
 
     @Override
     protected final Object createWebContent() {
-        throw new UnsupportedOperationException("Should never happen");
+        return DesktopApp.appDir().resolve("template/mindmap/dist/" + (readonly ? "viewer" : "editor") + ".html");
     }
 
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
     public class WebCallbackImpl extends WebCallback {
-        public WebCallbackImpl(WebRenderer webRenderer) {
-            super(webRenderer);
-        }
-
-        public void initEditor() {
-            MindmapRenderer.this.webPane.executeScript("minder.importJson(".concat(document.getDocument().toString()).concat(")"));
+        public String initEditor() {
+            return document.getDocument().toString();
         }
     }
 }

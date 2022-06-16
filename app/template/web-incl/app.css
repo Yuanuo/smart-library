@@ -1,0 +1,91 @@
+/*   *************************************************************************************************************    */
+div.p,
+p {
+    /*padding-bottom: calc(var(--font-size) * .85);*/
+}
+body {
+    padding: 3rem;
+}
+
+body > article > hr {
+    display: none;
+}
+/*   *************************************************************************************************************    */
+.wrap-lines-on,
+.wrap-pages-on {
+    margin-left: 4rem;
+}
+.wrap-lines-on div,
+.wrap-lines-on p,
+.wrap-lines-on .lg .l,
+.wrap-pages-on div,
+.wrap-pages-on p,
+.wrap-pages-on .lg .l {
+    display: inline;
+}
+.wrap-pages-on span.lb:before,
+.wrap-lines-on span.lb:before {
+    content: "\A" attr(id) " : ";
+    white-space: pre;
+    color: var(--text-color);
+    font-family: Helvetica;
+    font-weight: normal;
+    opacity: .5;
+}
+
+.wrap-pages-on span.pb:before {
+    content: "\A\A\A" attr(id) "\A\A";
+    white-space: pre;
+    color: var(--text-color);
+    font-family: Helvetica;
+    font-weight: normal;
+    opacity: .5;
+}
+
+.pretty-indent-on .indent-first-letter,
+.pretty-indent-on .indent-first-letter-lg .l:first-child{
+    text-indent: calc(-1 * var(--char-size));
+}
+.pretty-indent-on .indent-last-letter-lg .l:last-child{
+    text-indent: calc(1 * var(--char-size));
+}
+.pretty-indent-on .indent-first2-letter,
+.pretty-indent-on .indent-first2-letter-lg .l:first-child{
+    text-indent: calc(-2 * var(--char-size));
+}
+.pretty-indent-on .indent-last2-letter-lg .l:last-child{
+    text-indent: calc(2 * var(--char-size));
+}
+/*   *************************************************************************************************************    */
+
+/*   *************************************************************************************************************    */
+.tippy-box {
+    font-size: 95% !important;
+    max-width: 70rem !important;
+}
+.theme-dark .tippy-box {
+    background: #666 !important;
+}
+.theme-dark .tippy-arrow::before {
+    color: #666 !important;
+}
+
+a[data-note]::before {
+    content:"✱";
+    font-size: 85%;
+    font-weight: 600;
+    color: #20b771;
+}
+
+.theme-dark a {
+    color: brown;
+}
+
+hr {
+    border: 0;
+    height: 1px;
+    background-image: -webkit-linear-gradient(left, #ccc, #333, #ccc);
+    background-image: -moz-linear-gradient(left, #ccc, #333, #ccc);
+    background-image: -ms-linear-gradient(left, #ccc, #333, #ccc);
+    background-image: -o-linear-gradient(left, #ccc, #333, #ccc);
+}

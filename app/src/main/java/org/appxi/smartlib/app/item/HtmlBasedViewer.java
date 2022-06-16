@@ -13,8 +13,6 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.StackPane;
 import org.appxi.javafx.app.search.SearcherEvent;
-import org.appxi.javafx.app.web.WebCallback;
-import org.appxi.javafx.app.web.WebRenderer;
 import org.appxi.javafx.app.web.WebViewerPart;
 import org.appxi.javafx.control.LookupLayer;
 import org.appxi.javafx.helper.FxHelper;
@@ -126,11 +124,6 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
     @Override
     protected Object createWebContent() {
         return Path.of(item.getPath());
-    }
-
-    @Override
-    protected WebCallback createWebCallback() {
-        return new WebCallbackImpl(this);
     }
 
     @Override
@@ -246,7 +239,7 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
             }
             final LookupExpression lookupExpression = optional.orElse(null);
             //
-            String headings = HtmlBasedViewer.this.webPane.executeScript("getHeadings()");
+            String headings = webPane.executeScript("getHeadings()");
             if (null != headings && headings.length() > 0) {
                 headings.lines().forEach(str -> {
                     String[] arr = str.split("#", 2);
@@ -282,13 +275,7 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
         @Override
         public void hide() {
             super.hide();
-            HtmlBasedViewer.this.webPane.webView().requestFocus();
-        }
-    }
-
-    public class WebCallbackImpl extends WebCallback {
-        public WebCallbackImpl(WebRenderer webRenderer) {
-            super(webRenderer);
+            webPane.webView().requestFocus();
         }
     }
 }
