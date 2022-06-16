@@ -29,6 +29,7 @@ import java.util.AbstractMap;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 public class AppPreloader extends Preloader {
@@ -85,9 +86,27 @@ public class AppPreloader extends Preloader {
                 e.printStackTrace();
             }
         }
-
+        // 在普通模式时，默认加载最后使用的有效项目，若无则使用用户目录下的默认项目
         if ("simple".equals(UserPrefs.prefsEx.getString("profile.mode", "simple"))) {
-            if (tryLoadProfile(profileMgr, newDataDir)) return;
+            final Path defaultDataDir = List.copyOf(profileMgr.getPropertyKeys()).stream()
+                    .map(k -> new AbstractMap.SimpleEntry<>(k, profileMgr.getLong(k, -1)))
+                    .sorted(Collections.reverseOrder(Comparator.comparingLong(AbstractMap.SimpleEntry::getValue)))
+                    .map(val -> {
+                        final String dir = val.getKey();
+                        final Path path = Path.of(dir);
+                        try {
+                            if (!Files.isDirectory(path) || FileHelper.notExists(path)
+                                    || FileHelper.exists(path) && FileHelper.notExists(path.resolve(dataDirName))) {
+                                return null;
+                            }
+                        } catch (Throwable ignore) {
+                        }
+                        return path;
+                    })
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElse(newDataDir);
+            if (tryLoadProfile(profileMgr, defaultDataDir)) return;
         }
         //
         while (true) {
