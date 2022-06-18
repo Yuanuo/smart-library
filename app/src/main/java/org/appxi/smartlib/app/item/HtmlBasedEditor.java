@@ -1,12 +1,10 @@
 package org.appxi.smartlib.app.item;
 
-import javafx.application.Platform;
-import javafx.scene.input.Clipboard;
-import javafx.scene.input.DataFormat;
 import javafx.scene.layout.StackPane;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import org.appxi.javafx.app.DesktopApp;
+import org.appxi.javafx.app.web.WebViewer;
 import org.appxi.javafx.control.ProgressLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.VisualEvent;
@@ -14,9 +12,11 @@ import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.app.App;
 import org.appxi.smartlib.html.HtmlHelper;
+import org.appxi.util.FileHelper;
 
-import java.net.URI;
-import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Optional;
 
 public abstract class HtmlBasedEditor extends WebBasedEditor {
     public HtmlBasedEditor(WorkbenchPane workbench, StackPane viewport, ItemEx item) {
@@ -43,14 +43,42 @@ public abstract class HtmlBasedEditor extends WebBasedEditor {
     /* //////////////////////////////////////////////////////////////////// */
 
     @Override
-    protected Object createWebContent() {
-        URI uri = DesktopApp.appDir().resolve("template/tinymce/editor.html").toUri();
-        try {
-            return new URI(uri + "?darkMode=" + app.visualProvider.theme().name().contains("DARK")
+    protected void navigating(Object location, boolean firstTime) {
+        if (firstTime) {
+            // 暂时以此方法特殊处理，可能tinymce的编辑器太特殊，导致直接在html中引入css文件也无效果
+            String cssStr = """
+                    :root {
+                        --font-family: tibetan, "%s", AUTO !important;
+                        --zoom: %.2f !important;
+                        --text-color: %s;
+                    }
+                    body {
+                        background-color: %s;
+                    }
+                    """.formatted(
+                    app.visualProvider.webFontName(),
+                    app.visualProvider.webFontSize(),
+                    app.visualProvider.webTextColor(),
+                    app.visualProvider.webPageColor()
             );
-        } catch (Exception e) {
-            return uri;
+            cssStr += Optional.ofNullable(WebViewer.getWebIncludeDir())
+                    .map(dir -> FileHelper.readString(dir.resolve("app-base.css")))
+                    .orElse("");
+
+            // 编码成base64并应用
+            String cssData = "data:text/css;charset=utf-8;base64,"
+                             + Base64.getMimeEncoder().encodeToString(cssStr.getBytes(StandardCharsets.UTF_8));
+            FxHelper.runLater(() -> {
+                webPane.webEngine().setUserStyleSheetLocation(cssData);
+                webPane.executeScript("document.body.setAttribute('class','" + app.visualProvider + "');");
+            });
         }
+        super.navigating(location, firstTime);
+    }
+
+    @Override
+    protected Object createWebContent() {
+        return DesktopApp.appDir().resolve("template/tinymce/editor.html");
     }
 
     @Override
@@ -108,8 +136,7 @@ public abstract class HtmlBasedEditor extends WebBasedEditor {
         }
 
         public void setClipboardText(String text) {
-//            System.out.println(mime + " >>> " + data);
-            Platform.runLater(() -> Clipboard.getSystemClipboard().setContent(Map.of(DataFormat.PLAIN_TEXT, text)));
+            FxHelper.copyText(text);
         }
     }
 }

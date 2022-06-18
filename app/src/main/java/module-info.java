@@ -8,11 +8,11 @@ module appxi.smartLibrary {
 
     requires appxi.smartLibrary.api;
 
-//    requires org.scenicview.scenicview; // for debug
-
     exports org.appxi.smartlib.app; // for application launch
-    exports org.appxi.smartlib.app.item; // for js-engine
-    exports org.appxi.smartlib.app.item.mindmap; // for js-engine
+    exports org.appxi.smartlib.app.item;
+    exports org.appxi.smartlib.app.item.article;
+    exports org.appxi.smartlib.app.item.mindmap;
+    exports org.appxi.smartlib.app.item.tika;
 
 
     opens org.appxi.smartlib.app;

@@ -6,22 +6,13 @@ import org.appxi.javafx.app.web.WebViewer;
 import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.smartlib.app.item.ItemEx;
 
-import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Objects;
 import java.util.stream.Stream;
 
 public abstract class AppContext {
 
     private AppContext() {
-    }
-
-    public static List<InputStream> getWebIncludeCSSs() {
-        return Stream.of("web.css")
-                .map(App.class::getResourceAsStream)
-                .filter(Objects::nonNull)
-                .toList();
     }
 
     public static List<String> getWebIncludeURIs() {
@@ -31,6 +22,7 @@ public abstract class AppContext {
                 .map(s -> dir.resolve(s).toUri().toString())
                 .toList()
         );
+        result.add(App.app().visualProvider.getWebStyleSheetLocationURI());
         return result;
     }
 

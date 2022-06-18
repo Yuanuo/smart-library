@@ -39,10 +39,13 @@
           float: right;
         }
     </style>
+
+    <!-- 引入特殊字体支持 -->
+    <link rel="stylesheet" type="text/css" href="../web-incl/app-base.css">
+    <link rel="stylesheet" type="text/css" href="../../../../appxi-javafx/repo/web-incl/app-base.css">
+
     <script src='tinymce.js'></script>
     <script type="text/javascript">
-    var javaApp;
-
     tinymce.init({
         selector: '#htmlEditor',
         language: 'zh_CN',
@@ -68,8 +71,8 @@
         noneditable_noneditable_class: 'mceNonEditable',
         toolbar_mode: 'sliding',
         contextmenu: 'link image imagetools table',
-        skin: location.search.indexOf('darkMode=true') !== -1 ? 'oxide-dark' : 'oxide',
-        content_css: location.search.indexOf('darkMode=true') !== -1 ? 'dark' : 'default',
+        skin: location.search.indexOf('theme-dark') !== -1 ? 'oxide-dark' : 'oxide',
+        content_css: location.search.indexOf('theme-dark') !== -1 ? 'dark' : 'default',
         content_style: 'a.mce-item-anchor[id^=a-]{display: none} a.mce-item-anchor[data-note]{background:unset;width:auto !important;height:auto !important;} a.mce-item-anchor[data-note]:before{content:"✱";font-size:85%}',
         pagebreak_separator: '<p data-pb></p>',
         pagebreak_split_block: true,

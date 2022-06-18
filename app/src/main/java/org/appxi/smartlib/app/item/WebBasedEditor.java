@@ -8,7 +8,6 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.input.Clipboard;
-import javafx.scene.input.DataFormat;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
@@ -60,11 +59,6 @@ public abstract class WebBasedEditor extends WebRendererPart.MainView implements
 
     public final ItemEx item() {
         return item;
-    }
-
-    @Override
-    protected List<InputStream> getAdditionalStyleSheets() {
-        return AppContext.getWebIncludeCSSs();
     }
 
     @Override
@@ -139,7 +133,7 @@ public abstract class WebBasedEditor extends WebRendererPart.MainView implements
                 final Clipboard clipboard = Clipboard.getSystemClipboard();
                 if (clipboard.hasHtml()) {
                     event.consume();
-                    Clipboard.getSystemClipboard().setContent(Map.of(DataFormat.PLAIN_TEXT, clipboard.getHtml()));
+                    FxHelper.copyText(clipboard.getHtml());
                 }
             } else if (event.isShortcutDown() && event.isShiftDown() && event.getCode() == KeyCode.V) {
                 if (!editorFocusedSupplier.get()) return;

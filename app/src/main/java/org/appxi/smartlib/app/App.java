@@ -134,7 +134,7 @@ public class App extends WorkbenchApp {
 
         result.add(new LookupController(workbench));
         result.add(new SearchController(workbench));
-        result.add(new DictionaryController(workbench, AppContext::getWebIncludeCSSs, AppContext::getWebIncludeURIs));
+        result.add(new DictionaryController(workbench, AppContext::getWebIncludeURIs));
 
         result.add(new RecentViewsController(workbench));
         result.add(new RecentItemsController(workbench));

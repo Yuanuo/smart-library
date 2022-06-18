@@ -6,8 +6,6 @@ import javafx.scene.control.Labeled;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Tooltip;
-import javafx.scene.input.Clipboard;
-import javafx.scene.input.DataFormat;
 import javafx.scene.input.InputEvent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -26,13 +24,11 @@ import org.appxi.util.StringHelper;
 import org.appxi.util.ext.Attributes;
 import org.appxi.util.ext.LookupExpression;
 
-import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -59,11 +55,6 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
     @Override
     protected final String locationId() {
         return this.location.getPath();
-    }
-
-    @Override
-    protected List<InputStream> getAdditionalStyleSheets() {
-        return AppContext.getWebIncludeCSSs();
     }
 
     @Override
@@ -154,8 +145,7 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
         //
         MenuItem copyRef = new MenuItem("复制引用");
         copyRef.setDisable(null == availText);
-        copyRef.setOnAction(event -> Clipboard.getSystemClipboard().setContent(Map.of(DataFormat.PLAIN_TEXT,
-                "《".concat(item.getName()).concat("》\n\n").concat(origText))));
+        copyRef.setOnAction(event -> FxHelper.copyText("《" + item.getName() + "》\n\n" + origText));
 
         //
         String textTip = null == availText ? "" : "：".concat(StringHelper.trimChars(availText, 8));

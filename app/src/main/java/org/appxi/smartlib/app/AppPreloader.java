@@ -96,7 +96,7 @@ public class AppPreloader extends Preloader {
                         final Path path = Path.of(dir);
                         try {
                             if (!Files.isDirectory(path) || FileHelper.notExists(path)
-                                    || FileHelper.exists(path) && FileHelper.notExists(path.resolve(dataDirName))) {
+                                || FileHelper.exists(path) && FileHelper.notExists(path.resolve(dataDirName))) {
                                 return null;
                             }
                         } catch (Throwable ignore) {
@@ -126,7 +126,7 @@ public class AppPreloader extends Preloader {
                             final String dir = val.getKey();
                             final Path path = Path.of(dir);
                             if (!Files.isDirectory(path) || FileHelper.notExists(path)
-                                    || FileHelper.exists(path) && FileHelper.notExists(path.resolve(dataDirName))) {
+                                || FileHelper.exists(path) && FileHelper.notExists(path.resolve(dataDirName))) {
                                 profileMgr.removeProperty(dir);
                                 return;
                             }
