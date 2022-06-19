@@ -6,7 +6,7 @@
 
     <groupId>org.appxi</groupId>
     <artifactId>smart-library-lite</artifactId>
-    <version>22.06.11</version>
+    <version>22.06.19</version>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
