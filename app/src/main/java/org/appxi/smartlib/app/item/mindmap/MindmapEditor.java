@@ -8,13 +8,13 @@ import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.app.App;
-import org.appxi.smartlib.app.AppContext;
 import org.appxi.smartlib.app.item.ItemEx;
+import org.appxi.smartlib.app.item.WebBasedEditor;
 
 public class MindmapEditor extends MindmapRenderer {
     public MindmapEditor(WorkbenchPane workbench, ItemEx item) {
         super(workbench, item, false);
-        AppContext.bindingEditor(this, item);
+        WebBasedEditor.bindingEditor(this, item);
     }
 
     @Override

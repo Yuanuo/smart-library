@@ -5,7 +5,7 @@ import javafx.scene.control.Tooltip;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.ItemEvent;
-import org.appxi.smartlib.app.AppContext;
+import org.appxi.smartlib.app.item.HtmlBasedViewer;
 import org.appxi.smartlib.app.item.ItemEx;
 import org.appxi.smartlib.app.recent.RecentViewSupport;
 
@@ -13,7 +13,7 @@ public class MindmapViewer extends MindmapRenderer implements RecentViewSupport 
     public MindmapViewer(WorkbenchPane workbench, ItemEx item) {
         super(workbench, item, true);
 
-        AppContext.bindingViewer(this, item);
+        HtmlBasedViewer.bindingViewer(this, item);
     }
 
     @Override

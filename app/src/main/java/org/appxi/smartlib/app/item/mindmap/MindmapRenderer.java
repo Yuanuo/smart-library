@@ -12,7 +12,7 @@ abstract class MindmapRenderer extends WebBasedEditor implements ItemRenderer {
     final MindmapDocument document;
 
     public MindmapRenderer(WorkbenchPane workbench, ItemEx item, boolean readonly) {
-        super(workbench, null, item);
+        super(workbench, item);
         this.readonly = readonly;
         this.document = new MindmapDocument(item);
     }

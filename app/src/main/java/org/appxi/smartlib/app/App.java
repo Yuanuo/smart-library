@@ -14,6 +14,7 @@ import org.appxi.smartcn.pinyin.PinyinHelper;
 import org.appxi.smartlib.app.explorer.LibraryExplorer;
 import org.appxi.smartlib.app.home.AboutController;
 import org.appxi.smartlib.app.home.PreferencesController;
+import org.appxi.smartlib.app.item.HtmlBasedViewer;
 import org.appxi.smartlib.app.recent.RecentItemsController;
 import org.appxi.smartlib.app.recent.RecentViewsController;
 import org.appxi.smartlib.app.search.LookupController;
@@ -134,7 +135,7 @@ public class App extends WorkbenchApp {
 
         result.add(new LookupController(workbench));
         result.add(new SearchController(workbench));
-        result.add(new DictionaryController(workbench, AppContext::getWebIncludeURIs));
+        result.add(new DictionaryController(workbench, HtmlBasedViewer::getWebIncludeURIsEx));
 
         result.add(new RecentViewsController(workbench));
         result.add(new RecentItemsController(workbench));

@@ -1,5 +1,6 @@
 package org.appxi.smartlib.app.item;
 
+import javafx.beans.binding.Bindings;
 import javafx.scene.control.Button;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Labeled;
@@ -10,15 +11,17 @@ import javafx.scene.input.InputEvent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.StackPane;
+import org.appxi.javafx.app.DesktopApp;
 import org.appxi.javafx.app.search.SearcherEvent;
 import org.appxi.javafx.app.web.WebViewerPart;
 import org.appxi.javafx.control.LookupLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
+import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.smartcn.pinyin.PinyinHelper;
 import org.appxi.smartlib.ItemEvent;
-import org.appxi.smartlib.app.AppContext;
+import org.appxi.smartlib.app.App;
 import org.appxi.smartlib.app.recent.RecentViewSupport;
 import org.appxi.util.StringHelper;
 import org.appxi.util.ext.Attributes;
@@ -32,15 +35,34 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRenderer, RecentViewSupport {
+    public static List<String> getWebIncludeURIsEx() {
+        List<String> result = getWebIncludeURIs();
+        final Path dir = DesktopApp.appDir().resolve("template/web-incl");
+        result.addAll(Stream.of("html-viewer.css", "html-viewer.js")
+                .map(s -> dir.resolve(s).toUri().toString())
+                .toList()
+        );
+        result.add(App.app().visualProvider.getWebStyleSheetURI());
+        return result;
+    }
+
+    public static void bindingViewer(WorkbenchPart.MainView viewer, ItemEx item) {
+        viewer.id().bind(item.path);
+        viewer.title().bind(item.name);
+        viewer.tooltip().bind(Bindings.createStringBinding(item::toDetail, item.path));
+        viewer.appTitle().bind(item.name);
+    }
+
     public final ItemEx item;
     private ItemEx location;
 
-    public HtmlBasedViewer(WorkbenchPane workbench, StackPane viewport, ItemEx item) {
-        super(workbench, viewport);
+    public HtmlBasedViewer(WorkbenchPane workbench, ItemEx item) {
+        super(workbench);
         this.item = item;
-        AppContext.bindingViewer(this, item);
+        bindingViewer(this, item);
     }
 
     public final ItemEx item() {

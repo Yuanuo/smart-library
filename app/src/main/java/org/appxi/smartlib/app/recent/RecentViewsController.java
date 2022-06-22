@@ -103,7 +103,7 @@ public class RecentViewsController extends WorkbenchPartController {
     private void showWelcome() {
         Path indexHtml = DesktopApp.appDir().resolve("template/index.html");
         ItemEx indexItem = new ItemEx("欢迎使用", indexHtml.toString(), FileProvider.ONE);
-        HtmlBasedViewer newViewer = new HtmlBasedViewer(workbench, null, indexItem);
+        HtmlBasedViewer newViewer = new HtmlBasedViewer(workbench, indexItem);
         // 优先查找存在的视图，以避免重复打开
         HtmlBasedViewer oldViewer = (HtmlBasedViewer) workbench.findMainViewPart(newViewer.id.get());
 

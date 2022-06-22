@@ -1,6 +1,5 @@
 package org.appxi.smartlib.app.item;
 
-import javafx.scene.layout.StackPane;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import org.appxi.javafx.app.DesktopApp;
@@ -19,8 +18,8 @@ import java.util.Base64;
 import java.util.Optional;
 
 public abstract class HtmlBasedEditor extends WebBasedEditor {
-    public HtmlBasedEditor(WorkbenchPane workbench, StackPane viewport, ItemEx item) {
-        super(workbench, viewport, item);
+    public HtmlBasedEditor(WorkbenchPane workbench, ItemEx item) {
+        super(workbench, item);
     }
 
     private WebView cachedWebView;

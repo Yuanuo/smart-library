@@ -4,7 +4,6 @@ import javafx.scene.control.Button;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.ItemEvent;
-import org.appxi.smartlib.app.AppContext;
 import org.appxi.smartlib.app.item.HtmlBasedViewer;
 import org.appxi.smartlib.app.item.ItemEx;
 import org.appxi.smartlib.article.ArticleDocument;
@@ -16,7 +15,7 @@ public class ArticleViewer extends HtmlBasedViewer {
     final ArticleDocument document;
 
     public ArticleViewer(WorkbenchPane workbench, ItemEx item) {
-        super(workbench, null, item);
+        super(workbench, item);
         this.document = new ArticleDocument(item);
     }
 
@@ -40,7 +39,7 @@ public class ArticleViewer extends HtmlBasedViewer {
     protected Object createWebContent() {
         String htmlFile = this.document.toViewableHtmlFile(null,
                 body -> StringHelper.concat("<body><article>", body.html(), "</article></body>"),
-                AppContext.getWebIncludeURIs().toArray(new String[0])
+                HtmlBasedViewer.getWebIncludeURIsEx().toArray(new String[0])
         );
         return Path.of(htmlFile);
     }

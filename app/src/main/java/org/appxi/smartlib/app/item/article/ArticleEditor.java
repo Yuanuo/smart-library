@@ -9,7 +9,7 @@ public class ArticleEditor extends HtmlBasedEditor {
     final ArticleDocument document;
 
     public ArticleEditor(WorkbenchPane workbench, ItemEx item) {
-        super(workbench, null, item);
+        super(workbench, item);
         this.document = new ArticleDocument(item);
     }
 

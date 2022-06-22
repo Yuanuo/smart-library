@@ -1,5 +1,6 @@
 package org.appxi.smartlib.app.item;
 
+import javafx.beans.binding.Bindings;
 import javafx.beans.value.ChangeListener;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.Node;
@@ -12,7 +13,6 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.layout.StackPane;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
 import org.appxi.javafx.app.web.WebRendererPart;
@@ -20,11 +20,11 @@ import org.appxi.javafx.control.ProgressLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
+import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.MetadataApi;
 import org.appxi.smartlib.app.App;
-import org.appxi.smartlib.app.AppContext;
 import org.appxi.smartlib.dao.ItemsDao;
 import org.appxi.smartlib.html.HtmlHelper;
 import org.appxi.util.FileHelper;
@@ -48,13 +48,20 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 public abstract class WebBasedEditor extends WebRendererPart.MainView implements ItemRenderer {
+    public static void bindingEditor(WorkbenchPart.MainView editor, ItemEx item) {
+        editor.id().bind(Bindings.createStringBinding(() -> "Edit@".concat(item.toDetail()), item.path));
+        editor.title().bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.getName()), item.name));
+        editor.tooltip().bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.toDetail()), item.path));
+        editor.appTitle().bind(Bindings.createStringBinding(() -> "编辑: ".concat(item.getName()), item.path));
+    }
+
     public final ItemEx item;
     private ChangeListener<String> _outsideRenamedListener;
 
-    public WebBasedEditor(WorkbenchPane workbench, StackPane viewport, ItemEx item) {
-        super(workbench, viewport);
+    public WebBasedEditor(WorkbenchPane workbench, ItemEx item) {
+        super(workbench);
         this.item = item;
-        AppContext.bindingEditor(this, item);
+        bindingEditor(this, item);
     }
 
     public final ItemEx item() {
