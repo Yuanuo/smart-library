@@ -26843,18 +26843,15 @@
         setupEvents(editor, targetElm, ui, toolbarPersist);
         editor.nodeChanged();
       };
-      var delayedRender = function () {
-        return global$f.setEditorTimeout(editor, render, 0);
-      };
       editor.on('show', render);
       editor.on('hide', ui.hide);
       if (!toolbarPersist) {
-        editor.on('focus', delayedRender);
+        editor.on('focus', render);
         editor.on('blur', ui.hide);
       }
       editor.on('init', function () {
         if (editor.hasFocus() || toolbarPersist) {
-          delayedRender();
+          render();
         }
       });
       setupReadonlyModeSwitch(editor, uiComponents);
