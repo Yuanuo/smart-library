@@ -1,9 +1,7 @@
 package org.appxi.smartlib.app.item;
 
-import javafx.scene.web.WebEngine;
-import javafx.scene.web.WebView;
+import javafx.scene.input.KeyEvent;
 import org.appxi.javafx.app.DesktopApp;
-import org.appxi.javafx.app.web.WebViewer;
 import org.appxi.javafx.control.ProgressLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.VisualEvent;
@@ -11,69 +9,23 @@ import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.app.App;
 import org.appxi.smartlib.html.HtmlHelper;
-import org.appxi.util.FileHelper;
-
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.Optional;
 
 public abstract class HtmlBasedEditor extends WebBasedEditor {
+    private static final Object AK_INITIALIZED = new Object();
+
     public HtmlBasedEditor(WorkbenchPane workbench, ItemEx item) {
         super(workbench, item);
     }
 
-    private WebView cachedWebView;
-
-    private WebEngine webEngine() {
-        if (null == this.cachedWebView) {
-            this.cachedWebView = this.webPane.webView();
-            attachAdvancedPasteShortcuts(this.cachedWebView, () -> this.webPane.executeScript("tinymce.activeEditor.hasFocus()"));
-        }
-        return this.webPane.webEngine();
-    }
 
     @Override
     protected void insertHtmlAtCursor(String html) {
-        webEngine().executeScript("tinymce.activeEditor.insertContent('"
+        webPane.executeScript("tinymce.activeEditor.insertContent('"
                 .concat(HtmlHelper.escapeJavaStyleString(html, true, false))
                 .concat("')"));
     }
 
     /* //////////////////////////////////////////////////////////////////// */
-
-    @Override
-    protected void navigating(Object location, boolean firstTime) {
-        if (firstTime) {
-            // 暂时以此方法特殊处理，可能tinymce的编辑器太特殊，导致直接在html中引入css文件也无效果
-            String cssStr = """
-                    :root {
-                        --font-family: tibetan, "%s", AUTO !important;
-                        --zoom: %.2f !important;
-                        --text-color: %s;
-                    }
-                    body {
-                        background-color: %s;
-                    }
-                    """.formatted(
-                    app.visualProvider.webFontName(),
-                    app.visualProvider.webFontSize(),
-                    app.visualProvider.webTextColor(),
-                    app.visualProvider.webPageColor()
-            );
-            cssStr += Optional.ofNullable(WebViewer.getWebIncludeDir())
-                    .map(dir -> FileHelper.readString(dir.resolve("app-base.css")))
-                    .orElse("");
-
-            // 编码成base64并应用
-            String cssData = "data:text/css;charset=utf-8;base64,"
-                             + Base64.getMimeEncoder().encodeToString(cssStr.getBytes(StandardCharsets.UTF_8));
-            FxHelper.runLater(() -> {
-                webPane.webEngine().setUserStyleSheetLocation(cssData);
-                webPane.executeScript("document.body.setAttribute('class','" + app.visualProvider + "');");
-            });
-        }
-        super.navigating(location, firstTime);
-    }
 
     @Override
     protected Object createWebContent() {
@@ -94,32 +46,37 @@ public abstract class HtmlBasedEditor extends WebBasedEditor {
 
     @Override
     protected void onWebEngineLoadSucceeded() {
+        if (!webPane.getProperties().containsKey(AK_INITIALIZED)) {
+            webPane.getProperties().put(AK_INITIALIZED, true);
+            webPane.webView().addEventFilter(KeyEvent.KEY_PRESSED,
+                    e -> this.handleAdvancedPaste(e, () -> this.webPane.executeScript("tinymce.activeEditor.hasFocus()")));
+        }
+        //
         super.onWebEngineLoadSucceeded();
         //
-        String editorContent = _cachedEditorContent != null ? _cachedEditorContent : loadEditorContent();
-        _cachedEditorContent = null;
-        if (null != editorContent && editorContent.length() > 0) {
-            webEngine().executeScript("setTimeout(function(){tinymce.activeEditor.setContent('"
-                    .concat(HtmlHelper.escapeJavaStyleString(editorContent, true, false))
-                    .concat("')}, 50)"));
-        }
         if (_cachedEditorIsDirty) {
-            webEngine().executeScript("setTimeout(function(){tinymce.activeEditor.setDirty(true)}, 60)");
+            webPane.executeScript("setTimeout(function(){tinymce.activeEditor.setDirty(true)}, 60)");
         }
     }
 
     @Override
     protected void onAppStyleSetting(VisualEvent event) {
-        FxHelper.runLater(() -> {
-            _cachedEditorIsDirty = (boolean) webEngine().executeScript("tinymce.activeEditor.isDirty()");
-            _cachedEditorContent = (String) webEngine().executeScript("tinymce.activeEditor.getContent()");
-            super.navigating(null, false);
-            super.onAppStyleSetting(event);
-        });
+        // 缓存编辑状态
+        _cachedEditorIsDirty = webPane.executeScript("tinymce.activeEditor.isDirty()");
+        // 缓存编辑数据
+        _cachedEditorContent = webPane.executeScript("tinymce.activeEditor.getContent()");
+        // 重新加载/构建编辑器以应用新的配色
+        super.navigating(null, false);
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     public class WebCallbackImpl extends WebCallback {
+        public String initEditor() {
+            String editorContent = _cachedEditorContent != null ? _cachedEditorContent : loadEditorContent();
+            _cachedEditorContent = null;
+            return editorContent;
+        }
+
         public void saveEditor(String content) {
             ProgressLayer.showAndWait(app.getPrimaryGlass(), progressLayer -> {
                 try {

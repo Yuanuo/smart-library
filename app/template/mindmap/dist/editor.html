@@ -2,6 +2,8 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
     <!-- bower:css -->
     <link rel="stylesheet" href="../bower_components/bootstrap/dist/css/bootstrap.min.css"/>
     <link rel="stylesheet" href="../bower_components/codemirror/lib/codemirror.css"/>
@@ -49,17 +51,15 @@
     <script src="../node_modules/kity/dist/kity.js"></script>
     <script src="../node_modules/kityminder-core/dist/kityminder.core.js"></script>
     <script src="kityminder.editor.js"></script>
-
-    <!-- 引入特殊字体支持 -->
-    <link rel="stylesheet" href="../../web-incl/app-base.css">
-    <link rel="stylesheet" href="../../../../../appxi-javafx/repo/web-incl/app-base.css">
 </head>
 <body ng-app="kityminderApp" ng-controller="MainController" style="letter-spacing: unset;">
 <kityminder-editor on-init="initEditor(editor, minder)"></kityminder-editor>
 </body>
 
 <script type="text/javascript">
-function onDocumentReady(javaApp) {
+function onDocumentReady(theme) {
+    setWebStyleTheme(theme);
+
     angular.module('kityminderApp', ['kityminderEditor'])
         .config(function (configProvider) {
             configProvider.set('lang', 'zh_CN');
@@ -72,6 +72,13 @@ function onDocumentReady(javaApp) {
                 minder.importJson(JSON.parse(javaApp.initEditor()));
             };
         });
+
+    /* 引入特殊字体支持 */
+    setWebStyleSheetLocation(window.productionMode
+        ? '../../web-incl/app-base.css'
+        : '../../../../../appxi-swing/repo/web-incl/app-base.css', 'CSS1');
+
+    setWebStyleSheetLocation(javaApp.getWebStyleSheetURI(), 'CSS');
 }
 </script>
 </html>

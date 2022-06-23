@@ -2,7 +2,6 @@ package org.appxi.smartlib.app.item;
 
 import javafx.beans.binding.Bindings;
 import javafx.scene.control.Button;
-import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Labeled;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
@@ -45,7 +44,7 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
                 .map(s -> dir.resolve(s).toUri().toString())
                 .toList()
         );
-        result.add(App.app().visualProvider.getWebStyleSheetURI());
+        result.add("<link id=\"CSS\" rel=\"stylesheet\" type=\"text/css\" href=\"" + App.app().visualProvider.getWebStyleSheetURI() + "\">");
         return result;
     }
 
@@ -147,20 +146,24 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
     }
 
     @Override
-    protected void handleWebViewShortcuts(KeyEvent event) {
-        if (!event.isConsumed() && event.isShortcutDown()) {
-            // Ctrl + T
-            if (event.getCode() == KeyCode.T && null != gotoHeadings) {
-                gotoHeadings.fire();
-                event.consume();
-                return;
-            }
+    protected void onWebPaneShortcutsPressed(KeyEvent event) {
+        if (event.isConsumed()) {
+            return;
         }
-        super.handleWebViewShortcuts(event);
+        // Ctrl + T
+        if (event.isShortcutDown() && event.getCode() == KeyCode.T && null != gotoHeadings) {
+            gotoHeadings.fire();
+            event.consume();
+            return;
+        }
+        //
+        super.onWebPaneShortcutsPressed(event);
     }
 
     @Override
-    protected ContextMenu createWebViewContextMenu() {
+    protected void onWebViewContextMenuRequest(List<MenuItem> model) {
+        super.onWebViewContextMenuRequest(model);
+        //
         String origText = this.webPane.executeScript("getValidSelectionText()");
         String trimText = null == origText ? null : origText.strip().replace('\n', ' ');
         final String availText = StringHelper.isBlank(trimText) ? null : trimText;
@@ -183,22 +186,20 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
         favorite.setDisable(true);
 
         //
-        return new ContextMenu(
-                createMenu_copy(origText, availText),
-                copyRef,
-                new SeparatorMenuItem(),
-                createMenu_search(textTip, availText),
-                createMenu_searchExact(textTip, availText),
-                searchInBook,
-                createMenu_lookup(textTip, availText),
-                createMenu_finder(textTip, availText),
-                new SeparatorMenuItem(),
-                createMenu_dict(availText),
-                createMenu_pinyin(availText),
-                new SeparatorMenuItem(),
-                bookmark,
-                favorite
-        );
+        model.add(createMenu_copy(origText, availText));
+        model.add(copyRef);
+        model.add(new SeparatorMenuItem());
+        model.add(createMenu_search(textTip, availText));
+        model.add(createMenu_searchExact(textTip, availText));
+        model.add(searchInBook);
+        model.add(createMenu_lookup(textTip, availText));
+        model.add(createMenu_finder(textTip, availText));
+        model.add(new SeparatorMenuItem());
+        model.add(createMenu_dict(availText));
+        model.add(createMenu_pinyin(availText));
+        model.add(new SeparatorMenuItem());
+        model.add(bookmark);
+        model.add(favorite);
     }
 
     class LookupLayerImpl extends LookupLayer<String> {

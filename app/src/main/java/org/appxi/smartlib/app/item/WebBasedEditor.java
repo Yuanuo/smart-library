@@ -3,7 +3,6 @@ package org.appxi.smartlib.app.item;
 import javafx.beans.binding.Bindings;
 import javafx.beans.value.ChangeListener;
 import javafx.embed.swing.SwingFXUtils;
-import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
@@ -123,116 +122,119 @@ public abstract class WebBasedEditor extends WebRendererPart.MainView implements
         this.webPane.getTopBox().addRight(button);
     }
 
-    @Override
-    protected void navigating(Object location, boolean firstTime) {
-        if (firstTime) {
-            webPane.webView().setContextMenuEnabled(false);
-        }
-        super.navigating(location, firstTime);
-    }
-
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    protected final void attachAdvancedPasteShortcuts(Node node, Supplier<Boolean> editorFocusedSupplier) {
-        if (null == node) return;
-        node.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            if (event.isShortcutDown() && event.isShiftDown() && event.isAltDown() && event.getCode() == KeyCode.V) {
-                final Clipboard clipboard = Clipboard.getSystemClipboard();
-                if (clipboard.hasHtml()) {
-                    event.consume();
-                    FxHelper.copyText(clipboard.getHtml());
-                }
-            } else if (event.isShortcutDown() && event.isShiftDown() && event.getCode() == KeyCode.V) {
-                if (!editorFocusedSupplier.get()) return;
-                final Clipboard clipboard = Clipboard.getSystemClipboard();
-                if (clipboard.hasHtml()) {
-                    event.consume();
-                    final Element body = Jsoup.parse(clipboard.getHtml()).body();
-                    Optional.ofNullable(body.children().first())
-                            .filter(ele -> "div".equals(ele.tagName())).ifPresent(Element::unwrap);
-                    body.traverse(new NodeVisitor() {
-                        @Override
-                        public void head(org.jsoup.nodes.Node node, int depth) {
-                            if (depth == 0) return;
-                            if (node instanceof Element ele) {
-                                ele.removeAttr("id");
-                                //
-                                if (depth == 1 && "div".equals(ele.tagName())) {
-                                    ele.tagName("p");
-                                } else if ("img".equals(ele.tagName())) {
-                                    wrapImgSrcToBase64Src(ele, true);
-                                    return;
-                                } else if (HtmlHelper.headingTags.contains(ele.tagName())) {
-                                    ele.tagName("p");
-                                }
-                                ele.clearAttributes();
-                            }
-                        }
-
-                        @Override
-                        public void tail(org.jsoup.nodes.Node node, int depth) {
-                        }
-                    });
-                    HtmlHelper.inlineFootnotes(body);
-                    insertHtmlAtCursor(body.html());
-                } else if (clipboard.hasString()) {
-                    event.consume();
-                    String str = clipboard.getString().lines()
-                            .map(s -> "<p>".concat(s.strip()).concat("</p>"))
-                            .collect(Collectors.joining("\n"));
-                    final Element body = Jsoup.parse(str).body();
-                    HtmlHelper.inlineFootnotes(body);
-                    insertHtmlAtCursor(body.html());
-                }
-            } else if (event.isShortcutDown() && event.getCode() == KeyCode.V) {
-                if (!editorFocusedSupplier.get()) return;
-                final Clipboard clipboard = Clipboard.getSystemClipboard();
-                if (clipboard.hasFiles()) {
-                    event.consume();
-                    for (File file : clipboard.getFiles()) {
-                        if (FilenameUtils.isExtension(file.getName().toLowerCase(), "jpg", "png", "jpeg", "gif")) {
-                            insertImageFileAtCursor(file);
-                        }
-                    }
-                } else if (clipboard.hasHtml()) {
-                    event.consume();
-                    final Element body = Jsoup.parse(clipboard.getHtml()).body();
-                    Optional.ofNullable(body.children().first())
-                            .filter(ele -> "div".equals(ele.tagName())).ifPresent(Element::unwrap);
-                    body.traverse(new NodeVisitor() {
-                        @Override
-                        public void head(org.jsoup.nodes.Node node, int depth) {
-                            if (depth == 0) return;
-                            if (node instanceof Element ele) {
-                                ele.removeAttr("id");
-                                //
-                                if (depth == 1 && "div".equals(ele.tagName())) ele.tagName("p");
-                                else if ("img".equals(ele.tagName())) wrapImgSrcToBase64Src(ele, false);
-                                else if (HtmlHelper.headingTags.contains(ele.tagName())) ele.tagName("p");
-                            }
-                        }
-
-                        @Override
-                        public void tail(org.jsoup.nodes.Node node, int depth) {
-                        }
-                    });
-                    HtmlHelper.inlineFootnotes(body);
-                    insertHtmlAtCursor(body.html());
-                } else if (clipboard.hasString()) {
-                    event.consume();
-                    insertHtmlAtCursor(clipboard.getString());
-                } else if (clipboard.hasImage()) {
-                    event.consume();
-                    final Image image = clipboard.getImage();
-                    try (ByteArrayOutputStream buff = new ByteArrayOutputStream()) {
-                        ImageIO.write(SwingFXUtils.fromFXImage(image, null), "png", buff);
-                        insertHtmlAtCursor(wrapImageToBase64Img("png", (int) image.getWidth(), buff.toByteArray()));
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }
+    protected void handleAdvancedPaste(KeyEvent event, Supplier<Boolean> editorFocusedStateSupplier) {
+        if (event.isConsumed()) {
+            return;
+        }
+        // Ctrl + Shift + Alt + V
+        if (event.isShortcutDown() && event.isShiftDown() && event.isAltDown() && event.getCode() == KeyCode.V) {
+            final Clipboard clipboard = Clipboard.getSystemClipboard();
+            if (clipboard.hasHtml()) {
+                FxHelper.copyText(clipboard.getHtml());
+                event.consume();
             }
-        });
+        }
+        // Ctrl + Shift + V
+        else if (event.isShortcutDown() && event.isShiftDown() && event.getCode() == KeyCode.V) {
+            // 编辑器未处于焦点状态时无法粘贴
+            if (!editorFocusedStateSupplier.get()) {
+                return;
+            }
+            final Clipboard clipboard = Clipboard.getSystemClipboard();
+            if (clipboard.hasHtml()) {
+                final Element body = Jsoup.parse(clipboard.getHtml()).body();
+                Optional.ofNullable(body.children().first())
+                        .filter(ele -> "div".equals(ele.tagName())).ifPresent(Element::unwrap);
+                body.traverse(new NodeVisitor() {
+                    @Override
+                    public void head(org.jsoup.nodes.Node node, int depth) {
+                        if (depth == 0) return;
+                        if (node instanceof Element ele) {
+                            ele.removeAttr("id");
+                            //
+                            if (depth == 1 && "div".equals(ele.tagName())) {
+                                ele.tagName("p");
+                            } else if ("img".equals(ele.tagName())) {
+                                wrapImgSrcToBase64Src(ele, true);
+                                return;
+                            } else if (HtmlHelper.headingTags.contains(ele.tagName())) {
+                                ele.tagName("p");
+                            }
+                            ele.clearAttributes();
+                        }
+                    }
+
+                    @Override
+                    public void tail(org.jsoup.nodes.Node node, int depth) {
+                    }
+                });
+                HtmlHelper.inlineFootnotes(body);
+                insertHtmlAtCursor(body.html());
+                event.consume();
+            } else if (clipboard.hasString()) {
+                String str = clipboard.getString().lines()
+                        .map(s -> "<p>".concat(s.strip()).concat("</p>"))
+                        .collect(Collectors.joining("\n"));
+                final Element body = Jsoup.parse(str).body();
+                HtmlHelper.inlineFootnotes(body);
+                insertHtmlAtCursor(body.html());
+                event.consume();
+            }
+        }
+        // Ctrl + V
+        else if (event.isShortcutDown() && event.getCode() == KeyCode.V) {
+            // 编辑器未处于焦点状态时无法粘贴
+            if (!editorFocusedStateSupplier.get()) {
+                return;
+            }
+            final Clipboard clipboard = Clipboard.getSystemClipboard();
+            if (clipboard.hasFiles()) {
+                for (File file : clipboard.getFiles()) {
+                    if (FilenameUtils.isExtension(file.getName().toLowerCase(), "jpg", "png", "jpeg", "gif")) {
+                        insertImageFileAtCursor(file);
+                    }
+                }
+                event.consume();
+            } else if (clipboard.hasHtml()) {
+                final Element body = Jsoup.parse(clipboard.getHtml()).body();
+                Optional.ofNullable(body.children().first())
+                        .filter(ele -> "div".equals(ele.tagName())).ifPresent(Element::unwrap);
+                body.traverse(new NodeVisitor() {
+                    @Override
+                    public void head(org.jsoup.nodes.Node node, int depth) {
+                        if (depth == 0) return;
+                        if (node instanceof Element ele) {
+                            ele.removeAttr("id");
+                            //
+                            if (depth == 1 && "div".equals(ele.tagName())) ele.tagName("p");
+                            else if ("img".equals(ele.tagName())) wrapImgSrcToBase64Src(ele, false);
+                            else if (HtmlHelper.headingTags.contains(ele.tagName())) ele.tagName("p");
+                        }
+                    }
+
+                    @Override
+                    public void tail(org.jsoup.nodes.Node node, int depth) {
+                    }
+                });
+                HtmlHelper.inlineFootnotes(body);
+                insertHtmlAtCursor(body.html());
+                event.consume();
+            } else if (clipboard.hasString()) {
+                insertHtmlAtCursor(clipboard.getString());
+                event.consume();
+            } else if (clipboard.hasImage()) {
+                final Image image = clipboard.getImage();
+                try (ByteArrayOutputStream buff = new ByteArrayOutputStream()) {
+                    ImageIO.write(SwingFXUtils.fromFXImage(image, null), "png", buff);
+                    insertHtmlAtCursor(wrapImageToBase64Img("png", (int) image.getWidth(), buff.toByteArray()));
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                event.consume();
+            }
+        }
     }
 
     private void insertImageFileAtCursor(File file) {

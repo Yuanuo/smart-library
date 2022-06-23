@@ -2,6 +2,8 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
     <style>
         /* For other boilerplate styles, see: /docs/general-configuration-guide/boilerplate-content-css/ */
         /*
@@ -38,14 +40,28 @@
         img.align-right {
           float: right;
         }
+
+        .tox .tox-collection__item-label {
+            line-height: unset !important;
+        }
     </style>
-
-    <!-- 引入特殊字体支持 -->
-    <link rel="stylesheet" type="text/css" href="../web-incl/app-base.css">
-    <link rel="stylesheet" type="text/css" href="../../../../appxi-javafx/repo/web-incl/app-base.css">
-
     <script src='tinymce.js'></script>
     <script type="text/javascript">
+    window.setWebStyleSheetLocation = function(src, _id = 'CSS') {
+        const doc = document.querySelector('#htmlEditor_ifr').contentDocument;
+        let ele = doc.querySelector('html > head > link#' + _id);
+        if (ele) {
+            ele.setAttribute('href', src);
+        } else {
+            ele = doc.createElement('link');
+            ele.setAttribute('id', _id);
+            ele.setAttribute('rel', 'stylesheet');
+            ele.setAttribute('type', 'text/css');
+            ele.setAttribute('href', src);
+            doc.head.appendChild(ele);
+        }
+    };
+
     tinymce.init({
         selector: '#htmlEditor',
         language: 'zh_CN',
@@ -53,7 +69,7 @@
         plugins: 'preview paste importcss searchreplace autolink autoresize save code visualblocks visualchars fullscreen image table charmap hr pagebreak nonbreaking anchor insertdatetime advlist lists wordcount imagetools textpattern noneditable help charmap quickbars emoticons footnotes',
         imagetools_cors_hosts: ['picsum.photos'],
         menubar: 'file edit view insert format tools table help',
-        toolbar: 'save | undo redo | bold italic underline strikethrough | formatselect | alignleft aligncenter alignright alignjustify | outdent indent lineheight |  numlist bullist | forecolor backcolor removeformat | pagebreak | charmap emoticons | preview | blockquote anchor footnotes',
+        toolbar: 'save | undo redo | bold italic underline strikethrough subscript superscript | formatselect | alignleft aligncenter alignright alignjustify | outdent indent lineheight |  numlist bullist | forecolor backcolor removeformat | pagebreak | charmap emoticons | preview | blockquote anchor footnotes',
         toolbar_sticky: true,
         image_advtab: true,
         image_caption: true,
@@ -73,7 +89,24 @@
         contextmenu: 'link image imagetools table',
         skin: location.search.indexOf('theme-dark') !== -1 ? 'oxide-dark' : 'oxide',
         content_css: location.search.indexOf('theme-dark') !== -1 ? 'dark' : 'default',
-        content_style: 'a.mce-item-anchor[id^=a-]{display: none} a.mce-item-anchor[data-note]{background:unset;width:auto !important;height:auto !important;} a.mce-item-anchor[data-note]:before{content:"✱";font-size:85%}',
+        content_style: `
+            body {
+                letter-spacing: unset !important;
+                margin: 0 2rem !important;
+            }
+            a.mce-item-anchor[id^=a-]{
+                display: none
+            }
+            a.mce-item-anchor[data-note]{
+                background:unset;
+                width:auto !important;
+                height:auto !important;
+            }
+            a.mce-item-anchor[data-note]:before{
+                content:"✱";
+                font-size:85%;
+            }
+        `,
         pagebreak_separator: '<p data-pb></p>',
         pagebreak_split_block: true,
         fontsize_formats: '0.8rem 0.9rem 1.0rem 1.1rem 1.2rem 1.3rem 1.4rem 1.5rem 1.6rem 1.7rem 1.8rem 2.0rem 2.2rem',
@@ -82,10 +115,26 @@
         init_instance_callback: function(editor) {
             editor.execCommand('mceFullScreen');
         },
-        save_onsavecallback: function(editor) {
-            javaApp.saveEditor(editor.getContent());
-        },
+        save_onsavecallback: _SaveEditor,
     });
+    function _InitEditor(editor) {
+        /* 引入特殊字体支持 */
+        setWebStyleSheetLocation(window.productionMode
+            ? '../web-incl/app-base.css'
+            : '../../../../appxi-swing/repo/web-incl/app-base.css', 'CSS1');
+
+        setWebStyleSheetLocation(javaApp.getWebStyleSheetURI(), 'CSS');
+
+        editor.setContent(javaApp.initEditor());
+    }
+
+    function _SaveEditor(editor) {
+        javaApp.saveEditor(editor.getContent());
+    }
+
+    function onDocumentReady(theme) {
+        _InitEditor(tinymce.activeEditor);
+    }
     </script>
 </head>
 <body>
