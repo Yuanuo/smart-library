@@ -4,7 +4,7 @@
  * For LGPL see License.txt in the project root for license information.
  * For commercial licenses see https://www.tiny.cloud/
  *
- * Version: 5.10.2 (2021-11-17)
+ * Version: 5.10.5 (2022-05-25)
  */
 (function () {
     'use strict';
@@ -1255,6 +1255,7 @@
               height: size.h
             });
           }
+          /* EDIT: */
           const imgSrc = 'data:' + blobInfo.blob().type + ';base64,' + blobInfo.base64();
           editor.$(selectedImage).attr({ src: imgSrc }).removeAttr('data-mce-src');
         });

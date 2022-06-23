@@ -4,7 +4,7 @@
  * For LGPL see License.txt in the project root for license information.
  * For commercial licenses see https://www.tiny.cloud/
  *
- * Version: 5.10.2 (2021-11-17)
+ * Version: 5.10.5 (2022-05-25)
  */
 (function () {
     'use strict';
@@ -25048,12 +25048,14 @@
       });
     };
     var loadUiSkins = function (editor, skinUrl) {
+      /* EDIT: */
       var skinUiCss = skinUrl + '/skin.css';
       return loadStylesheet(editor, skinUiCss, editor.ui.styleSheetLoader);
     };
     var loadShadowDomUiSkins = function (editor, skinUrl) {
       var isInShadowRoot$1 = isInShadowRoot(SugarElement.fromDom(editor.getElement()));
       if (isInShadowRoot$1) {
+        /* EDIT: */
         var shadowDomSkinCss = skinUrl + '/skin.shadowdom.css';
         return loadStylesheet(editor, shadowDomSkinCss, global$b.DOM.styleSheetLoader);
       } else {
@@ -25063,6 +25065,7 @@
     var loadSkin = function (isInline, editor) {
       var skinUrl = getSkinUrl(editor);
       if (skinUrl) {
+        /* EDIT: */
         editor.contentCSS.push(skinUrl + (isInline ? '/content.inline' : '/content') + '.css');
       }
       if (isSkinDisabled(editor) === false && isString(skinUrl)) {
@@ -25454,8 +25457,9 @@
     var createFontSelect = function (editor, backstage) {
       return createSelectButton(editor, backstage, getSpec$3(editor));
     };
-    var fontSelectMenu = function (editor, backstage) {/*
-      var menuItems = createMenuItems(editor, backstage, getSpec$3(editor));
+    var fontSelectMenu = function (editor, backstage) {
+      /* EDIT: */
+    /*var menuItems = createMenuItems(editor, backstage, getSpec$3(editor));
       editor.ui.registry.addNestedMenuItem('fontformats', {
         text: backstage.shared.providers.translate('Fonts'),
         getSubmenuItems: function () {
@@ -25704,7 +25708,8 @@
       editor.ui.registry.addNestedMenuItem('formats', {
         text: 'Formats',
         getSubmenuItems: function () {
-          return menuItems.items.validateItems(menuItems.getStyleItems());
+          /* EDIT: 菜单中出现大量token开头的项目 */
+          return menuItems.items.validateItems(menuItems.getStyleItems().slice(0, 4));
         }
       });
     };

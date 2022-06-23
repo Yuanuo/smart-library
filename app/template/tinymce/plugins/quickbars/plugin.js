@@ -4,7 +4,7 @@
  * For LGPL see License.txt in the project root for license information.
  * For commercial licenses see https://www.tiny.cloud/
  *
- * Version: 5.10.2 (2021-11-17)
+ * Version: 5.10.5 (2022-05-25)
  */
 (function () {
     'use strict';
@@ -54,6 +54,7 @@
       var blobCache = editor.editorUpload.blobCache;
       var blobInfo = blobCache.create(generate('mceu'), blob, base64);
       blobCache.add(blobInfo);
+      /* EDIT: */
       const imgSrc = 'data:' + blob.type + ';base64,' + base64;
       editor.insertContent(editor.dom.createHTML('img', { src: imgSrc }));
     };

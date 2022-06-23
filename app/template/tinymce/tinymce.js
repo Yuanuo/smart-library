@@ -4,7 +4,7 @@
  * For LGPL see License.txt in the project root for license information.
  * For commercial licenses see https://www.tiny.cloud/
  *
- * Version: 5.10.2 (2021-11-17)
+ * Version: 5.10.5 (2022-05-25)
  */
 (function () {
     'use strict';
@@ -21586,6 +21586,7 @@
       });
       editor.on('BeforeExecCommand', function (e) {
         var cmd = e.command;
+        /* EDIT: */
         if (window.javaApp && cmd === 'Delete') {
           javaApp.setClipboardText(editor.selection.getSel().toString());
         }
@@ -25918,6 +25919,7 @@
           }
         });
         editor.on('copy', function (e) {
+          /* EDIT: */
           if (window.javaApp) {
             javaApp.setClipboardText(editor.selection.getSel().toString());
             return;
