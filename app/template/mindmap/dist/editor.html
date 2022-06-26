@@ -57,8 +57,8 @@
 </body>
 
 <script type="text/javascript">
-function onDocumentReady(theme) {
-    setWebStyleTheme(theme);
+function onJavaReady(args) {
+    setWebStyleTheme(args.theme);
 
     angular.module('kityminderApp', ['kityminderEditor'])
         .config(function (configProvider) {
@@ -74,7 +74,7 @@ function onDocumentReady(theme) {
         });
 
     /* 引入特殊字体支持 */
-    setWebStyleSheetLocation(window.productionMode
+    setWebStyleSheetLocation(!window.devMode
         ? '../../web-incl/app-base.css'
         : '../../../../../appxi-swing/repo/web-incl/app-base.css', 'CSS1');
 

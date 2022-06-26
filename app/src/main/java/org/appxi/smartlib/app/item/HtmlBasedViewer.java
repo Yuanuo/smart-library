@@ -16,6 +16,7 @@ import org.appxi.javafx.app.web.WebViewerPart;
 import org.appxi.javafx.control.LookupLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
+import org.appxi.javafx.web.WebSelection;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.smartcn.pinyin.PinyinHelper;
@@ -161,22 +162,19 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
     }
 
     @Override
-    protected void onWebViewContextMenuRequest(List<MenuItem> model) {
-        super.onWebViewContextMenuRequest(model);
-        //
-        String origText = this.webPane.executeScript("getValidSelectionText()");
-        String trimText = null == origText ? null : origText.strip().replace('\n', ' ');
-        final String availText = StringHelper.isBlank(trimText) ? null : trimText;
+    protected void onWebViewContextMenuRequest(List<MenuItem> model, WebSelection selection) {
+        super.onWebViewContextMenuRequest(model, selection);
         //
         MenuItem copyRef = new MenuItem("复制引用");
-        copyRef.setDisable(null == availText);
-        copyRef.setOnAction(event -> FxHelper.copyText("《" + item.getName() + "》\n\n" + origText));
+        copyRef.setDisable(!selection.hasText);
+        copyRef.setOnAction(event -> FxHelper.copyText("《" + item.getName() + "》\n\n" + selection.text));
 
         //
-        String textTip = null == availText ? "" : "：".concat(StringHelper.trimChars(availText, 8));
+        String textTip = selection.hasTrims ? "：" + StringHelper.trimChars(selection.trims, 8) : "";
+        String textForSearch = selection.hasTrims ? selection.trims : null;
 
         MenuItem searchInBook = new MenuItem("全文检索（检索本书）".concat(textTip));
-        searchInBook.setOnAction(event -> app.eventBus.fireEvent(SearcherEvent.ofSearch(availText, item.parentItem())));
+        searchInBook.setOnAction(event -> app.eventBus.fireEvent(SearcherEvent.ofSearch(textForSearch, item.parentItem())));
 
         //
         MenuItem bookmark = new MenuItem("添加书签");
@@ -186,17 +184,17 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
         favorite.setDisable(true);
 
         //
-        model.add(createMenu_copy(origText, availText));
+        model.add(createMenu_copy(selection));
         model.add(copyRef);
         model.add(new SeparatorMenuItem());
-        model.add(createMenu_search(textTip, availText));
-        model.add(createMenu_searchExact(textTip, availText));
+        model.add(createMenu_search(textTip, textForSearch));
+        model.add(createMenu_searchExact(textTip, textForSearch));
         model.add(searchInBook);
-        model.add(createMenu_lookup(textTip, availText));
-        model.add(createMenu_finder(textTip, availText));
+        model.add(createMenu_lookup(textTip, textForSearch));
+        model.add(createMenu_finder(textTip, selection));
         model.add(new SeparatorMenuItem());
-        model.add(createMenu_dict(availText));
-        model.add(createMenu_pinyin(availText));
+        model.add(createMenu_dict(selection));
+        model.add(createMenu_pinyin(selection));
         model.add(new SeparatorMenuItem());
         model.add(bookmark);
         model.add(favorite);

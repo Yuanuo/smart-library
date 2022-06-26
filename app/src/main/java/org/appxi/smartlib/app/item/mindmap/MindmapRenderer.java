@@ -30,8 +30,8 @@ abstract class MindmapRenderer extends WebBasedEditor implements ItemRenderer {
     }
 
     @Override
-    protected WebCallbackImpl createWebCallback() {
-        return new WebCallbackImpl();
+    protected WebJavaBridgeImpl createWebJavaBridge() {
+        return new WebJavaBridgeImpl();
     }
 
     @Override
@@ -39,7 +39,7 @@ abstract class MindmapRenderer extends WebBasedEditor implements ItemRenderer {
         return DesktopApp.appDir().resolve("template/mindmap/dist/" + (readonly ? "viewer" : "editor") + ".html");
     }
 
-    public class WebCallbackImpl extends WebCallback {
+    public class WebJavaBridgeImpl extends WebJavaBridge {
         public String initEditor() {
             return document.getDocument().toString();
         }
