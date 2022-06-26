@@ -21588,7 +21588,7 @@
         var cmd = e.command;
         /* EDIT: */
         if (window.javaApp && cmd === 'Delete') {
-          javaApp.setClipboardText(editor.selection.getSel().toString());
+          javaApp.copyText(editor.selection.getSel().toString());
         }
         if (!shouldIgnoreCommand(cmd)) {
           endTyping(undoManager, locks);
@@ -25921,7 +25921,7 @@
         editor.on('copy', function (e) {
           /* EDIT: */
           if (window.javaApp) {
-            javaApp.setClipboardText(editor.selection.getSel().toString());
+            javaApp.copyText(editor.selection.getSel().toString());
             return;
           }
           var clipboardData = e.clipboardData;

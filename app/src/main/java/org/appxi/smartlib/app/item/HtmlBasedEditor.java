@@ -3,12 +3,14 @@ package org.appxi.smartlib.app.item;
 import javafx.scene.input.KeyEvent;
 import org.appxi.javafx.app.DesktopApp;
 import org.appxi.javafx.control.ProgressLayer;
-import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.VisualEvent;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.app.App;
 import org.appxi.smartlib.html.HtmlHelper;
+import org.appxi.util.ext.RawVal;
+
+import java.util.List;
 
 public abstract class HtmlBasedEditor extends WebBasedEditor {
     private static final Object AK_INITIALIZED = new Object();
@@ -33,16 +35,13 @@ public abstract class HtmlBasedEditor extends WebBasedEditor {
     }
 
     @Override
-    protected WebCallback createWebCallback() {
-        return new WebCallbackImpl();
+    protected WebJavaBridge createWebJavaBridge() {
+        return new WebJavaBridgeImpl();
     }
 
     protected abstract String loadEditorContent();
 
     protected abstract void saveEditorContent(String content) throws Exception;
-
-    private String _cachedEditorContent;
-    private boolean _cachedEditorIsDirty;
 
     @Override
     protected void onWebEngineLoadSucceeded() {
@@ -53,28 +52,20 @@ public abstract class HtmlBasedEditor extends WebBasedEditor {
         }
         //
         super.onWebEngineLoadSucceeded();
-        //
-        if (_cachedEditorIsDirty) {
-            webPane.executeScript("setTimeout(function(){tinymce.activeEditor.setDirty(true)}, 60)");
-        }
     }
 
     @Override
     protected void onAppStyleSetting(VisualEvent event) {
-        // 缓存编辑状态
-        _cachedEditorIsDirty = webPane.executeScript("tinymce.activeEditor.isDirty()");
-        // 缓存编辑数据
-        _cachedEditorContent = webPane.executeScript("tinymce.activeEditor.getContent()");
-        // 重新加载/构建编辑器以应用新的配色
-        super.navigating(null, false);
+        webPane.executeScript("typeof(setWebStyleTheme) === 'function' && setWebStyleTheme('" + app.visualProvider + "');");
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    public class WebCallbackImpl extends WebCallback {
-        public String initEditor() {
-            String editorContent = _cachedEditorContent != null ? _cachedEditorContent : loadEditorContent();
-            _cachedEditorContent = null;
-            return editorContent;
+    public class WebJavaBridgeImpl extends WebJavaBridge {
+        @Override
+        protected List<RawVal<Object>> getJavaReadyArguments() {
+            List<RawVal<Object>> args = super.getJavaReadyArguments();
+            args.add(RawVal.kv("content", loadEditorContent()));
+            return args;
         }
 
         public void saveEditor(String content) {
@@ -89,10 +80,6 @@ public abstract class HtmlBasedEditor extends WebBasedEditor {
                 //
                 App.app().eventBus.fireEvent(new ItemEvent(ItemEvent.UPDATED, item));
             });
-        }
-
-        public void setClipboardText(String text) {
-            FxHelper.copyText(text);
         }
     }
 }

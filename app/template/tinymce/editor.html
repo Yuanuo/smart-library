@@ -62,6 +62,18 @@
         }
     };
 
+    window.setWebStyleTheme = function(theme) {
+        const args = {};
+        args.theme = theme;
+        args.isDirty = tinymce.activeEditor.isDirty();
+        args.content = tinymce.activeEditor.getContent();
+
+        tinymce.activeEditor.remove();
+
+        onJavaReady(args);
+    }
+
+function onJavaReady(args) {
     tinymce.init({
         selector: '#htmlEditor',
         language: 'zh_CN',
@@ -87,8 +99,8 @@
         noneditable_noneditable_class: 'mceNonEditable',
         toolbar_mode: 'sliding',
         contextmenu: 'link image imagetools table',
-        skin: location.search.indexOf('theme-dark') !== -1 ? 'oxide-dark' : 'oxide',
-        content_css: location.search.indexOf('theme-dark') !== -1 ? 'dark' : 'default',
+        skin: args.theme.indexOf('theme-dark') !== -1 ? 'oxide-dark' : 'oxide',
+        content_css: args.theme.indexOf('theme-dark') !== -1 ? 'dark' : 'default',
         content_style: `
             body {
                 letter-spacing: unset !important;
@@ -114,27 +126,21 @@
         urlconverter_callback: function(url, node, on_save, name) { return url; },
         init_instance_callback: function(editor) {
             editor.execCommand('mceFullScreen');
+            /* 引入特殊字体支持 */
+            setWebStyleSheetLocation(!window.devMode
+                ? '../web-incl/app-base.css'
+                : '../../../../appxi-swing/repo/web-incl/app-base.css', 'CSS1');
+
+            setWebStyleSheetLocation(javaApp.getWebStyleSheetURI(), 'CSS');
+
+            editor.setContent(args.content);
+            editor.setDirty(args.isDirty || false);
         },
-        save_onsavecallback: _SaveEditor,
+        save_onsavecallback: function(editor) {
+            javaApp.saveEditor(editor.getContent());
+        },
     });
-    function _InitEditor(editor) {
-        /* 引入特殊字体支持 */
-        setWebStyleSheetLocation(window.productionMode
-            ? '../web-incl/app-base.css'
-            : '../../../../appxi-swing/repo/web-incl/app-base.css', 'CSS1');
-
-        setWebStyleSheetLocation(javaApp.getWebStyleSheetURI(), 'CSS');
-
-        editor.setContent(javaApp.initEditor());
-    }
-
-    function _SaveEditor(editor) {
-        javaApp.saveEditor(editor.getContent());
-    }
-
-    function onDocumentReady(theme) {
-        _InitEditor(tinymce.activeEditor);
-    }
+}
     </script>
 </head>
 <body>
