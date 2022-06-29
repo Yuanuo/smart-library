@@ -74,10 +74,8 @@ public class RecentViewsController extends WorkbenchPartController {
         app.eventBus.addEventHandler(AppEvent.STARTED, event -> FxHelper.runThread(100, () -> {
             if (swapRecentViews.isEmpty()) {
                 showWelcome();
-            } else {
-                swapRecentViews.forEach(WorkbenchPart::postConstruct);
-                if (null != swapRecentViewSelected.value)
-                    workbench.selectMainView(swapRecentViewSelected.value.id().get());
+            } else if (null != swapRecentViewSelected.value) {
+                workbench.selectMainView(swapRecentViewSelected.value.id().get());
             }
         }));
     }
@@ -114,7 +112,6 @@ public class RecentViewsController extends WorkbenchPartController {
             }
 
             workbench.addWorkbenchPartAsMainView(newViewer, false);
-            newViewer.postConstruct();
             workbench.selectMainView(newViewer.id.get());
         });
     }

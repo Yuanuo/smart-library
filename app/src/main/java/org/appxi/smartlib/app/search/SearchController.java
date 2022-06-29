@@ -80,7 +80,6 @@ public class SearchController extends WorkbenchPartController implements Workben
         FxHelper.runLater(() -> {
             if (!workbench.existsMainView(searcher.id.get())) {
                 workbench.addWorkbenchPartAsMainView(searcher, false);
-                searcher.postConstruct();
             }
             workbench.selectMainView(searcher.id.get());
             searcher.setSearchScope(scope);
