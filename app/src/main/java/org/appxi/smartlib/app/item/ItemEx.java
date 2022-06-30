@@ -2,11 +2,14 @@ package org.appxi.smartlib.app.item;
 
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
+import javafx.scene.input.DataFormat;
 import org.appxi.smartlib.FolderProvider;
 import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemProvider;
 
 public class ItemEx extends Item {
+    public static final DataFormat DND_ITEM = new DataFormat("application/x-item-serialized-object");
+
     public static final ItemEx ROOT = new ItemEx("ROOT", "", FolderProvider.ONE);
 
     public final StringProperty name, path;

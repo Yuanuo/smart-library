@@ -7,7 +7,6 @@ import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import javafx.scene.input.ClipboardContent;
-import javafx.scene.input.DataFormat;
 import javafx.scene.input.DragEvent;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.MouseEvent;
@@ -27,8 +26,9 @@ import org.appxi.util.StringHelper;
 
 import java.util.Objects;
 
+import static org.appxi.smartlib.app.item.ItemEx.DND_ITEM;
+
 class LibraryTreeCell implements Callback<TreeView<Item>, TreeCell<Item>> {
-    private static final DataFormat PLAIN_ITEM = new DataFormat("application/x-item-serialized-object");
     private static final String DROP_HINT_STYLE = "-fx-border-color: #eea82f; -fx-border-width: 2; -fx-padding: 1;";
     private TreeCell<Item> dropZone;
     private TreeItem<Item> draggedItem;
@@ -90,11 +90,11 @@ class LibraryTreeCell implements Callback<TreeView<Item>, TreeCell<Item>> {
                 }
             }
         };
-        cell.setOnDragDetected((MouseEvent event) -> dragDetected(event, cell));
-        cell.setOnDragOver((DragEvent event) -> dragOver(event, cell));
-        cell.setOnDragDropped((DragEvent event) -> dragDropped(event, cell));
-        cell.setOnDragDone((DragEvent event) -> clearDropLocation());
-        cell.setOnDragExited((DragEvent event) -> clearDropLocation());
+        cell.setOnDragDetected(event -> dragDetected(event, cell));
+        cell.setOnDragOver(event -> dragOver(event, cell));
+        cell.setOnDragDropped(event -> dragDropped(event, cell));
+        cell.setOnDragDone(event -> clearDropLocation());
+        cell.setOnDragExited(event -> clearDropLocation());
 
         return cell;
     }
@@ -104,17 +104,17 @@ class LibraryTreeCell implements Callback<TreeView<Item>, TreeCell<Item>> {
 
         // root can't be dragged
         if (null == draggedItem || draggedItem.getParent() == null) return;
-        Dragboard db = treeCell.startDragAndDrop(TransferMode.MOVE);
+        Dragboard db = treeCell.startDragAndDrop(TransferMode.ANY);
 
         ClipboardContent content = new ClipboardContent();
-        content.put(PLAIN_ITEM, draggedItem.getValue().getPath());
+        content.put(DND_ITEM, draggedItem.getValue().getPath());
         db.setContent(content);
         db.setDragView(treeCell.snapshot(null, null));
         event.consume();
     }
 
     private void dragOver(DragEvent event, TreeCell<Item> treeCell) {
-        if (!event.getDragboard().hasContent(PLAIN_ITEM)) return;
+        if (!event.getDragboard().hasContent(DND_ITEM)) return;
 
         final LibraryTreeView treeView = (LibraryTreeView) treeCell.getTreeView();
         final int scrollToRow = treeView.fetchNextInvisibleRow(treeCell);
@@ -148,7 +148,7 @@ class LibraryTreeCell implements Callback<TreeView<Item>, TreeCell<Item>> {
     }
 
     private void dragDropped(DragEvent event, TreeCell<Item> treeCell) {
-        if (!event.getDragboard().hasContent(PLAIN_ITEM)) return;
+        if (!event.getDragboard().hasContent(DND_ITEM)) return;
 
         final TreeItem<Item> newItem = treeCell.getTreeItem();
         final TreeItem<Item> newParent = newItem.getValue().provider.isFolder() ? newItem : newItem.getParent();
