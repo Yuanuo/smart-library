@@ -8,6 +8,10 @@ import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemProvider;
 
 public class ItemEx extends Item {
+    /**
+     * 在资源树中拖拽Item时，用于表示传递的数据类型。
+     * 其对应的值为 item.getPath()，同时Dragboard.getString() 对应的值为 item.toDetail()。
+     */
     public static final DataFormat DND_ITEM = new DataFormat("application/x-item-serialized-object");
 
     public static final ItemEx ROOT = new ItemEx("ROOT", "", FolderProvider.ONE);
