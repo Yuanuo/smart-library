@@ -16,6 +16,7 @@ import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.dao.ItemsDao;
 import org.appxi.util.DigestHelper;
+import org.appxi.util.ext.RawVal;
 
 import java.util.Objects;
 
@@ -82,7 +83,11 @@ public class SearchController extends WorkbenchPartController implements Workben
                 workbench.addWorkbenchPartAsMainView(searcher, false);
             }
             workbench.selectMainView(searcher.id.get());
-            searcher.setSearchScope(scope);
+            if (null == scope) {
+                searcher.setSearchScopes();
+            } else {
+                searcher.setSearchScopes(RawVal.kv(scope.toDetail(), scope.getPath()));
+            }
             searcher.search(text);
         });
     }
