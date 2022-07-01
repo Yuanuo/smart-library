@@ -108,6 +108,7 @@ class LibraryTreeCell implements Callback<TreeView<Item>, TreeCell<Item>> {
 
         ClipboardContent content = new ClipboardContent();
         content.put(DND_ITEM, draggedItem.getValue().getPath());
+        content.putString(draggedItem.getValue().toDetail());
         db.setContent(content);
         db.setDragView(treeCell.snapshot(null, null));
         event.consume();
