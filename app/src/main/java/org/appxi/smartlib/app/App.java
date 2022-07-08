@@ -10,6 +10,7 @@ import org.appxi.javafx.workbench.WorkbenchApp;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.prefs.UserPrefs;
+import org.appxi.smartcn.convert.ChineseConvertors;
 import org.appxi.smartcn.pinyin.PinyinHelper;
 import org.appxi.smartlib.app.explorer.LibraryExplorer;
 import org.appxi.smartlib.app.home.AboutController;
@@ -135,7 +136,7 @@ public class App extends WorkbenchApp {
 
         result.add(new LookupController(workbench));
         result.add(new SearchController(workbench));
-        result.add(new DictionaryController(workbench, HtmlBasedViewer::getWebIncludeURIsEx));
+        result.add(new DictionaryController(workbench, HtmlBasedViewer::getWebIncludeURIsEx, ChineseConvertors::toHans));
 
         result.add(new RecentViewsController(workbench));
         result.add(new RecentItemsController(workbench));
