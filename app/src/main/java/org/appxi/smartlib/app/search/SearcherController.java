@@ -1,11 +1,13 @@
 package org.appxi.smartlib.app.search;
 
 import javafx.beans.InvalidationListener;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.collections.ListChangeListener;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
@@ -310,8 +312,47 @@ class SearcherController extends WorkbenchPartController.MainView {
         if (null == highlightPage)
             return new Label();// avoid NPE
 
-        final VBox listView = new VBox();
-        highlightPage.getContent().forEach(v -> listView.getChildren().add(new PieceView(v, highlightPage.getHighlights(v))));
+        final ListViewEx<Piece> listView = new ListViewEx<>((event, item) -> app.eventBus.fireEvent(new SearchedEvent(item)));
+        listView.setCellFactory(v -> new ListCell<>() {
+            final PieceCard pieceCard = new PieceCard();
+
+            {
+                pieceCard.maxWidthProperty().bind(Bindings.createDoubleBinding(
+                        () -> getWidth() - getPadding().getLeft() - getPadding().getRight() - 1,
+                        widthProperty(), paddingProperty()));
+                //
+                this.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                this.getStyleClass().add("result-item");
+                this.setStyle(this.getStyle().concat("-fx-font-size: 110%;-fx-opacity:.9;"));
+                //
+                this.setTooltip(new Tooltip("""
+                        鼠标左键双击或单击亮色字样可打开当前条目；
+                        鼠标右键单击可复制当前条目文字到剪贴板；
+                        """));
+                this.setOnMouseClicked(event -> {
+                    if (event.getButton() == MouseButton.SECONDARY) {
+                        pieceCard.copyText();
+                    }
+                });
+            }
+
+            Piece updatedItem;
+
+            @Override
+            protected void updateItem(Piece item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) {
+                    updatedItem = null;
+                    setGraphic(null);
+                    return;
+                }
+                if (item == updatedItem)
+                    return; //
+                updatedItem = item;
+                pieceCard.updateItem(item, highlightPage.getHighlights(item));
+                setGraphic(pieceCard);
+            }
+        });
 
         if (highlightPage.getTotalElements() > 0) {
             resultInfo.setText("共 %d 条结果   显示条数：%d - %d   页数：%d / %d".formatted(
@@ -324,13 +365,11 @@ class SearcherController extends WorkbenchPartController.MainView {
             resultInfo.setText("");
         }
 
-        final ScrollPane scrollPane = new ScrollPane(listView);
-        scrollPane.setFitToWidth(true);
-        scrollPane.setStyle("-fx-padding: 0;-fx-background-insets: 0;");
-        return scrollPane;
+        listView.getItems().setAll(highlightPage.getContent());
+        return listView;
     }
 
-    static class FacetItem {
+    private static class FacetItem {
         final SimpleBooleanProperty stateProperty = new SimpleBooleanProperty();
         final String value;
         String label;
@@ -355,7 +394,7 @@ class SearcherController extends WorkbenchPartController.MainView {
         }
     }
 
-    class FacetsTab extends Tab implements Callback<ListView<FacetItem>, ListCell<FacetItem>> {
+    private class FacetsTab extends Tab implements Callback<ListView<FacetItem>, ListCell<FacetItem>> {
         final ListView<FacetItem> listView;
         final InvalidationListener facetCellStateListener;
 
@@ -410,7 +449,7 @@ class SearcherController extends WorkbenchPartController.MainView {
         }
     }
 
-    class ScopesTab extends Tab {
+    private class ScopesTab extends Tab {
         final ListView<RawVal<String>> listView;
 
         ScopesTab(final String label) {
@@ -468,7 +507,7 @@ class SearcherController extends WorkbenchPartController.MainView {
         }
     }
 
-    static class UsagesTab extends Tab {
+    private static class UsagesTab extends Tab {
         UsagesTab() {
             super("？");
 
@@ -489,84 +528,90 @@ class SearcherController extends WorkbenchPartController.MainView {
         }
     }
 
-    class PieceView extends VBox {
-        PieceView(Piece item, List<HighlightEntry.Highlight> highlights) {
-            final Hyperlink nameLabel = new Hyperlink(item.title);
+    private class PieceCard extends VBox {
+        final Hyperlink nameLabel;
+        final Label locationLabel, authorsLabel;
+        final TextFlow textFlow = new TextFlow();
+
+        PieceCard() {
+            nameLabel = new Hyperlink();
             nameLabel.getStyleClass().add("name");
             nameLabel.setStyle(nameLabel.getStyle().concat("-fx-font-size: 120%;"));
             nameLabel.setWrapText(true);
-            nameLabel.setOnAction(e -> app.eventBus.fireEvent(new SearchedEvent(item, inputQuery, null)));
 
-            final Label locationLabel = new Label(item.path, MaterialIcon.LOCATION_ON.graphic());
+            locationLabel = new Label(null, MaterialIcon.LOCATION_ON.graphic());
             locationLabel.getStyleClass().add("location");
             locationLabel.setStyle(locationLabel.getStyle().concat("-fx-opacity:.75;"));
             locationLabel.setWrapText(true);
 
-            final Label authorsLabel = new Label(item.field("authors_s"), MaterialIcon.PEOPLE.graphic());
+            authorsLabel = new Label(null, MaterialIcon.PEOPLE.graphic());
             authorsLabel.getStyleClass().add("authors");
             authorsLabel.setStyle(authorsLabel.getStyle().concat("-fx-opacity:.75;"));
             authorsLabel.setWrapText(true);
 
-            final TextFlow textFlow = new TextFlow();
             textFlow.getStyleClass().add("text-flow");
             //
-            this.getStyleClass().addAll("list-cell", "bob-line", "result-item");
-            this.setStyle("-fx-spacing:.85em;-fx-padding:.85em .5em;-fx-font-size: 110%;-fx-opacity:.9;");
             this.getChildren().setAll(nameLabel, locationLabel, authorsLabel, textFlow);
-            this.setOnMouseReleased(e -> {
-                if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() > 1) {
-                    nameLabel.fire();
-                } else if (e.getButton() == MouseButton.SECONDARY) {
-                    FxHelper.copyText("名称：" + nameLabel.getText() +
-                                      "\n位置：" + locationLabel.getText() +
-                                      "\n作译者：" + authorsLabel.getText() +
-                                      "\n文本：\n" + textFlow.getChildren().stream().filter(n -> n instanceof Text)
-                                              .map(n -> ((Text) n).getText())
-                                              .collect(Collectors.joining()));
-                    app.toast("已复制到剪贴板！");
-                }
-            });
+            this.setStyle(this.getStyle().concat("-fx-spacing:.4em;-fx-padding:.2em .1em;"));
+        }
+
+        void copyText() {
+            FxHelper.copyText("名称：" + nameLabel.getText() +
+                              "\n位置：" + locationLabel.getText() +
+                              "\n作译者：" + authorsLabel.getText() +
+                              "\n文本：\n" + textFlow.getChildren().stream().filter(n -> n instanceof Text)
+                                      .map(n -> ((Text) n).getText())
+                                      .collect(Collectors.joining()));
+            app.toast("已复制到剪贴板！");
+        }
+
+        void updateItem(Piece item, List<HighlightEntry.Highlight> highlights) {
+            nameLabel.setText(item.title);
+            nameLabel.setOnAction(e -> app.eventBus.fireEvent(new SearchedEvent(item, inputQuery, null)));
+
+            locationLabel.setText(item.path);
+
+            authorsLabel.setText(item.field("authors_s"));
+
             //
             List<Node> texts = new ArrayList<>();
             if (!highlights.isEmpty()) {
-                highlights.forEach(highlight -> {
-                    highlight.getSnipplets().forEach(str -> {
-                        String[] strings = ("…" + str + "…").split("§§hl#pre§§");
-                        for (String string : strings) {
-                            String[] tmpArr = string.split("§§hl#end§§", 2);
-                            if (tmpArr.length == 1) {
-                                final Text text1 = new Text(tmpArr[0]);
-                                text1.getStyleClass().add("plaintext");
-                                texts.add(text1);
-                            } else {
-                                final Text hlText = new Text(tmpArr[0]);
-                                hlText.getStyleClass().add("highlight");
-                                hlText.setStyle(hlText.getStyle().concat("-fx-cursor:hand;"));
-                                hlText.setOnMouseReleased(event -> {
-                                    if (event.getButton() == MouseButton.PRIMARY) {
-                                        app.eventBus.fireEvent(new SearchedEvent(item, tmpArr[0], string));
-                                    }
-                                });
-                                texts.add(hlText);
-                                final Text text1 = new Text(tmpArr[1]);
-                                text1.getStyleClass().add("plaintext");
-                                texts.add(text1);
-                            }
+                highlights.forEach(highlight -> highlight.getSnipplets().forEach(str -> {
+                    String[] strings = ("…" + str + "…").split("§§hl#pre§§");
+                    for (String string : strings) {
+                        String[] tmpArr = string.split("§§hl#end§§", 2);
+                        if (tmpArr.length == 1) {
+                            final Text text1 = new Text(tmpArr[0]);
+                            text1.getStyleClass().add("plaintext");
+                            texts.add(text1);
+                        } else {
+                            final Text hlText = new Text(tmpArr[0]);
+                            hlText.getStyleClass().add("highlight");
+                            hlText.setStyle(hlText.getStyle().concat("-fx-cursor:hand;"));
+                            hlText.setOnMouseReleased(event -> {
+                                if (event.getButton() == MouseButton.PRIMARY) {
+                                    app.eventBus.fireEvent(new SearchedEvent(item, tmpArr[0], string));
+                                }
+                            });
+                            texts.add(hlText);
+                            final Text text1 = new Text(tmpArr[1]);
+                            text1.getStyleClass().add("plaintext");
+                            texts.add(text1);
                         }
-                        texts.add(new Text("\n"));
-                    });
-                });
+                    }
+                    texts.add(new Text("\n"));
+                }));
             } else {
-                String text = item.text("text_txt_aio_sub");
-                final Text text1 = new Text(null == text ? "" : StringHelper.trimChars(text, 200));
-                text1.getStyleClass().add("plaintext");
-                texts.add(text1);
+                String str = item.text("text_txt_aio_sub");
+                final Text text = new Text(null == str ? "" : StringHelper.trimChars(str, 200));
+                text.getStyleClass().add("plaintext");
+                texts.add(text);
             }
             textFlow.getChildren().setAll(texts.toArray(new Node[0]));
         }
     }
 
-    class EnterView extends BorderPane {
+    private class EnterView extends BorderPane {
         final TextField _input;
 
         EnterView(Consumer<String> enterAction) {
