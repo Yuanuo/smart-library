@@ -114,9 +114,9 @@ class SearcherController extends WorkbenchPartController.MainView {
         input.setOnAction(event -> submit.fire());
 
         filterTabs = new TabPane(
-                new FacetsTab("/library/", "部类"),
+                new FacetsTab("/catalog/", "部类"),
                 new FacetsTab("/period/", "时域"),
-                new FacetsTab("/catalog/", "库"),
+                new FacetsTab("/library/", "库"),
                 new FacetsTab("/author/", "作译者"),
                 new ScopesTab("范围"),
                 new UsagesTab());
