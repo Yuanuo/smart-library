@@ -32,7 +32,7 @@ import java.util.Optional;
 public class App extends WorkbenchApp {
     public static final String ID = "smartLibrary";
     public static final String NAME = "智悲研藏";
-    public static final String VERSION = "22.08.13";
+    public static final String VERSION = "22.08.30";
     private static App instance;
 
     public App() {
