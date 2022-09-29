@@ -351,8 +351,12 @@ public class ItemActions {
                 .concat("-").concat(DateHelper.format3(new Date())).concat(".smartlib");
 
         final FileChooser fileChooser = new FileChooser();
-        if (null != initDir)
-            fileChooser.setInitialDirectory(new File(initDir));
+        if (null != initDir && FileHelper.isNameValid(initDir)) {
+            final File initialDirectory = new File(initDir);
+            if (initialDirectory.exists()) {
+                fileChooser.setInitialDirectory(initialDirectory);
+            }
+        }
         fileChooser.setInitialFileName(initFileName);
         fileChooser.setTitle("保存文件...");
         fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(App.NAME.concat("数据包"), "*.smartlib"));
@@ -388,8 +392,12 @@ public class ItemActions {
         final String lastDir = UserPrefs.prefs.getString("exchange.dir", null);
 
         final FileChooser fileChooser = new FileChooser();
-        if (null != lastDir)
-            fileChooser.setInitialDirectory(new File(lastDir));
+        if (null != lastDir && FileHelper.isNameValid(lastDir)) {
+            final File initialDirectory = new File(lastDir);
+            if (initialDirectory.exists()) {
+                fileChooser.setInitialDirectory(initialDirectory);
+            }
+        }
         fileChooser.setTitle("打开文件...");
         fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(App.NAME.concat("数据包"), "*.smartlib"));
         final List<File> files = fileChooser.showOpenMultipleDialog(App.app().getPrimaryStage());
