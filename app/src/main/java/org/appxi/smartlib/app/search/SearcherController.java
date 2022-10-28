@@ -46,6 +46,7 @@ import org.appxi.search.solr.Piece;
 import org.appxi.smartcn.pinyin.PinyinHelper;
 import org.appxi.smartlib.dao.BeansContext;
 import org.appxi.smartlib.dao.PiecesRepository;
+import org.appxi.util.OSVersions;
 import org.appxi.util.StringHelper;
 import org.appxi.util.ext.Period;
 import org.appxi.util.ext.RawVal;
@@ -517,9 +518,9 @@ class SearcherController extends WorkbenchPartController.MainView {
                     3、在过滤器中双击任一项可排除其余而单选过滤；
                     4、在搜索结果列表中双击打开，单击高亮关键词将“尝试”打开并定位到该处；
                     5、基于关键词搜索，输入字符限定长度为20；
-                    6、快捷键（Ctrl + H）开启此视图！可同时开启多个搜索视图；
+                    6、快捷键（Ctrl + $SK$）开启此视图！可同时开启多个搜索视图；
                     7、在搜索结果列表中右键单击，将复制所单击条目的文字内容到剪贴板；
-                    """);
+                    """.replace("$SK$", (OSVersions.isMac ? "J" : "H")));
             usageTip.setWrapText(true);
             usageTip.setStyle("-fx-padding:.5em;");
             usageTip.setLineSpacing(5);
@@ -660,8 +661,8 @@ class SearcherController extends WorkbenchPartController.MainView {
                     在搜索结果左侧过滤器中双击任一项可排除其余而单选过滤
                     在搜索结果列表中双击打开，单击高亮关键词将“尝试”打开并定位到该处
                     基于关键词搜索，输入字符限定长度为20，太长亦无意义
-                    快捷键（Ctrl + H）开启此视图！可同时开启多个搜索视图！
-                    """);
+                    快捷键（Ctrl + $SK$）开启此视图！可同时开启多个搜索视图！
+                    """.replace("$SK$", (OSVersions.isMac ? "J" : "H")));
             usageTip.setTextAlignment(TextAlignment.CENTER);
             usageTip.setWrapText(true);
             usageTip.setStyle("-fx-padding:3em 1em;");

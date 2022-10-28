@@ -16,6 +16,7 @@ import org.appxi.smartlib.Item;
 import org.appxi.smartlib.ItemEvent;
 import org.appxi.smartlib.dao.ItemsDao;
 import org.appxi.util.DigestHelper;
+import org.appxi.util.OSVersions;
 import org.appxi.util.ext.RawVal;
 
 import java.util.Objects;
@@ -26,7 +27,7 @@ public class SearchController extends WorkbenchPartController implements Workben
         super(workbench);
 
         this.id.set("SEARCH");
-        this.tooltip.set("全文检索 (Ctrl+H)");
+        this.tooltip.set("全文检索 (Ctrl+" + (OSVersions.isMac ? "J" : "H") + ")");
         this.graphic.set(MaterialIcon.SEARCH.graphic());
     }
 
@@ -37,8 +38,9 @@ public class SearchController extends WorkbenchPartController implements Workben
 
     @Override
     public void postConstruct() {
-        // 响应快捷键 Ctrl+H 事件，以打开搜索视图
-        app.getPrimaryScene().getAccelerators().put(new KeyCodeCombination(KeyCode.H, KeyCombination.SHORTCUT_DOWN),
+        // 响应快捷键 Ctrl+H/J 事件，以打开搜索视图, MacOS平台上Ctrl+H与系统快捷键冲突
+        app.getPrimaryScene().getAccelerators().put(
+                new KeyCodeCombination(OSVersions.isMac ? KeyCode.J : KeyCode.H, KeyCombination.SHORTCUT_DOWN),
                 () -> openSearcherWithText(null, null));
         // 响应SEARCH Event事件，以打开搜索视图
         app.eventBus.addEventHandler(SearcherEvent.SEARCH, event -> openSearcherWithText(event.text, event.data()));
