@@ -87,7 +87,7 @@ public class AppPreloader extends Preloader {
             }
         }
         // 在普通模式时，默认加载最后使用的有效项目，若无则使用用户目录下的默认项目
-        if ("simple".equals(UserPrefs.prefsEx.getString("profile.mode", "simple"))) {
+        if ("simple".equals(UserPrefs.prefsEx.getString("profile.mode", "advanced"))) {
             final Path defaultDataDir = List.copyOf(profileMgr.getPropertyKeys()).stream()
                     .map(k -> new AbstractMap.SimpleEntry<>(k, profileMgr.getLong(k, -1)))
                     .sorted(Collections.reverseOrder(Comparator.comparingLong(AbstractMap.SimpleEntry::getValue)))
@@ -117,6 +117,11 @@ public class AppPreloader extends Preloader {
                     .description("选择文件夹作为项目，必须具备写入权限和可用容量以存放所有数据！")
                     .graphic(MaterialIcon.FOLDER.graphic())
                     .userData(Boolean.TRUE)
+                    .get());
+            cardChooser.cards(CardChooser.ofCard("使用默认项目")
+                    .description("默认项目位置：" + newDataDir)
+                    .graphic(MaterialIcon.FOLDER_OPEN.graphic())
+                    .userData(newDataDir)
                     .get());
             List.copyOf(profileMgr.getPropertyKeys()).stream()
                     .map(k -> new AbstractMap.SimpleEntry<>(k, profileMgr.getLong(k, -1)))
