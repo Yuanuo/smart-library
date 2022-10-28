@@ -113,15 +113,15 @@ public class AppPreloader extends Preloader {
             final CardChooser cardChooser = CardChooser.of("选择项目位置 - ".concat(App.NAME))
                     .header("使用项目管理数据，适用于多开、数据隔离、提升性能和效率的使用方式！", null)
                     .owner(primaryStage);
+            cardChooser.cards(CardChooser.ofCard("打开默认项目")
+                    .description("暂不选择，使用默认项目位置：" + newDataDir)
+                    .graphic(MaterialIcon.FOLDER_SPECIAL.graphic())
+                    .userData(newDataDir)
+                    .get());
             cardChooser.cards(CardChooser.ofCard("打开文件夹")
                     .description("选择文件夹作为项目，必须具备写入权限和可用容量以存放所有数据！")
                     .graphic(MaterialIcon.FOLDER.graphic())
                     .userData(Boolean.TRUE)
-                    .get());
-            cardChooser.cards(CardChooser.ofCard("使用默认项目")
-                    .description("默认项目位置：" + newDataDir)
-                    .graphic(MaterialIcon.FOLDER_OPEN.graphic())
-                    .userData(newDataDir)
                     .get());
             List.copyOf(profileMgr.getPropertyKeys()).stream()
                     .map(k -> new AbstractMap.SimpleEntry<>(k, profileMgr.getLong(k, -1)))
@@ -130,6 +130,9 @@ public class AppPreloader extends Preloader {
                         try {
                             final String dir = val.getKey();
                             final Path path = Path.of(dir);
+                            if (Objects.equals(path, newDataDir)) {
+                                return;
+                            }
                             if (!Files.isDirectory(path) || FileHelper.notExists(path)
                                 || FileHelper.exists(path) && FileHelper.notExists(path.resolve(dataDirName))) {
                                 profileMgr.removeProperty(dir);
