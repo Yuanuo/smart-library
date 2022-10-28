@@ -6,7 +6,7 @@
 
     <groupId>org.appxi</groupId>
     <artifactId>smart-library-lite-packager</artifactId>
-    <version>22.09.29</version>
+    <version>22.10.28</version>
 
     <packaging>pom</packaging>
 
