@@ -57,7 +57,7 @@ public class AppPreloader extends Preloader {
         //
         setupChooser(primaryStage);
         //
-        FontFaceHelper.fixing();
+        FontFaceHelper.fixFontFamilies();
         //
         if (OSVersions.isLinux || OSVersions.isMac) {
             new javafx.scene.control.TextField("");

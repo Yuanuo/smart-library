@@ -26,7 +26,6 @@ import java.net.URL;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 
 public class App extends WorkbenchApp {
@@ -47,7 +46,6 @@ public class App extends WorkbenchApp {
     public void init() throws Exception {
         super.init();
         //
-        Locale.setDefault(Locale.SIMPLIFIED_CHINESE);
         new Thread(() -> {
             WebPane.preloadLibrary();
             BeansContext.setupInitialize(
