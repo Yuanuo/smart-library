@@ -2,15 +2,15 @@ package org.appxi.smartlib.app;
 
 import javafx.scene.Scene;
 import javafx.stage.Stage;
+import org.appxi.dictionary.app.explorer.DictionaryContext;
+import org.appxi.dictionary.app.explorer.DictionaryController;
 import org.appxi.file.FileWatcher;
-import org.appxi.javafx.app.dict.DictionaryController;
 import org.appxi.javafx.visual.VisualEvent;
 import org.appxi.javafx.web.WebPane;
 import org.appxi.javafx.workbench.WorkbenchApp;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.prefs.UserPrefs;
-import org.appxi.smartcn.convert.ChineseConvertors;
 import org.appxi.smartcn.pinyin.PinyinHelper;
 import org.appxi.smartlib.app.explorer.LibraryExplorer;
 import org.appxi.smartlib.app.home.AboutController;
@@ -21,6 +21,7 @@ import org.appxi.smartlib.app.recent.RecentViewsController;
 import org.appxi.smartlib.app.search.LookupController;
 import org.appxi.smartlib.app.search.SearchController;
 import org.appxi.smartlib.dao.BeansContext;
+import org.appxi.util.ext.HanLang;
 
 import java.net.URL;
 import java.nio.file.Path;
@@ -31,7 +32,7 @@ import java.util.Optional;
 public class App extends WorkbenchApp {
     public static final String ID = "smartLibrary";
     public static final String NAME = "智悲研藏";
-    public static final String VERSION = "22.11.30";
+    public static final String VERSION = "23.11.10";
     private static App instance;
 
     public App() {
@@ -54,6 +55,8 @@ public class App extends WorkbenchApp {
                     App.appDir().resolve("template")
             );
         }).start();
+        //
+        DictionaryContext.setupInitialize(instance, HtmlBasedViewer::getWebIncludeURIsEx, HanLang::convert);
         //
         PinyinHelper.pinyin("init");
     }
@@ -134,7 +137,7 @@ public class App extends WorkbenchApp {
 
         result.add(new LookupController(workbench));
         result.add(new SearchController(workbench));
-        result.add(new DictionaryController(workbench, HtmlBasedViewer::getWebIncludeURIsEx, ChineseConvertors::toHans));
+        result.add(new DictionaryController(workbench));
 
         result.add(new RecentViewsController(workbench));
         result.add(new RecentItemsController(workbench));

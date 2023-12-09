@@ -11,6 +11,7 @@ import org.appxi.javafx.visual.MaterialIcon;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.javafx.workbench.WorkbenchPartController;
+import org.appxi.util.OSVersions;
 
 public class PreferencesController extends WorkbenchPartController implements WorkbenchPart.SideTool {
     public PreferencesController(WorkbenchPane workbench) {
@@ -39,7 +40,9 @@ public class PreferencesController extends WorkbenchPartController implements Wo
                 return null;
             }
         };
-//        dialogPane.setPrefSize(480, 640);
+        if (OSVersions.isLinux) {
+            dialogPane.setPrefSize(540, 720);
+        }
         dialogPane.setContent(settingsPane);
         dialogPane.getButtonTypes().add(ButtonType.OK);
         //

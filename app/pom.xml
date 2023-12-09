@@ -6,13 +6,13 @@
 
     <groupId>org.appxi</groupId>
     <artifactId>smart-library-lite</artifactId>
-    <version>22.11.30</version>
+    <version>23.11.10</version>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.release>18</maven.compiler.release>
-        <javafx.version>20-ea+9</javafx.version>
-		<slf4j.version>2.0.3</slf4j.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <javafx.version>22-ea+16</javafx.version>
+		<slf4j.version>2.0.9</slf4j.version>
     </properties>
 
     <dependencies>
@@ -35,6 +35,11 @@
             <groupId>org.appxi</groupId>
             <artifactId>timeago</artifactId>
             <version>[1.0.0,)</version>
+        </dependency>
+        <dependency>
+            <groupId>org.appxi</groupId>
+            <artifactId>dictionary-app</artifactId>
+            <version>[23.08.14,)</version>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>

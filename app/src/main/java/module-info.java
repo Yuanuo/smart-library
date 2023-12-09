@@ -7,6 +7,7 @@ module appxi.smartLibrary {
     requires java.sql;
 
     requires appxi.smartLibrary.api;
+    requires appxi.smartDictionary;
 
     exports org.appxi.smartlib.app; // for application launch
     exports org.appxi.smartlib.app.item;

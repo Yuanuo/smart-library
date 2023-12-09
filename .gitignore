@@ -19,3 +19,5 @@
 bak/
 scenicview.jar
 scenicView.properties
+/app/template/mindmap/dist/dev.html
+/app/template/mindmap/dist/index.html

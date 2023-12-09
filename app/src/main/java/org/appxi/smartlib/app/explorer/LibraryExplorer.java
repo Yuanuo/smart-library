@@ -188,7 +188,7 @@ public class LibraryExplorer extends WorkbenchPartController.SideView {
                     new RawVal<>("simple", "默认项目位置"),
                     new RawVal<>("advanced", "启动时选择项目位置")
             );
-            final String usedVal = UserPrefs.prefsEx.getString("profile.mode", "advanced");
+            final String usedVal = UserPrefs.prefsEx.getString("profile.mode", "simple");
             //
             final ObjectProperty<RawVal<String>> valueProperty = new SimpleObjectProperty<>();
             valueProperty.setValue(list.stream().filter(v -> usedVal.equalsIgnoreCase(v.value())).findFirst().orElse(list.get(0)));

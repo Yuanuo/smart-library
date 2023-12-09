@@ -18,6 +18,7 @@ import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.javafx.workbench.WorkbenchPartController;
 import org.appxi.prefs.UserPrefs;
 import org.appxi.smartlib.app.App;
+import org.appxi.util.OSVersions;
 
 import java.util.Optional;
 
@@ -96,12 +97,18 @@ public class AboutController extends WorkbenchPartController implements Workbenc
                 return null;
             }
         };
+        if (OSVersions.isLinux) {
+            dialogPane.setPrefSize(540, 720);
+        }
         dialogPane.setContent(new VBox(headBox, descBox, info));
         dialogPane.getButtonTypes().add(ButtonType.OK);
         //
         final Dialog<?> dialog = new Dialog<>();
         dialog.setTitle(title.get());
         dialog.setDialogPane(dialogPane);
+        if (OSVersions.isLinux) {
+            dialog.setResizable(true);
+        }
         dialog.initOwner(app.getPrimaryStage());
         dialog.show();
     }

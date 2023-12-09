@@ -1,22 +1,26 @@
 package org.appxi.smartlib.app.item;
 
 import javafx.beans.binding.Bindings;
+import javafx.event.ActionEvent;
 import javafx.scene.control.Button;
 import javafx.scene.control.Labeled;
 import javafx.scene.control.MenuItem;
-import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.InputEvent;
 import javafx.scene.input.KeyCode;
-import javafx.scene.input.KeyEvent;
+import javafx.scene.input.KeyCodeCombination;
+import javafx.scene.input.KeyCombination;
 import javafx.scene.layout.StackPane;
+import org.appxi.dictionary.app.explorer.DictionaryViewer;
 import org.appxi.javafx.app.DesktopApp;
 import org.appxi.javafx.app.search.SearcherEvent;
+import org.appxi.javafx.app.web.WebViewer;
 import org.appxi.javafx.app.web.WebViewerPart;
 import org.appxi.javafx.control.LookupLayer;
 import org.appxi.javafx.helper.FxHelper;
 import org.appxi.javafx.visual.MaterialIcon;
-import org.appxi.javafx.web.WebSelection;
+import org.appxi.javafx.web.WebPane;
+import org.appxi.javafx.workbench.WorkbenchApp;
 import org.appxi.javafx.workbench.WorkbenchPane;
 import org.appxi.javafx.workbench.WorkbenchPart;
 import org.appxi.smartcn.pinyin.PinyinHelper;
@@ -95,6 +99,14 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
         super.initialize();
         //
         addTool_GotoHeadings();
+        //
+        WebViewer.addShortcutKeys(this);
+        DictionaryViewer.addShortcutKeys(this);
+        HtmlBasedViewer.addShortcutKeys(this);
+
+        WebViewer.addShortcutMenu(this);
+        DictionaryViewer.addShortcutMenu(this);
+        HtmlBasedViewer.addShortcutMenu(this);
     }
 
     private Button gotoHeadings;
@@ -146,60 +158,6 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
         app.eventBus.fireEvent(new ItemEvent(ItemEvent.VISITED, this.item));
     }
 
-    @Override
-    protected void onWebPaneShortcutsPressed(KeyEvent event) {
-        if (event.isConsumed()) {
-            return;
-        }
-        // Ctrl + T
-        if (event.isShortcutDown() && event.getCode() == KeyCode.T && null != gotoHeadings) {
-            gotoHeadings.fire();
-            event.consume();
-            return;
-        }
-        //
-        super.onWebPaneShortcutsPressed(event);
-    }
-
-    @Override
-    protected void onWebViewContextMenuRequest(List<MenuItem> model, WebSelection selection) {
-        super.onWebViewContextMenuRequest(model, selection);
-        //
-        MenuItem copyRef = new MenuItem("复制引用");
-        copyRef.setDisable(!selection.hasText);
-        copyRef.setOnAction(event -> FxHelper.copyText("《" + item.getName() + "》\n\n" + selection.text));
-
-        //
-        String textTip = selection.hasTrims ? "：" + StringHelper.trimChars(selection.trims, 8) : "";
-        String textForSearch = selection.hasTrims ? selection.trims : null;
-
-        MenuItem searchInBook = new MenuItem("全文检索（检索本书）".concat(textTip));
-        searchInBook.setOnAction(event -> app.eventBus.fireEvent(SearcherEvent.ofSearch(textForSearch, item.parentItem())));
-
-        //
-        MenuItem bookmark = new MenuItem("添加书签");
-        bookmark.setDisable(true);
-
-        MenuItem favorite = new MenuItem("添加收藏");
-        favorite.setDisable(true);
-
-        //
-        model.add(createMenu_copy(selection));
-        model.add(copyRef);
-        model.add(new SeparatorMenuItem());
-        model.add(createMenu_search(textTip, textForSearch));
-        model.add(createMenu_searchExact(textTip, textForSearch));
-        model.add(searchInBook);
-        model.add(createMenu_lookup(textTip, textForSearch));
-        model.add(createMenu_finder(textTip, selection));
-        model.add(new SeparatorMenuItem());
-        model.add(createMenu_dict(selection));
-        model.add(createMenu_pinyin(selection));
-        model.add(new SeparatorMenuItem());
-        model.add(bookmark);
-        model.add(favorite);
-    }
-
     class LookupLayerImpl extends LookupLayer<String> {
         public LookupLayerImpl(StackPane owner) {
             super(owner);
@@ -211,10 +169,11 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
         }
 
         @Override
-        protected String getUsagesText() {
-            return """
-                    >> 快捷键：Ctrl+T 在阅读视图中开启；ESC 或 点击透明区 退出此界面；上下方向键选择列表项；回车键打开；
-                    """;
+        protected void helpButtonAction(ActionEvent actionEvent) {
+            FxHelper.showTextViewerWindow(app, "appGotoChapters.helpWindow", getHeaderText() + "使用方法",
+                    """
+                            >> 快捷键：Ctrl+T 在阅读视图中开启；ESC 或 点击透明区 退出此界面；上下方向键选择列表项；回车键打开；
+                                    """);
         }
 
         private Set<String> usedKeywords;
@@ -227,7 +186,7 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
         }
 
         @Override
-        protected Collection<String> lookupByKeywords(String lookupText, int resultLimit) {
+        protected LookupResult<String> lookupByKeywords(String lookupText, int resultLimit) {
             final List<String> result = new ArrayList<>();
             usedKeywords = new LinkedHashSet<>();
             //
@@ -246,12 +205,12 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
                     });
             if (!isInputEmpty && optional.isEmpty()) {
                 // not a valid expression
-                return result;
+                return new LookupResult<>(0, 0, result);
             }
             final LookupExpression lookupExpression = optional.orElse(null);
             //
             String headings = webPane.executeScript("getHeadings()");
-            if (null != headings && headings.length() > 0) {
+            if (null != headings && !headings.isEmpty()) {
                 headings.lines().forEach(str -> {
                     String[] arr = str.split("#", 2);
                     if (arr.length != 2 || arr[1].isBlank()) return;
@@ -266,7 +225,8 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
             //
             if (null != lookupExpression)
                 lookupExpression.keywords().forEach(k -> usedKeywords.add(k.keyword()));
-            return result;
+
+            return new LookupResult<>(result.size(), result.size(), result);
         }
 
         @Override
@@ -288,5 +248,53 @@ public class HtmlBasedViewer extends WebViewerPart.MainView implements ItemRende
             super.hide();
             webPane.webView().requestFocus();
         }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    public static void addShortcutKeys(HtmlBasedViewer webViewer) {
+        final WebPane webPane = webViewer.webPane;
+        final WorkbenchApp app = webViewer.app;
+        //
+        // Ctrl + T
+        webPane.shortcutKeys.put(new KeyCodeCombination(KeyCode.T, KeyCombination.SHORTCUT_DOWN), event -> {
+            if (null != webViewer.gotoHeadings) {
+                webViewer.gotoHeadings.fire();
+                event.consume();
+            }
+        });
+    }
+
+    public static void addShortcutMenu(HtmlBasedViewer webViewer) {
+        final WebPane webPane = webViewer.webPane;
+        final WorkbenchApp app = webViewer.app;
+        //
+        webPane.shortcutMenu.add(selection -> {
+            MenuItem copyRef = new MenuItem("复制文字（&引用出处）");
+            copyRef.getProperties().put(WebPane.GRP_MENU, "copy");
+            copyRef.setDisable(!selection.hasText);
+            copyRef.setOnAction(event -> FxHelper.copyText("《" + webViewer.item.getName() + "》\n\n" + selection.text));
+            //
+            MenuItem bookmark = new MenuItem("添加书签");
+            bookmark.getProperties().put(WebPane.GRP_MENU, "user1");
+            bookmark.setDisable(true);
+
+            MenuItem favorite = new MenuItem("添加收藏");
+            favorite.getProperties().put(WebPane.GRP_MENU, "user1");
+            favorite.setDisable(true);
+
+            return List.of(copyRef, bookmark, favorite);
+        });
+        //
+        webPane.shortcutMenu.add(selection -> {
+            String textTip = selection.hasTrims ? "：" + StringHelper.trimChars(selection.trims, 8) : "";
+            String textForSearch = selection.hasTrims ? selection.trims : null;
+
+            MenuItem searchInBook = new MenuItem("全文检索（检索本书）".concat(textTip));
+            searchInBook.getProperties().put(WebPane.GRP_MENU, "search");
+            searchInBook.setOnAction(event -> app.eventBus.fireEvent(SearcherEvent.ofSearch(textForSearch, webViewer.item.parentItem())));
+
+            return List.of(searchInBook);
+        });
     }
 }

@@ -6,13 +6,13 @@
 
     <groupId>org.appxi</groupId>
     <artifactId>smart-library-lite-packager</artifactId>
-    <version>22.11.30</version>
+    <version>23.11.10</version>
 
     <packaging>pom</packaging>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.release>18</maven.compiler.release>
+        <maven.compiler.release>21</maven.compiler.release>
 
         <ext.nonMods>${project.build.directory}/jpacktool/jar</ext.nonMods>
         <ext.nonMods.lib>${project.build.directory}/jpacktool/jar/${project.version}</ext.nonMods.lib>

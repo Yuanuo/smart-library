@@ -1,5 +1,6 @@
 package org.appxi.smartlib.app.search;
 
+import javafx.event.ActionEvent;
 import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.Label;
 import javafx.scene.control.Labeled;
@@ -107,11 +108,12 @@ public class LookupController extends WorkbenchPartController implements Workben
         }
 
         @Override
-        protected String getUsagesText() {
-            return """
-                    >> 空格分隔任意字/词/短语匹配；
-                    >> 快捷键：双击Shift 或 Ctrl+G 开启；ESC 或 点击透明区 退出此界面；上/下方向键选择列表项；回车键打开；
-                    """;
+        protected void helpButtonAction(ActionEvent actionEvent) {
+            FxHelper.showTextViewerWindow(app, "appGotoChapters.helpWindow", getHeaderText() + "使用方法",
+                    """
+                            >> 空格分隔任意字/词/短语匹配；
+                            >> 快捷键：双击Shift 或 Ctrl+G 开启；ESC 或 点击透明区 退出此界面；上/下方向键选择列表项；回车键打开；
+                                            """);
         }
 
         private Set<String> usedKeywords;
@@ -140,21 +142,24 @@ public class LookupController extends WorkbenchPartController implements Workben
         }
 
         @Override
-        protected Collection<Piece> lookupByKeywords(String lookupText, int resultLimit) {
+        protected LookupResult<Piece> lookupByKeywords(String lookupText, int resultLimit) {
             LookupController.this.lookupText = lookupText;
             usedKeywords = new LinkedHashSet<>();
             LookupExpression.of(lookupText).ifPresent(
                     expr -> usedKeywords.addAll(expr.keywords().stream().map(v -> v.keyword()).toList()));
             //
             final PiecesRepository repository = BeansContext.getBean(PiecesRepository.class);
-            if (null == repository) return List.of();
+            if (null == repository) {
+                return new LookupResult<>(0, 0, List.of());
+            }
             Page<Piece> result = repository.lookup(
                     null,
                     List.of("article", "topic", "label", "location"),
                     lookupText,
                     null,
                     new SolrPageRequest(0, resultLimit + 1));
-            return result.getContent();
+
+            return new LookupResult<>(result.getTotalElements(), result.getTotalElements(), result.getContent());
         }
 
         @Override

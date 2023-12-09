@@ -87,7 +87,7 @@ public class AppPreloader extends Preloader {
             }
         }
         // 在普通模式时，默认加载最后使用的有效项目，若无则使用用户目录下的默认项目
-        if ("simple".equals(UserPrefs.prefsEx.getString("profile.mode", "advanced"))) {
+        if ("simple".equals(UserPrefs.prefsEx.getString("profile.mode", "simple"))) {
             final Path defaultDataDir = List.copyOf(profileMgr.getPropertyKeys()).stream()
                     .map(k -> new AbstractMap.SimpleEntry<>(k, profileMgr.getLong(k, -1)))
                     .sorted(Collections.reverseOrder(Comparator.comparingLong(AbstractMap.SimpleEntry::getValue)))
