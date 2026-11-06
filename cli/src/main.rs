@@ -3,6 +3,7 @@
 use smart_library_core::bookcase::Bookcase;
 use smart_library_core::catalog::Book;
 use smart_library_core::nav::NavNode;
+use smart_library_core::search::{locate, snippets, MatchMode, SearchIndex, SearchRequest};
 use smart_library_core::source::{DirSource, Source, ZipSource};
 use smart_library_core::toc::TocItem;
 use std::collections::{BTreeMap, HashSet};
@@ -18,7 +19,14 @@ fn usage() {
   smart-library check <bookcase.zip|dir>
   smart-library text  <bookcase.zip|dir> <book id> [juan] [--punct]
   smart-library text  <bookcase.zip|dir> <volume path, e.g. XML/T/T01/T01n0004_001.xml> [--punct]
-  smart-library volumes <bookcase.zip|dir> [path prefix, e.g. XML/T/] [--out DIR] [--every N] [--keep-mulu]"
+  smart-library volumes <bookcase.zip|dir> [path prefix, e.g. XML/T/] [--out DIR] [--every N] [--keep-mulu]
+  smart-library index <bookcase.zip|dir> [--index DIR]
+  smart-library search <bookcase.zip|dir> <query> [--phrase] [--scope bulei/阿含部類] [--page N] [--limit N]
+                       [--facet bulei/阿含部類] [--index DIR]
+
+  The index directory defaults to app_data/repos/cbeta/index (it can be deleted and rebuilt).
+  search: loose match by default (every bigram in the same volume; a space separates
+  keywords); --phrase for an exact phrase (punctuation ignored)."
     );
 }
 
@@ -77,6 +85,29 @@ fn main() {
                 std::process::exit(2);
             }
         },
+        "index" => {
+            let dir = flag_value(&args, "--index").unwrap_or(DEFAULT_INDEX);
+            cmd_index(&bc, Path::new(dir));
+        }
+        "search" => match args.get(3).filter(|a| !a.starts_with("--")) {
+            Some(q) => {
+                let dir = flag_value(&args, "--index").unwrap_or(DEFAULT_INDEX);
+                let mut req = SearchRequest::new(q);
+                if args.iter().any(|a| a == "--phrase") {
+                    req.mode = MatchMode::Phrase;
+                }
+                req.limit = flag_value(&args, "--limit").and_then(|v| v.parse().ok()).unwrap_or(10);
+                let page: usize = flag_value(&args, "--page").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+                req.offset = (page - 1) * req.limit;
+                req.scope = flag_value(&args, "--scope").map(|s| s.to_string());
+                req.facet_drill = flag_value(&args, "--facet").map(|s| vec![s.to_string()]).unwrap_or_default();
+                cmd_search(&bc, Path::new(dir), &req);
+            }
+            None => {
+                usage();
+                std::process::exit(2);
+            }
+        },
         "volumes" => {
             let prefix = args.get(3).filter(|a| !a.starts_with("--")).map(|s| s.as_str()).unwrap_or("XML/");
             let flag = |name: &str| args.iter().position(|a| a == name).and_then(|p| args.get(p + 1));
@@ -87,6 +118,107 @@ fn main() {
             usage();
             std::process::exit(2);
         }
+    }
+}
+
+const DEFAULT_INDEX: &str = "app_data/repos/cbeta/index";
+
+fn flag_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
+    args.iter().position(|a| a == name).and_then(|p| args.get(p + 1)).map(|s| s.as_str())
+}
+
+fn cmd_index(bc: &Bookcase, dir: &Path) {
+    println!("building index for {} ({}) in {}", bc.data_version(), bc.version, dir.display());
+    let res = SearchIndex::build(bc, dir, |done, total| {
+        eprint!("\r  {}/{} volumes", done, total);
+    });
+    eprintln!();
+    match res {
+        Ok(st) => {
+            let size: u64 = std::fs::read_dir(dir)
+                .map(|rd| rd.flatten().filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum())
+                .unwrap_or(0);
+            println!(
+                "indexed {} volumes in {:.1}s, {} skipped, index size {:.0} MB",
+                st.volumes,
+                st.seconds,
+                st.skipped.len(),
+                size as f64 / 1e6
+            );
+            for e in st.skipped.iter().take(10) {
+                println!("  skipped {}", e);
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_search(bc: &Bookcase, dir: &Path, req: &SearchRequest) {
+    if let Some(v) = SearchIndex::data_version(dir) {
+        if v != bc.data_version() {
+            eprintln!("warning: index built for {}, bookcase is {}: rebuild the index", v, bc.data_version());
+        }
+    }
+    let idx = match SearchIndex::open(dir) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let t0 = std::time::Instant::now();
+    let r = match idx.search(req) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let t_search = t0.elapsed().as_secs_f64() * 1000.0;
+    println!(
+        "{} volumes in {} books  ({}, {:.1} ms)",
+        r.total_volumes,
+        r.total_books,
+        if req.mode == MatchMode::Phrase { "phrase" } else { "loose" },
+        t_search
+    );
+    for f in &r.facets {
+        let shown: Vec<String> = f.values.iter().take(8).map(|(n, c)| format!("{} {}", n, c)).collect();
+        if !shown.is_empty() {
+            println!(
+                "  {:<6} {}{}",
+                smart_library_core::search::facet_label(&f.root),
+                shown.join(" · "),
+                if f.values.len() > 8 { format!(" · …({})", f.values.len()) } else { String::new() }
+            );
+        }
+    }
+    let t1 = std::time::Instant::now();
+    for (i, h) in r.hits.iter().enumerate() {
+        println!();
+        println!("{:>3}. {} {} 卷{}  [{}]  score {:.2}", req.offset + i + 1, h.book, h.title, h.juan, h.path, h.score);
+        match bc.volume_text(&h.path) {
+            Ok(vt) => {
+                let occ = locate(&vt, &req.query, req.mode);
+                for sn in snippets(&vt, &occ, 12, 3) {
+                    let s: String = sn
+                        .parts
+                        .iter()
+                        .map(|(t, m)| if *m { format!("【{}】", t) } else { t.clone() })
+                        .collect();
+                    println!("     {} 第{}字  {}", sn.lb, sn.pos, s);
+                }
+                println!("     ({} occurrence(s) in this volume)", occ.len());
+            }
+            Err(e) => println!("     (cannot locate: {})", e),
+        }
+    }
+    if !r.hits.is_empty() {
+        println!();
+        println!("located {} volume(s) in {:.1} ms", r.hits.len(), t1.elapsed().as_secs_f64() * 1000.0);
     }
 }
 

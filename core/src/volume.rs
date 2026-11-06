@@ -74,6 +74,9 @@ pub struct VolumeText {
     pub lines: Vec<LineStart>,
     /// `<p xml:id>` anchors: (id, char offset into `plain` where the paragraph starts)
     pub anchors: Vec<(String, usize)>,
+    /// for each char of `plain`, the char index of the same char in `text`
+    /// (to show hits with punctuation)
+    pub plain_to_text: Vec<u32>,
 }
 
 impl VolumeText {
@@ -445,6 +448,8 @@ pub fn extract_volume_with(xml: &str, skip_mulu: bool) -> Result<VolumeText, Str
     let mut last: Option<Option<&str>> = None; // None = no line yet
     let mut anchors: Vec<(String, usize)> = Vec::new();
     let mut next_anchor = 0;
+    let mut plain_to_text: Vec<u32> = Vec::new();
+    let mut text_len = 0u32;
     for (pi, (s, lb)) in ex.pieces.iter().enumerate() {
         while next_anchor < ex.anchors.len() && ex.anchors[next_anchor].1 <= pi {
             anchors.push((ex.anchors[next_anchor].0.clone(), plain_len));
@@ -453,6 +458,7 @@ pub fn extract_volume_with(xml: &str, skip_mulu: bool) -> Result<VolumeText, Str
         text.push_str(s);
         let lb_str = lb.map(|i| ex.lbs[i].as_str());
         for c in s.chars() {
+            text_len += 1;
             if is_dropped(c) {
                 continue;
             }
@@ -464,6 +470,7 @@ pub fn extract_volume_with(xml: &str, skip_mulu: bool) -> Result<VolumeText, Str
                 last = Some(lb_str);
             }
             plain.push(c);
+            plain_to_text.push(text_len - 1);
             plain_len += 1;
         }
     }
@@ -476,6 +483,7 @@ pub fn extract_volume_with(xml: &str, skip_mulu: bool) -> Result<VolumeText, Str
         plain,
         lines,
         anchors,
+        plain_to_text,
     })
 }
 
@@ -582,6 +590,7 @@ mod tests {
         let v = extract_volume(&wrap(r#"<p>甲<note place="inline">乙丙</note>丁</p>"#)).unwrap();
         assert_eq!(v.text, "甲（乙丙）丁");
         assert_eq!(v.plain, "甲乙丙丁");
+        assert_eq!(v.plain_to_text, vec![0, 2, 3, 5]);
     }
 
     #[test]
