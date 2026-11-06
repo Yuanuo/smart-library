@@ -1,0 +1,11 @@
+[package]
+name = "smart-library-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "smart-library"
+path = "src/main.rs"
+
+[dependencies]
+smart-library-core = { path = "../core" }

@@ -1,0 +1,16 @@
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# data that must stay outside the repository
+*.zip
+app_data/
+/index/
+/bookcase/
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+__pycache__/

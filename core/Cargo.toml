@@ -1,0 +1,11 @@
+[package]
+name = "smart-library-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# bookcase.zip only uses deflate (method 8) and stored (method 0); the default
+# features pull in C code (lzma/bzip2/zstd) that is not needed.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# zip entry names under a/ are GBK-encoded (no UTF-8 flag).
+encoding_rs = "0.8"

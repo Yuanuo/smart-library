@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html>
+	<head>
+		<meta charset="UTF-8" />
+		<title>本經目次</title>
+	</head>
+<body>
+<nav type="catalog">
+<h1>目錄</h1>
+<ol>
+	<li><cblink href="XML/T/T09/T09n0262_001.xml#p0001a03">御製大乘妙法蓮華經序</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_001.xml#p0001b13">弘傳序</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_001.xml#p0001c18">1 序品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_001.xml#p0005b24">2 方便品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_002.xml#p0010b28">3 譬喻品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_002.xml#p0016b07">4 信解品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_003.xml#p0019a18">5 藥草喻品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_003.xml#p0020b25">6 授記品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_003.xml#p0022a18">7 化城喻品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_004.xml#p0027b16">8 五百弟子受記品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_004.xml#p0029b22">9 授學無學人記品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_004.xml#p0030b28">10 法師品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_004.xml#p0032b16">11 見寶塔品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_004.xml#p0034b23">12 提婆達多品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_004.xml#p0035c27">13 勸持品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_005.xml#p0037a09">14 安樂行品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_005.xml#p0039c18">15 從地踊出品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_005.xml#p0042a29">16 如來壽量品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_005.xml#p0044a05">17 分別功德品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_006.xml#p0046b21">18 隨喜功德品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_006.xml#p0047c02">19 法師功德品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_006.xml#p0050b23">20 常不輕菩薩品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_006.xml#p0051c08">21 如來神力品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_006.xml#p0052c03">22 囑累品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_006.xml#p0053a04">23 藥王菩薩本事品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_007.xml#p0055a16">24 妙音菩薩品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_007.xml#p0198a10">附文</cblink>
+	<ol>
+		<li><cblink href="XML/T/T09/T09n0262_007.xml#p0198a12">御製觀世音普門品經序</cblink></li>
+	</ol>
+	</li>
+	<li><cblink href="XML/T/T09/T09n0262_007.xml#p0056c02">25 觀世音菩薩普門品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_007.xml#p0058b08">26 陀羅尼品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_007.xml#p0059b28">27 妙莊嚴王本事品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_007.xml#p0061a05">28 普賢菩薩勸發品</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_007.xml#p0062b04">後序</cblink></li>
+</ol>
+</nav>
+<nav type="juan">
+<h1>卷</h1>
+<ol>
+	<li><cblink href="XML/T/T09/T09n0262_001.xml#p0001c14">第一</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_002.xml#p0010b24">第二</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_003.xml#p0019a14">第三</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_004.xml#p0027b12">第四</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_005.xml#p0037a05">第五</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_006.xml#p0046b17">第六</cblink></li>
+	<li><cblink href="XML/T/T09/T09n0262_007.xml#p0055a12">第七</cblink></li>
+</ol>
+</nav>
+</body></html>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+    <id>CBETA</id>
+	<title>CBETA 漢文電子佛典集成</title>
+	<creator>CBETA</creator>
+	<language>漢語</language>
+	<identifier id="BookId">CBETA</identifier>
+	<subject>佛教典籍</subject>
+	<publisher>CBETA</publisher>
+	<date>2025-04-26</date>
+	<cover src="cover.png"/>
+	<catalog src="catalog.txt"/>
+	<nav src="menu_nav.xhtml"/>
+	<spine src="spine.txt"/>
+	<bookdata src="bookdata.txt"/>
+	<javascript src="cbreader.js"/>
+	<version>0.9.5.0</version>
+</metadata>

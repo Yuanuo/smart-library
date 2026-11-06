@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html>
+	<head>
+		<meta charset="UTF-8" />
+		<title>本經目次</title>
+	</head>
+<body>
+<nav type="catalog">
+<h1>目錄</h1>
+<ol>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0703a02">No. 714-A 新刻排科夾註戒本疏記序</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0703c11">No. 714-B</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0704a02">No. 714-C</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0704b02">No. 714-D</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0704b20">凡例</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0704c13">目錄</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0705b19">條目</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0709b02">No. 714-E 四分律比丘含注戒本序</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0710a03">四分律含注戒本疏行宗記（一上之一～三上之一）</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_003.xml#p0001a02">四分律含注戒本疏行宗記（三上之二～四下之三）</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_004.xml#p0174c13">後敘</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_004.xml#p0175b02">No. 714-F 分會含注戒本疏記䟦</cblink></li>
+</ol>
+</nav>
+<nav type="juan">
+<h1>卷</h1>
+<ol>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0710a05">一上之一</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0730a16">一上之二</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0752b10">一下之一</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_001.xml#p0769b21">一下之二</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_002.xml#p0788c01">二上之一</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_002.xml#p0811a10">二上之二</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_002.xml#p0824c19">二上之三</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_002.xml#p0834c11">二下之一</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_002.xml#p0854b08">二下之二</cblink></li>
+	<li><cblink href="XML/X/X39/X39n0714_003.xml#p0876c06">三上之一</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_003.xml#p0001a04">三上之二</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_003.xml#p0017a10">三上之三</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_003.xml#p0024b21">三下之一</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_003.xml#p0034a20">三下之二</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_003.xml#p0053a01">三下之三</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_004.xml#p0074b13">四上之一</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_004.xml#p0091c11">四上之二</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_004.xml#p0106c08">四上之三</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_004.xml#p0122b16">四下之一</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_004.xml#p0143a18">四下之二</cblink></li>
+	<li><cblink href="XML/X/X40/X40n0714_004.xml#p0162a15">四下之三</cblink></li>
+</ol>
+</nav>
+</body></html>

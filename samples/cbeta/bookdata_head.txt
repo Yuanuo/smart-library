@@ -1,0 +1,5 @@
+T,2,【大】,大正新脩大藏經,Taishō Tripiṭaka
+X,2,【卍續】,卍新纂大日本續藏經,Manji Shinsan Dainihon Zokuzōkyō
+A,3,【金藏】,趙城金藏,Jin Edition of the Canon
+K,2,【麗】,高麗大藏經（新文豐版）,Tripiṭaka Koreana (Shinwenfeng Edition)
+S,2,【宋遺】,宋藏遺珍（新文豐版）,Songzang yizhen (Xinwenfeng Edition)

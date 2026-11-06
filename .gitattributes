@@ -1,0 +1,6 @@
+# keep LF in the repo and in the working copy
+* text=auto eol=lf
+
+# samples are real data / golden outputs: compare byte for byte, never convert
+samples/** -text
+*.png binary
