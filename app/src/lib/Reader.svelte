@@ -89,10 +89,10 @@
     <header>
       <div class="title">
         <h1>{vol.title} <span class="juan">{vol.label}</span></h1>
-        <div class="meta muted">{vol.book_id} · {vol.author} · {vol.path}</div>
+        <div class="meta muted">{[vol.book_id, vol.author, vol.path].filter(Boolean).join(" · ")}</div>
       </div>
       <div class="nav">
-        <select aria-label="卷" value={vol.path} onchange={(e) => onvolume(e.target.value)}>
+        <select aria-label={vol.kind === "html" ? "同一目录的文章" : "卷"} class="vols" value={vol.path} onchange={(e) => onvolume(e.target.value)}>
           {#each vol.volumes as v}
             <option value={v.path} disabled={!v.exists}>{v.label}{v.exists ? "" : "（缺）"}</option>
           {/each}
@@ -142,6 +142,7 @@
   .juan { font-size: 16px; color: var(--accent); margin-left: 6px; }
   .meta { font-size: 13px; margin-top: 4px; }
   .nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+  .vols { max-width: 16em; }
   .seg { display: inline-flex; }
   .seg button { border-radius: 0; padding: 4px 10px; }
   .seg button:first-child { border-radius: 6px 0 0 6px; }

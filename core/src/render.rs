@@ -225,6 +225,12 @@ impl HtmlOut {
         }
     }
 
+    /// An image given by its path inside the bookcase (articles under `a/`).
+    pub fn img(&mut self, path: &str) {
+        let src = format!("{}{}", self.asset_prefix, path);
+        self.open("img", &[("class", "figure"), ("src", &src), ("loading", "lazy"), ("alt", "")]);
+    }
+
     /// A collation note shown as a numbered marker with a hidden bubble.
     pub fn note(&mut self, label: &str, text: &str) {
         self.notes += 1;

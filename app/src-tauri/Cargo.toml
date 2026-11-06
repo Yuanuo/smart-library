@@ -12,3 +12,4 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smart-library-core = { path = "../../core" }
+tauri-plugin-dialog = "2"

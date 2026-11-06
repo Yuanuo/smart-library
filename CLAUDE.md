@@ -22,11 +22,12 @@
 - M1 界面骨架已完成（`app/`，Tauri 2 + Svelte 5）：目录树、按行阅读、目次跳转、搜索、分面、命中跳行高亮、界面内建索引，都已在真实数据上点过。
 - 结构化阅读已完成（`core/src/render.rs`，与抽取共用遍历，全部卷计数一致）。
 - 多标签阅读已完成（`app/src/lib/workspace.svelte.js`，dockview-core）：一卷一个标签、分栏、窗口内浮动、弹出独立窗口、进度与布局保存还原（`workspace.json`）。
-- 下一步：知识库绑定（右键绑定 bookcase，CBETA 三棵树只能选一棵、默认 bulei，自加树可多选），设计见规范 9a 节；它依赖 `a/` 下 HTML 文章接入为内容节点。
+- 知识库绑定已完成（规范 9a）：注册表 `libraries.json`、右键绑定、CBETA 三棵树单选（默认 bulei）、自加树多选且各自建索引、跨库搜索按库分组；`a/` 下 HTML 文章已接入（`core/src/article.rs`，以段落代替行）。
+- 下一步：待用户确定（候选：标题快搜 M2、简体显示、本地目录或笔记仓库、异体字表）。
 
 ## 下一步
 
-1. 知识库绑定（规范 9a）。界面层只做参数转换（规范第 3 节），业务逻辑放在 core。
+1. 和用户确认下一步。界面层只做参数转换（规范第 3 节），业务逻辑放在 core；适配器只产生 `IndexDoc`，不碰 Tantivy。
 2. 前端改动后若 Vite 的热更新没生效（曾出现「函数未定义」），`touch` 该文件再按 F5；改了 `workspace.svelte.js` 最好整页刷新。
 
 改动抽取规则时：先改 `tools/ref_extract.py` 和 `core/src/volume.rs` 两边，再跑下面的「抽取回归」两条命令，必须全部一致；锚点一致率不能下降。
@@ -76,7 +77,9 @@ target\release\smart-library.exe info C:\Devx\smartLib.d\bookcase.zip   # 编译
 cargo run -p smart-library-cli --release -- text  <bookcase.zip> T0262 1          # 一卷，按原书行输出
 cargo run -p smart-library-cli --release -- volumes <bookcase.zip>                # 全部卷：失败数、耗时、段落锚点校验
 cargo run -p smart-library-cli --release -- volumes <bookcase.zip> XML/ --render  # 全部卷渲染：计数与抽取一致、图片都存在
+cargo run -p smart-library-cli --release -- libraries <bookcase.zip>              # 每棵目录树属于 CBETA 还是哪个 HTML 知识库
 cargo run -p smart-library-cli --release -- index  <bookcase.zip>                 # 建索引到 app_data/repos/cbeta/index（先删旧目录）
+cargo run -p smart-library-cli --release -- index  <bookcase.zip> --tree longzang --index <目录>   # HTML 知识库的索引
 cargo run -p smart-library-cli --release -- search <bookcase.zip> 他念摄之令常在像
 cargo run -p smart-library-cli --release -- search <bookcase.zip> 如是我聞 --phrase --scope bulei/阿含部類 --facet bulei/阿含部類 --page 2
 python tools/ref_extract.py samples/cbeta/T01n0004_001.xml     # 需要 lxml（pip install --user lxml；不要加 python -I）

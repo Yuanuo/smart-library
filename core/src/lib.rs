@@ -6,9 +6,11 @@
 //! * M0c: `aio` analyzer, Tantivy index and search, hit location (`analyzer`, `search`)
 
 pub mod analyzer;
+pub mod article;
 pub mod bookcase;
 pub mod bookinfo;
 pub mod catalog;
+pub mod library;
 pub mod markup;
 pub mod nav;
 pub mod render;

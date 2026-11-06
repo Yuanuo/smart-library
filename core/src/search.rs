@@ -17,7 +17,7 @@
 
 use crate::analyzer::{self, TermKind};
 use crate::bookcase::Bookcase;
-use crate::bookinfo::bookinfo;
+use crate::library::{cbeta_docs, HtmlTree, IndexDoc};
 use crate::volume::VolumeText;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -168,97 +168,39 @@ pub struct BuildStats {
 }
 
 impl SearchIndex {
-    /// Build a new index for the whole bookcase into `dir` (which must be
-    /// empty or absent). `progress(done, total)` is called now and then.
+    /// Build a new index for the CBETA data of a bookcase into `dir` (which
+    /// must be empty or absent). `progress(done, total)` is called now and then.
     pub fn build(
         bc: &Bookcase,
         dir: &Path,
-        mut progress: impl FnMut(usize, usize),
+        progress: impl FnMut(usize, usize),
     ) -> Result<BuildStats, String> {
-        let start = std::time::Instant::now();
-        if dir.exists() && std::fs::read_dir(dir).map(|mut d| d.next().is_some()).unwrap_or(false) {
-            return Err(format!("{} is not empty; delete it to rebuild the index", dir.display()));
-        }
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
-        let (schema, f) = schema();
-        let index = Index::create_in_dir(dir, schema).map_err(|e| e.to_string())?;
-        register_tokenizers(&index);
-        let mut writer = index.writer::<TantivyDocument>(1_000_000_000).map_err(|e| e.to_string())?;
-
-        // every existing volume of every registered book (LC, Y are not registered)
-        let mut jobs = Vec::new();
-        for id in &bc.catalog.order {
-            for v in bc.volumes(id) {
-                if v.exists {
-                    jobs.push((id.clone(), v));
-                }
-            }
-        }
-        let total = jobs.len();
-        let mut stats = BuildStats::default();
-        let info = bookinfo();
-        for (n, (book_id, vol)) in jobs.iter().enumerate() {
-            if n % 500 == 0 {
-                progress(n, total);
-            }
-            let vt = match bc.volume_text(&vol.path) {
-                Ok(v) => v,
-                Err(e) => {
-                    stats.skipped.push(e);
-                    continue;
-                }
-            };
-            let book = match bc.book(book_id) {
-                Some(b) => b,
-                None => continue,
-            };
-            let mut doc = TantivyDocument::default();
-            doc.add_text(f.path, &vol.path);
-            doc.add_text(f.book, book_id);
-            doc.add_u64(f.juan, vol.idx as u64);
-            doc.add_text(f.title, &book.title);
-            // index the punctuated text: punctuation is transparent to `aio`,
-            // and whitespace still separates Latin words
-            doc.add_text(f.body, &vt.text);
-            doc.add_text(f.body1, &vt.text);
-            doc.add_facet(f.facet, Facet::from_path(["canon", book.canon.as_str()]));
-            doc.add_facet(f.facet, Facet::from_path(["book", book_id.as_str()]));
-            let mut bulei = vec!["bulei"];
-            bulei.extend(book.catalog.split('/').filter(|s| !s.is_empty()));
-            if bulei.len() > 1 {
-                doc.add_facet(f.facet, Facet::from_path(bulei));
-            }
-            if let Some(bi) = info.get(book_id) {
-                if !bi.kind_label.is_empty() {
-                    let mut kind = vec!["kind"];
-                    kind.extend(bi.kind_label.split('：'));
-                    doc.add_facet(f.facet, Facet::from_path(kind));
-                }
-                for p in &bi.periods {
-                    doc.add_facet(f.facet, Facet::from_path(["period", p.as_str()]));
-                }
-                for a in &bi.authors {
-                    doc.add_facet(f.facet, Facet::from_path(["person", a.as_str()]));
-                }
-            }
-            writer.add_document(doc).map_err(|e| e.to_string())?;
-            stats.volumes += 1;
-        }
-        progress(total, total);
-        writer.commit().map_err(|e| e.to_string())?;
-        writer.wait_merging_threads().map_err(|e| e.to_string())?;
-
+        let (total, docs) = cbeta_docs(bc);
         let meta = serde_json::json!({
-            "index_version": INDEX_VERSION,
+            "kind": "cbeta",
             "data_version": bc.data_version(),
             "bookcase_version": bc.version,
             "bookcase_date": bc.date,
-            "volumes": stats.volumes,
         });
-        std::fs::write(dir.join(META_FILE), serde_json::to_string_pretty(&meta).unwrap())
-            .map_err(|e| e.to_string())?;
-        stats.seconds = start.elapsed().as_secs_f64();
-        Ok(stats)
+        build_index(dir, meta, total, docs, progress)
+    }
+
+    /// Build the index of an HTML library (a user-made tree of a bookcase).
+    pub fn build_html(
+        bc: &Bookcase,
+        lib: &HtmlTree,
+        dir: &Path,
+        progress: impl FnMut(usize, usize),
+    ) -> Result<BuildStats, String> {
+        let (total, docs) = lib.docs(bc);
+        let meta = serde_json::json!({
+            "kind": "html",
+            "tree": lib.tree_id,
+            "data_version": bc.data_version(),
+            "bookcase_version": bc.version,
+            "bookcase_date": bc.date,
+        });
+        build_index(dir, meta, total, docs, progress)
     }
 
     pub fn open(dir: &Path) -> Result<SearchIndex, String> {
@@ -289,6 +231,12 @@ impl SearchIndex {
         let meta = std::fs::read_to_string(dir.join(META_FILE)).ok()?;
         let meta: serde_json::Value = serde_json::from_str(&meta).ok()?;
         meta["data_version"].as_str().map(|s| s.to_string())
+    }
+
+    /// Only the number of hit documents (to show counts per library).
+    pub fn count(&self, req: &SearchRequest) -> Result<usize, String> {
+        let query = build_query(&self.f, &req.query, req.mode)?;
+        self.reader.searcher().search(&query, &Count).map_err(|e| e.to_string())
     }
 
     pub fn search(&self, req: &SearchRequest) -> Result<SearchResult, String> {
@@ -373,6 +321,65 @@ impl SearchIndex {
             facets,
         })
     }
+}
+
+/// Write documents into a new index in `dir` (which must be empty or
+/// absent). `meta` is stored next to the index with `index_version` and the
+/// number of documents. Documents that come out as `Err` are skipped
+/// (design-spec A.4: entries without real content are ignored).
+pub fn build_index(
+    dir: &Path,
+    mut meta: serde_json::Value,
+    total: usize,
+    docs: impl Iterator<Item = Result<IndexDoc, String>>,
+    mut progress: impl FnMut(usize, usize),
+) -> Result<BuildStats, String> {
+    let start = std::time::Instant::now();
+    if dir.exists() && std::fs::read_dir(dir).map(|mut d| d.next().is_some()).unwrap_or(false) {
+        return Err(format!("{} is not empty; delete it to rebuild the index", dir.display()));
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
+    let (schema, f) = schema();
+    let index = Index::create_in_dir(dir, schema).map_err(|e| e.to_string())?;
+    register_tokenizers(&index);
+    let mut writer = index.writer::<TantivyDocument>(1_000_000_000).map_err(|e| e.to_string())?;
+    let mut stats = BuildStats::default();
+    for (n, d) in docs.enumerate() {
+        if n % 500 == 0 {
+            progress(n, total);
+        }
+        let d = match d {
+            Ok(d) => d,
+            Err(e) => {
+                stats.skipped.push(e);
+                continue;
+            }
+        };
+        let mut doc = TantivyDocument::default();
+        doc.add_text(f.path, &d.path);
+        doc.add_text(f.book, &d.book);
+        doc.add_u64(f.juan, d.juan as u64);
+        doc.add_text(f.title, &d.title);
+        // index the punctuated text: punctuation is transparent to `aio`,
+        // and whitespace still separates Latin words
+        doc.add_text(f.body, &d.text);
+        doc.add_text(f.body1, &d.text);
+        for facet in &d.facets {
+            if facet.len() > 1 && facet.iter().all(|c| !c.is_empty()) {
+                doc.add_facet(f.facet, Facet::from_path(facet.iter().map(|s| s.as_str())));
+            }
+        }
+        writer.add_document(doc).map_err(|e| e.to_string())?;
+        stats.volumes += 1;
+    }
+    progress(total, total);
+    writer.commit().map_err(|e| e.to_string())?;
+    writer.wait_merging_threads().map_err(|e| e.to_string())?;
+    meta["index_version"] = serde_json::json!(INDEX_VERSION);
+    meta["documents"] = serde_json::json!(stats.volumes);
+    std::fs::write(dir.join(META_FILE), serde_json::to_string_pretty(&meta).unwrap()).map_err(|e| e.to_string())?;
+    stats.seconds = start.elapsed().as_secs_f64();
+    Ok(stats)
 }
 
 // ------------------------------------------------------------ queries

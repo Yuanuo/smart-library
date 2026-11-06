@@ -2,38 +2,40 @@
 // inside the window, or popped out into their own system window.
 //
 // Rules (design-spec 9a):
-//  * one tab per volume: the tab id is the volume path; opening a volume that
-//    is already open (in a tab or a pop-out window) focuses it and jumps;
-//  * reading progress (top line `lb` and view mode) is kept per volume, also
-//    after the tab is closed, and restored when the volume is opened again;
+//  * one tab per document: the tab id is `<library>|<path>` (a CBETA volume
+//    or an HTML article); opening a document that is already open (in a tab
+//    or a pop-out window) focuses it and jumps;
+//  * reading progress (top line `lb` and view mode) is kept per document,
+//    also after the tab is closed, and restored when it is opened again;
 //  * the layout, the open tabs and the pop-out windows are saved to
 //    `workspace.json` in the app data directory and restored at start-up.
 // The main window owns that file; pop-out windows report to it with events.
 
 import { createDockview } from "dockview-core";
 import { mount, unmount } from "svelte";
-import { emit, emitTo, listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api.js";
 import ReaderPanel from "./ReaderPanel.svelte";
 import Results from "./Results.svelte";
 
-const WORKSPACE_VERSION = 1;
+// 2: tabs are `<library>|<path>` (version 1 had CBETA paths only)
+const WORKSPACE_VERSION = 2;
 const MAX_PROGRESS = 500;
 
 let dv = null; // DockviewApi
 let hostEl = null; // the element holding the dockview
 let hooks = {};
-let progress = {}; // path -> { lb, mode, t }
-let popouts = {}; // path -> { label, bookId, title }
+let progress = {}; // tab -> { lb, mode, t }
+let popouts = {}; // tab -> { label, lib, bookId, path, title }
 let restoring = false;
 let saveTimer = null;
 let defaultMode = "para";
 
 export const ws = $state({ empty: true });
 
-function labelFor(path) {
-  return "reader-" + path.replace(/[^A-Za-z0-9]/g, "_");
+function labelFor(tab) {
+  return "reader-" + tab.replace(/[^A-Za-z0-9]/g, "_");
 }
 
 // ------------------------------------------------------------ persistence
@@ -56,8 +58,8 @@ async function save() {
   }
 }
 
-function recordProgress(path, lb, mode) {
-  progress[path] = { lb, mode, t: Date.now() };
+function recordProgress(tab, lb, mode) {
+  progress[tab] = { lb, mode, t: Date.now() };
   if (mode) defaultMode = mode;
   scheduleSave();
 }
@@ -75,11 +77,13 @@ function readerRenderer() {
     init(params) {
       panelApi = params.api;
       const prm = params.params || {};
-      const saved = progress[prm.path];
-      // after a restart (or reopening a closed volume) go back to where the
-      // reader was, quietly; an explicit target (search hit) wins
+      const tab = `${prm.lib}|${prm.path}`;
+      const saved = progress[tab];
+      // after a restart (or reopening a closed document) go back to where
+      // the reader was, quietly; an explicit target (search hit) wins
       const state = $state({
-        bookId: prm.bookId,
+        lib: prm.lib,
+        bookId: prm.bookId ?? null,
         path: prm.path,
         query: prm.query || null,
         phrase: !!prm.phrase,
@@ -94,7 +98,7 @@ function readerRenderer() {
         props: {
           p,
           onopen: (req) => openVolume(req),
-          onprogress: (lb, mode) => recordProgress(p.path, lb, mode),
+          onprogress: (lb, mode) => recordProgress(tab, lb, mode),
           ontitle: (t) => panelApi?.setTitle(t),
         },
       });
@@ -135,12 +139,12 @@ function watermark() {
   const element = document.createElement("div");
   element.className = "dock-watermark";
   element.innerHTML =
-    "<p>从左侧目录打开一部经，或在上方搜索。</p>" +
-    "<p class='muted'>标签可拖到边缘分栏停靠；右键标签可浮动或在新窗口打开。</p>";
+    "<p>从左侧目录打开一部经或一篇文章，或在上方搜索。</p>" +
+    "<p class='muted'>标签可拖到边缘分栏停靠；右键标签可分栏、浮动或在新窗口打开。</p>";
   return { element, init() {} };
 }
 
-function tabMenu({ panel, group, api: dapi }) {
+function tabMenu({ panel, group }) {
   const isReader = panel.id !== "search";
   const where = group.api.location.type;
   const items = [
@@ -192,41 +196,41 @@ function popoutUrl(info) {
   return "/?popout=" + encodeURIComponent(JSON.stringify(info));
 }
 
-async function createPopout(path, bookId, title) {
-  const label = labelFor(path);
+async function createPopout({ tab, lib, bookId, path, title }) {
+  const label = labelFor(tab);
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
     await existing.setFocus();
     return;
   }
-  const saved = progress[path] || {};
+  const saved = progress[tab] || {};
   new WebviewWindow(label, {
-    url: popoutUrl({ bookId, path, lb: saved.lb || null, mode: saved.mode || defaultMode, title }),
+    url: popoutUrl({ tab, lib, bookId, path, lb: saved.lb || null, mode: saved.mode || defaultMode, title }),
     title: `${title} — Smart Library`,
     width: 960,
     height: 860,
   });
-  popouts[path] = { label, bookId, title };
+  popouts[tab] = { label, lib, bookId, path, title };
   scheduleSave();
 }
 
 async function popOut(panel) {
   const prm = panel.params || {};
-  const path = prm.path;
-  const title = panel.title || path;
+  const title = panel.title || prm.path;
   panel.api.close();
-  await createPopout(path, prm.bookId, title);
+  await createPopout({ tab: panel.id, lib: prm.lib, bookId: prm.bookId, path: prm.path, title });
 }
 
 function listenToPopouts() {
-  listen("popout-progress", (e) => recordProgress(e.payload.path, e.payload.lb, e.payload.mode));
+  listen("popout-progress", (e) => recordProgress(e.payload.tab, e.payload.lb, e.payload.mode));
   listen("popout-closed", (e) => {
-    delete popouts[e.payload.path];
+    delete popouts[e.payload.tab];
     scheduleSave();
   });
   listen("popout-dock", (e) => {
-    delete popouts[e.payload.path];
-    openVolume({ bookId: e.payload.bookId, path: e.payload.path, lb: e.payload.lb });
+    const q = e.payload;
+    delete popouts[q.tab];
+    openVolume({ lib: q.lib, bookId: q.bookId, path: q.path, lb: q.lb });
   });
   listen("popout-open", (e) => openVolume(e.payload));
 }
@@ -250,9 +254,15 @@ export async function init(element, h) {
   listenToPopouts();
 
   const saved = await api.loadWorkspace().catch(() => null);
-  if (saved && saved.version === WORKSPACE_VERSION) {
+  if (saved && saved.version === 1) {
+    // CBETA paths of version 1 belong to the library `cbeta` (migrated
+    // registry); the layout is rebuilt by the user
+    progress = Object.fromEntries(Object.entries(saved.progress || {}).map(([k, v]) => [`cbeta|${k}`, v]));
+    defaultMode = saved.defaultMode || "para";
+  } else if (saved && saved.version === WORKSPACE_VERSION) {
     progress = saved.progress || {};
     defaultMode = saved.defaultMode || "para";
+    const known = new Set((h.libraries || []).map((l) => l.id));
     restoring = true;
     try {
       if (saved.layout) dv.fromJSON(saved.layout);
@@ -260,45 +270,64 @@ export async function init(element, h) {
       console.warn("restore layout", e);
       dv.clear();
     }
-    // search results are not saved
+    // search results are not saved; tabs of unbound libraries are dropped
     dv.getPanel("search")?.api.close();
+    for (const panel of [...dv.panels]) {
+      const lib = panel.params?.lib;
+      if (lib && !known.has(lib)) panel.api.close();
+    }
     restoring = false;
-    for (const [path, w] of Object.entries(saved.popouts || {})) {
-      await createPopout(path, w.bookId, w.title);
+    for (const [tab, w] of Object.entries(saved.popouts || {})) {
+      if (known.has(w.lib)) await createPopout({ tab, ...w });
     }
   }
   refreshEmpty();
 }
 
 /**
- * Open a volume: focus its tab (or pop-out window) if it is open, else open a
- * new tab in the active group. `lb` jumps to a line; `query`/`phrase`
- * highlight the hits.
+ * Open a document: focus its tab (or pop-out window) if it is open, else
+ * open a new tab in the active group. CBETA: `bookId` (+ `path` of a
+ * volume); HTML libraries: `path` of the article. `lb` jumps to a line or
+ * paragraph; `query`/`phrase` highlight the hits.
  */
-export async function openVolume({ bookId, path = null, lb = null, query = null, phrase = false }) {
-  const id = await api.resolveVolume(bookId, path);
-  if (popouts[id.path]) {
-    const w = await WebviewWindow.getByLabel(popouts[id.path].label);
+export async function openVolume({ lib, bookId = null, path = null, lb = null, query = null, phrase = false }) {
+  const id = await api.resolveNode(lib, bookId, path);
+  if (popouts[id.tab]) {
+    const w = await WebviewWindow.getByLabel(popouts[id.tab].label);
     if (w) {
       await w.unminimize().catch(() => {});
       await w.setFocus();
-      await emitTo(popouts[id.path].label, "popout-jump", { lb, query, phrase });
+      await emitTo(popouts[id.tab].label, "popout-jump", { lb, query, phrase });
       return;
     }
-    delete popouts[id.path];
+    delete popouts[id.tab];
   }
-  const panel = dv.getPanel(id.path);
+  const panel = dv.getPanel(id.tab);
   if (panel) {
     panel.api.setActive();
     panel.api.updateParameters({ target: lb, query, phrase });
     return;
   }
   dv.addPanel({
-    id: id.path,
+    id: id.tab,
     component: "reader",
     title: id.title,
-    params: { bookId: id.book_id, path: id.path, target: lb, query, phrase },
+    params: { lib: id.lib, bookId: id.book_id, path: id.path, target: lb, query, phrase },
   });
+}
+
+/** Close every tab and pop-out window of a library (after unbinding it). */
+export async function closeLibrary(lib) {
+  for (const panel of [...(dv?.panels || [])]) {
+    if (panel.params?.lib === lib) panel.api.close();
+  }
+  for (const [tab, w] of Object.entries(popouts)) {
+    if (w.lib === lib) {
+      (await WebviewWindow.getByLabel(w.label))?.close();
+      delete popouts[tab];
+    }
+  }
+  scheduleSave();
 }
 
 /** Show (or focus) the search results tab. */

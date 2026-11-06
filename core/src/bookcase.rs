@@ -12,6 +12,7 @@ use crate::source::Source;
 use crate::text::decode_auto;
 use crate::toc::{parse_toc, parse_volume_path, Toc};
 use crate::volume::{extract_volume, VolumeText};
+use crate::article::{read_article, Article};
 use crate::render::{render_volume, RenderOptions, RenderedVolume};
 use std::collections::BTreeMap;
 
@@ -218,12 +219,25 @@ impl Bookcase {
         render_volume(&decode_auto(&bytes), opts).map_err(|e| format!("{}: {}", path, e))
     }
 
-    /// A file of the bookcase that the reader may show (only `figures/…`).
+    /// A file of the bookcase that the reader may show: `figures/…` of the
+    /// volumes, and images next to the HTML articles under `a/`.
     pub fn asset(&self, path: &str) -> Option<Vec<u8>> {
-        if !path.starts_with("figures/") || path.contains("..") {
+        if path.contains("..") {
             return None;
         }
-        self.source.read(path)
+        let lower = path.to_ascii_lowercase();
+        let image = [".gif", ".png", ".jpg", ".jpeg", ".svg", ".webp"].iter().any(|e| lower.ends_with(e));
+        if path.starts_with("figures/") || (path.starts_with("a/") && image) {
+            self.source.read(path)
+        } else {
+            None
+        }
+    }
+
+    /// An HTML article under `a/` (user-made trees), optionally rendered.
+    pub fn article(&self, path: &str, render: Option<&RenderOptions>) -> Result<Article, String> {
+        let bytes = self.source.read(path).ok_or_else(|| format!("{}: not in the bookcase", path))?;
+        Ok(read_article(&decode_auto(&bytes), path, render))
     }
 
     /// All volumes (juan) of a book, ordered by juan number.

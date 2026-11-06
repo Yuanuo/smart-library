@@ -1,7 +1,9 @@
 <script>
   // Search results: facets on the left, hits with snippets on the right.
   // A snippet opens the volume at its line.
-  let { result, scope, drill, onfacet, ondrill, onclearscope, onhit, onpage } = $props();
+  // Results are grouped by library (design-spec 8.2): the chips show the
+  // hit count of every library; facets and hits are those of one library.
+  let { result, scope, drill, onfacet, ondrill, onclearscope, onhit, onpage, onlib } = $props();
 </script>
 
 <div class="results">
@@ -34,6 +36,15 @@
   </aside>
 
   <div class="hits">
+    {#if result.libraries.length > 1}
+      <div class="libs" role="tablist" aria-label="知识库">
+        {#each result.libraries as l}
+          <button role="tab" class:on={l.id === result.lib} aria-selected={l.id === result.lib} onclick={() => onlib(l.id)}>
+            {l.title} <span class="n">{l.count}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
     <div class="summary muted">
       共 {result.total_volumes} 卷，{result.total_books} 部经 · {result.millis.toFixed(0)} ms
       {#if result.pages > 1}· 第 {result.page} / {result.pages} 页{/if}
@@ -41,8 +52,8 @@
     {#each result.hits as h}
       <article>
         <h2>
-          <button class="link" onclick={() => onhit(h, null)}>{h.title} 卷{h.juan}</button>
-          <span class="muted id">{h.book_id} · {h.occurrences} 处</span>
+          <button class="link" onclick={() => onhit(h, null)}>{h.title} {h.book_id ? h.subtitle : ""}</button>
+          <span class="muted id">{[h.book_id, h.book_id ? "" : h.subtitle].filter(Boolean).join(" · ")} · {h.occurrences} 处</span>
         </h2>
         {#each h.snippets as s}
           <button class="snippet" onclick={() => onhit(h, s.lb)}>
@@ -80,6 +91,10 @@
   .sub { color: var(--accent) !important; }
   .hits { flex: 1; overflow: auto; padding: 12px 24px 40px; background: var(--paper); }
   .summary { font-size: 13px; margin-bottom: 8px; }
+  .libs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .libs button { border-radius: 14px; font-size: 13px; padding: 2px 12px; }
+  .libs button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+  .libs .n { opacity: 0.75; margin-left: 4px; }
   article { border-bottom: 1px solid var(--line); padding: 10px 0 12px; }
   h2 { font-size: 18px; margin: 0 0 6px; font-weight: 600; display: flex; gap: 10px; align-items: baseline; }
   .id { font-size: 13px; font-weight: normal; }

@@ -20,7 +20,8 @@ fn usage() {
   smart-library text  <bookcase.zip|dir> <book id> [juan] [--punct]
   smart-library text  <bookcase.zip|dir> <volume path, e.g. XML/T/T01/T01n0004_001.xml> [--punct]
   smart-library volumes <bookcase.zip|dir> [path prefix, e.g. XML/T/] [--out DIR] [--every N] [--keep-mulu] [--render]
-  smart-library index <bookcase.zip|dir> [--index DIR]
+  smart-library libraries <bookcase.zip|dir>
+  smart-library index <bookcase.zip|dir> [--index DIR] [--tree <id of an HTML tree, e.g. longzang>]
   smart-library search <bookcase.zip|dir> <query> [--phrase] [--scope bulei/阿含部類] [--page N] [--limit N]
                        [--facet bulei/阿含部類] [--index DIR]
 
@@ -85,9 +86,10 @@ fn main() {
                 std::process::exit(2);
             }
         },
+        "libraries" => cmd_libraries(&bc),
         "index" => {
             let dir = flag_value(&args, "--index").unwrap_or(DEFAULT_INDEX);
-            cmd_index(&bc, Path::new(dir));
+            cmd_index(&bc, Path::new(dir), flag_value(&args, "--tree"));
         }
         "search" => match args.get(3).filter(|a| !a.starts_with("--")) {
             Some(q) => {
@@ -131,11 +133,28 @@ fn flag_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     args.iter().position(|a| a == name).and_then(|p| args.get(p + 1)).map(|s| s.as_str())
 }
 
-fn cmd_index(bc: &Bookcase, dir: &Path) {
+fn cmd_libraries(bc: &Bookcase) {
+    use smart_library_core::library::{classify_trees, TreeGroup};
+    for t in classify_trees(bc) {
+        let group = match &t.group {
+            TreeGroup::Cbeta => "CBETA data (bind one of these)".to_string(),
+            TreeGroup::Html(code) => format!("HTML library a/{}/ (own index)", code),
+            TreeGroup::Other => "nothing readable".to_string(),
+        };
+        println!("{:<9} {:<16} {:>6} links  {}", t.id, t.title, t.leaves, group);
+    }
+}
+
+fn cmd_index(bc: &Bookcase, dir: &Path, tree: Option<&str>) {
     println!("building index for {} ({}) in {}", bc.data_version(), bc.version, dir.display());
-    let res = SearchIndex::build(bc, dir, |done, total| {
-        eprint!("\r  {}/{} volumes", done, total);
-    });
+    let show = |done: usize, total: usize| eprint!("\r  {}/{} documents", done, total);
+    let res = match tree {
+        None => SearchIndex::build(bc, dir, show),
+        Some(t) => match smart_library_core::library::HtmlTree::open(bc, t) {
+            Ok(lib) => SearchIndex::build_html(bc, &lib, dir, show),
+            Err(e) => Err(e),
+        },
+    };
     eprintln!();
     match res {
         Ok(st) => {
@@ -204,7 +223,12 @@ fn cmd_search(bc: &Bookcase, dir: &Path, req: &SearchRequest) {
     for (i, h) in r.hits.iter().enumerate() {
         println!();
         println!("{:>3}. {} {} 卷{}  [{}]  score {:.2}", req.offset + i + 1, h.book, h.title, h.juan, h.path, h.score);
-        match bc.volume_text(&h.path) {
+        let text = if h.path.starts_with("a/") {
+            bc.article(&h.path, None).map(|a| a.text)
+        } else {
+            bc.volume_text(&h.path)
+        };
+        match text {
             Ok(vt) => {
                 let occ = locate(&vt, &req.query, req.mode);
                 for sn in snippets(&vt, &occ, 12, 3) {

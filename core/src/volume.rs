@@ -752,6 +752,19 @@ fn run(xml: &str, skip_mulu: bool, html: Option<HtmlOut>) -> Result<(VolumeText,
     };
     ex.children(body);
 
+    let vt = assemble(canon.clone(), &ex.pieces, &ex.lbs, &ex.anchors);
+    Ok((vt, ex.html))
+}
+
+/// Build a `VolumeText` from the pieces of a walk: (text, index of the
+/// current line in `lbs`), and anchors (id, index into `pieces`). Shared by
+/// the volume XML reader and the HTML article reader (`article.rs`).
+pub(crate) fn assemble(
+    canon: String,
+    pieces: &[(String, Option<usize>)],
+    lbs: &[String],
+    piece_anchors: &[(String, usize)],
+) -> VolumeText {
     let mut text = String::new();
     let mut plain = String::new();
     let mut plain_len = 0usize;
@@ -761,13 +774,13 @@ fn run(xml: &str, skip_mulu: bool, html: Option<HtmlOut>) -> Result<(VolumeText,
     let mut next_anchor = 0;
     let mut plain_to_text: Vec<u32> = Vec::new();
     let mut text_len = 0u32;
-    for (pi, (s, lb)) in ex.pieces.iter().enumerate() {
-        while next_anchor < ex.anchors.len() && ex.anchors[next_anchor].1 <= pi {
-            anchors.push((ex.anchors[next_anchor].0.clone(), plain_len));
+    for (pi, (s, lb)) in pieces.iter().enumerate() {
+        while next_anchor < piece_anchors.len() && piece_anchors[next_anchor].1 <= pi {
+            anchors.push((piece_anchors[next_anchor].0.clone(), plain_len));
             next_anchor += 1;
         }
         text.push_str(s);
-        let lb_str = lb.map(|i| ex.lbs[i].as_str());
+        let lb_str = lb.map(|i| lbs[i].as_str());
         for c in s.chars() {
             text_len += 1;
             if is_dropped(c) {
@@ -785,20 +798,17 @@ fn run(xml: &str, skip_mulu: bool, html: Option<HtmlOut>) -> Result<(VolumeText,
             plain_len += 1;
         }
     }
-    for (id, _) in &ex.anchors[next_anchor..] {
+    for (id, _) in &piece_anchors[next_anchor..] {
         anchors.push((id.clone(), plain_len));
     }
-    Ok((
-        VolumeText {
-            canon: canon.clone(),
-            text,
-            plain,
-            lines,
-            anchors,
-            plain_to_text,
-        },
-        ex.html,
-    ))
+    VolumeText {
+        canon,
+        text,
+        plain,
+        lines,
+        anchors,
+        plain_to_text,
+    }
 }
 
 #[cfg(test)]

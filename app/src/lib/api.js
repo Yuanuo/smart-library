@@ -3,14 +3,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export const status = () => invoke("status");
-export const openBookcase = (path) => invoke("open_bookcase", { path });
-export const tree = (id) => invoke("tree", { id });
-export const openVolume = (bookId, path = null, query = null, phrase = false) =>
-  invoke("open_volume", { bookId, path, query, phrase });
+export const inspectSource = (path) => invoke("inspect_source", { path });
+export const bindLibraries = (path, cbetaTree, htmlTrees) =>
+  invoke("bind_libraries", { path, cbetaTree, htmlTrees });
+export const unbindLibrary = (id) => invoke("unbind_library", { id });
+export const tree = (lib) => invoke("tree", { lib });
+export const openNode = (lib, bookId, path, query = null, phrase = false) =>
+  invoke("open_node", { lib, bookId, path, query, phrase });
+export const resolveNode = (lib, bookId = null, path = null) => invoke("resolve_node", { lib, bookId, path });
 export const search = (args) => invoke("search", args);
-export const buildIndex = () => invoke("build_index");
+export const buildIndex = (lib) => invoke("build_index", { lib });
 export const onIndexProgress = (fn) => listen("index-progress", (e) => fn(e.payload));
 export const onIndexDone = (fn) => listen("index-done", (e) => fn(e.payload));
-export const resolveVolume = (bookId, path = null) => invoke("resolve_volume", { bookId, path });
 export const loadWorkspace = () => invoke("load_workspace");
 export const saveWorkspace = (workspace) => invoke("save_workspace", { workspace });

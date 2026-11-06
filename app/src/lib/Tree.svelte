@@ -23,10 +23,10 @@
         {:else}
           <span class="twisty"></span>
         {/if}
-        {#if node.book_id}
+        {#if node.book_id || node.path}
           <button
             class="leaf"
-            class:current={current && current === node.book_id}
+            class:current={current && (current === node.book_id || current === node.path)}
             onclick={() => onopen(node)}
             title={node.title}>{node.title}</button>
         {:else if node.href}

@@ -14,6 +14,7 @@
   const win = getCurrentWebviewWindow();
 
   let p = $state({
+    lib: start.lib,
     bookId: start.bookId,
     path: start.path,
     query: null,
@@ -37,7 +38,7 @@
     });
     // closed by the user: forget this pop-out (not when the app exits)
     const un2 = win.onCloseRequested(() => {
-      if (!docking) emit("popout-closed", { path: start.path });
+      if (!docking) emit("popout-closed", { tab: start.tab });
     });
     return () => {
       un1.then((f) => f());
@@ -48,7 +49,7 @@
   let lastLb = start.lb;
   async function dock() {
     docking = true;
-    await emit("popout-dock", { path: start.path, bookId: start.bookId, lb: lastLb });
+    await emit("popout-dock", { tab: start.tab, lib: start.lib, path: start.path, bookId: start.bookId, lb: lastLb });
     await win.close();
   }
 </script>
@@ -64,7 +65,7 @@
       onopen={(req) => emit("popout-open", req)}
       onprogress={(lb, mode) => {
         lastLb = lb;
-        emit("popout-progress", { path: start.path, lb, mode });
+        emit("popout-progress", { tab: start.tab, lb, mode });
       }}
       ontitle={(t) => {
         title = t;

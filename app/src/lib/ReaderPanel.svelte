@@ -1,6 +1,6 @@
 <script>
-  // The content of one reading tab: one volume (a tab is identified by the
-  // volume path). `p` is a reactive object owned by the workspace, updated
+  // The content of one reading tab: one document (a CBETA volume or an HTML
+  // article; a tab is identified by `<library>|<path>`). `p` is a reactive object owned by the workspace, updated
   // when the same volume is opened again (new target / query).
   import * as api from "./api.js";
   import Reader from "./Reader.svelte";
@@ -14,13 +14,13 @@
 
   // (re)load when the query of the tab changes; the path never changes
   $effect(() => {
-    const { bookId, path, query, phrase } = p;
+    const { lib, bookId, path, query, phrase } = p;
     api
-      .openVolume(bookId, path, query || null, !!phrase)
+      .openNode(lib, bookId, path, query || null, !!phrase)
       .then((v) => {
         vol = v;
         error = "";
-        ontitle?.(`${v.title} ${v.label}`);
+        ontitle?.(v.label ? `${v.title} ${v.label}` : v.title);
       })
       .catch((e) => (error = String(e)));
   });
@@ -38,7 +38,7 @@
       localNonce += 1;
       p.quiet = false;
     } else {
-      onopen({ bookId: p.bookId, path: c.path, lb: c.lb });
+      onopen({ lib: p.lib, bookId: p.bookId, path: c.path, lb: c.lb });
     }
   }
 </script>
@@ -52,7 +52,7 @@
     nonce={localNonce}
     quiet={!!p.quiet}
     bind:mode={p.mode}
-    onvolume={(path) => onopen({ bookId: p.bookId, path })}
+    onvolume={(path) => onopen({ lib: p.lib, bookId: p.bookId, path })}
     onchapter={chapter}
     onprogress={(lb) => onprogress(lb, p.mode)} />
 {:else}
