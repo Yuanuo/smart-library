@@ -64,3 +64,30 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 
 .muted { color: var(--muted); }
 .hl { color: var(--hl); background: var(--hl-bg); border-radius: 2px; }
+
+/* ---- reading workspace (dockview) ---- */
+.sl-dock {
+  height: 100%;
+  --dv-background-color: var(--bg);
+  --dv-group-view-background-color: var(--paper);
+  --dv-tabs-and-actions-container-background-color: var(--panel);
+  --dv-tabs-and-actions-container-font-size: 13px;
+  --dv-tabs-and-actions-container-height: 34px;
+  --dv-activegroup-visiblepanel-tab-background-color: var(--paper);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--panel);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--paper);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--panel);
+  --dv-activegroup-visiblepanel-tab-color: var(--ink);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--ink);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-tab-divider-color: var(--line);
+  --dv-separator-border: var(--line);
+  --dv-paneview-header-border-color: var(--line);
+  --dv-drag-over-background-color: rgba(138, 75, 35, 0.15);
+  --dv-drag-over-border-color: var(--accent);
+  font-family: inherit;
+}
+.sl-dock .dv-tab { font-family: inherit; }
+.panel-host { height: 100%; overflow: hidden; }
+.dock-watermark { padding: 48px; color: var(--muted); font-size: 16px; }

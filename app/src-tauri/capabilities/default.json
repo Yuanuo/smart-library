@@ -1,7 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions of the main window",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Permissions of the main window and of the pop-out reader windows",
+  "windows": ["main", "reader-*"],
+  "permissions": [
+    "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-set-title",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-unminimize"
+  ]
 }

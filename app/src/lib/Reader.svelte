@@ -5,11 +5,21 @@
   //    inline notes, collation notes as numbered bubbles, variant readings
   //    on hover; line numbers can be shown in the text;
   //  * 原书行: one original line per row, line number in the margin.
-  // `target` is a line (lb) to scroll to; hits of the query are highlighted
-  // in both views.
+  // `target` is a line (lb) to scroll to (again whenever `nonce` changes);
+  // `quiet` restores a position without the flash. While the reader scrolls,
+  // `onprogress(lb)` reports the first line at the top of the view.
   import { tick } from "svelte";
 
-  let { vol, target = null, onvolume, onchapter } = $props();
+  let {
+    vol,
+    target = null,
+    nonce = 0,
+    quiet = false,
+    mode = $bindable("para"),
+    onvolume,
+    onchapter,
+    onprogress = null,
+  } = $props();
   let scroller = $state();
 
   const load = (k, d) => {
@@ -24,30 +34,48 @@
       localStorage.setItem(k, v);
     } catch {}
   };
-  let mode = $state(load("reader.mode", "para")); // para | lines
   let showLb = $state(load("reader.showLb", "0") === "1");
-  $effect(() => save("reader.mode", mode));
   $effect(() => save("reader.showLb", showLb ? "1" : "0"));
 
+  let restoring = false;
   $effect(() => {
     const t = target;
     const v = vol;
     const m = mode;
+    const _n = nonce;
+    const q = quiet;
     if (!v) return;
+    restoring = true;
     tick().then(() => {
       if (!scroller) return;
       scroller.querySelectorAll(".flash").forEach((e) => e.classList.remove("flash"));
-      if (t) {
-        const el = scroller.querySelector(`[data-lb="${t}"]`);
-        if (el) {
-          el.scrollIntoView({ block: "center" });
-          el.classList.add("flash");
+      const el = t ? scroller.querySelector(`[data-lb="${t}"]`) : null;
+      if (el) {
+        el.scrollIntoView({ block: q ? "start" : "center" });
+        if (!q) el.classList.add("flash");
+      } else {
+        scroller.scrollTop = 0;
+      }
+      setTimeout(() => (restoring = false), 100);
+    });
+  });
+
+  // reading progress: the first line marker at or below the top edge
+  let timer = null;
+  function onScroll() {
+    if (!onprogress || restoring) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!scroller) return;
+      const top = scroller.getBoundingClientRect().top;
+      for (const el of scroller.querySelectorAll("[data-lb]")) {
+        if (el.getBoundingClientRect().top >= top - 2) {
+          onprogress(el.dataset.lb);
           return;
         }
       }
-      scroller.scrollTop = 0;
-    });
-  });
+    }, 400);
+  }
 
   function chapterChange(e) {
     const c = vol.chapters[e.target.value];
@@ -87,7 +115,7 @@
         {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
       </div>
     </header>
-    <div class="scroll" bind:this={scroller}>
+    <div class="scroll" bind:this={scroller} onscroll={onScroll}>
       {#if mode === "para"}
         <article class="doc" class:show-lb={showLb}>{@html vol.html}</article>
       {:else}

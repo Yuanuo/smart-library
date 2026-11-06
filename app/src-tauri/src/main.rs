@@ -18,6 +18,7 @@ fn main() {
             app.manage(AppState::new(
                 config_dir.join("config.json"),
                 data_dir.join("repos").join("cbeta").join("index"),
+                data_dir.join("workspace.json"),
             ));
             Ok(())
         })
@@ -43,6 +44,9 @@ fn main() {
             commands::open_volume,
             commands::search,
             commands::build_index,
+            commands::load_workspace,
+            commands::save_workspace,
+            commands::resolve_volume,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Smart Library");

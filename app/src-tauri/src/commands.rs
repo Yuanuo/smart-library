@@ -42,6 +42,8 @@ pub fn asset(state: &AppState, path: &str) -> Option<(Vec<u8>, &'static str)> {
 pub struct AppState {
     config_file: PathBuf,
     index_dir: PathBuf,
+    /// open tabs, their layout, pop-out windows and reading progress
+    workspace_file: PathBuf,
     bookcase_path: RwLock<Option<String>>,
     bookcase: RwLock<Option<Arc<Bookcase>>>,
     index: RwLock<Option<Arc<SearchIndex>>>,
@@ -49,7 +51,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config_file: PathBuf, index_dir: PathBuf) -> Self {
+    pub fn new(config_file: PathBuf, index_dir: PathBuf, workspace_file: PathBuf) -> Self {
         // bookcase path: config file, else the SMART_LIBRARY_BOOKCASE variable
         let configured = std::fs::read_to_string(&config_file)
             .ok()
@@ -59,6 +61,7 @@ impl AppState {
         AppState {
             config_file,
             index_dir,
+            workspace_file,
             bookcase_path: RwLock::new(configured),
             bookcase: RwLock::new(None),
             index: RwLock::new(None),
@@ -570,4 +573,59 @@ pub async fn build_index(app: AppHandle, state: State<'_, AppState>) -> Result<(
         let _ = app.emit("index-done", done);
     });
     Ok(())
+}
+
+// ------------------------------------------------------------ workspace
+
+/// The saved workspace (JSON written by the front end), or null.
+#[tauri::command]
+pub async fn load_workspace(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    match std::fs::read_to_string(&state.workspace_file) {
+        Ok(s) => Ok(serde_json::from_str(&s).unwrap_or(serde_json::Value::Null)),
+        Err(_) => Ok(serde_json::Value::Null),
+    }
+}
+
+/// Save the workspace; written to a temporary file first so that a crash
+/// never leaves half a file behind.
+#[tauri::command]
+pub async fn save_workspace(workspace: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
+    let file = &state.workspace_file;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let tmp = file.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec(&workspace).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, file).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+pub struct VolumeIdDto {
+    book_id: String,
+    path: String,
+    /// tab title, e.g. `妙法蓮華經 卷一`
+    title: String,
+}
+
+/// Which volume a request means (the first readable one when `path` is
+/// absent), without reading it: the tab id is the volume path.
+#[tauri::command]
+pub async fn resolve_volume(
+    book_id: String,
+    path: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<VolumeIdDto, String> {
+    let bc = state.bookcase()?;
+    let book = bc.book(&book_id).ok_or_else(|| format!("没有这部经：{}", book_id))?;
+    let vols = bc.volumes(&book_id);
+    let vol = match &path {
+        Some(p) => vols.iter().find(|v| &v.path == p),
+        None => vols.iter().find(|v| v.exists),
+    }
+    .ok_or_else(|| format!("{} 没有可读的卷", book_id))?;
+    Ok(VolumeIdDto {
+        book_id: book_id.clone(),
+        path: vol.path.clone(),
+        title: format!("{} {}", book.title, vol.label),
+    })
 }

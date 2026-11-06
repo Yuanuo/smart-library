@@ -1,9 +1,8 @@
 <script>
   import { onMount } from "svelte";
   import * as api from "./lib/api.js";
+  import * as workspace from "./lib/workspace.svelte.js";
   import Tree from "./lib/Tree.svelte";
-  import Reader from "./lib/Reader.svelte";
-  import Results from "./lib/Results.svelte";
 
   let st = $state(null);
   let error = $state("");
@@ -13,20 +12,46 @@
   let nodes = $state([]);
   let treeLoading = $state(false);
 
-  let view = $state("welcome"); // welcome | reader | results
-  let vol = $state(null);
-  let target = $state(null);
-
   let query = $state("");
   let phrase = $state(false);
-  let scope = $state("");
-  let drill = $state("");
-  let result = $state(null);
   let searching = $state(false);
-  let lastSearch = null; // the query of the shown results, used for highlights
+  let lastSearch = null; // query of the shown results, used for highlights
 
   let progress = $state(null);
   let indexMessage = $state("");
+
+  let wsEl = $state();
+  let wsReady = false;
+
+  // props of the search results tab (mounted by the workspace)
+  const rs = $state({
+    result: null,
+    scope: "",
+    drill: "",
+    onfacet: (root, name) => {
+      rs.scope = `${root}/${name}`.replace(/^\//, "");
+      rs.drill = "";
+      runSearch(1);
+    },
+    ondrill: (d) => {
+      rs.drill = d.replace(/^\//, "");
+      runSearch(rs.result?.page ?? 1);
+    },
+    onclearscope: () => {
+      rs.scope = "";
+      rs.drill = "";
+      runSearch(1);
+    },
+    onhit: (h, lb) =>
+      workspace.openVolume({
+        bookId: h.book_id,
+        path: h.path,
+        lb,
+        query: lastSearch?.query ?? null,
+        phrase: lastSearch?.phrase ?? false,
+      }),
+    onpage: (p) => runSearch(p),
+  });
 
   onMount(() => {
     refresh();
@@ -36,10 +61,21 @@
       indexMessage = d.message;
       refresh();
     });
+    const flush = () => workspace.flush();
+    window.addEventListener("beforeunload", flush);
     return () => {
       un1.then((f) => f());
       un2.then((f) => f());
+      window.removeEventListener("beforeunload", flush);
     };
+  });
+
+  // the workspace needs an open bookcase (tabs restore volumes)
+  $effect(() => {
+    if (wsEl && st?.data_version && !wsReady) {
+      wsReady = true;
+      workspace.init(wsEl, { resultsProps: rs }).catch((e) => (error = String(e)));
+    }
   });
 
   async function refresh() {
@@ -76,16 +112,8 @@
   }
 
   async function openNode(node) {
-    await show(node.book_id, node.start, null);
-  }
-
-  async function show(bookId, path, lb, withQuery = false) {
     try {
-      const q = withQuery && lastSearch ? lastSearch : null;
-      vol = await api.openVolume(bookId, path, q?.query ?? null, q?.phrase ?? false);
-      target = lb ?? (withQuery ? vol.first_hit_lb : null);
-      view = "reader";
-      error = "";
+      await workspace.openVolume({ bookId: node.book_id, path: node.start });
     } catch (e) {
       error = String(e);
     }
@@ -95,16 +123,16 @@
     if (!query.trim()) return;
     searching = true;
     try {
-      result = await api.search({
+      rs.result = await api.search({
         query,
         phrase,
-        scope: scope || null,
-        drill: drill || null,
+        scope: rs.scope || null,
+        drill: rs.drill || null,
         page,
         limit: 20,
       });
       lastSearch = { query, phrase };
-      view = "results";
+      workspace.showResults();
       error = "";
     } catch (e) {
       error = String(e);
@@ -115,7 +143,7 @@
 
   function submit(e) {
     e.preventDefault();
-    drill = "";
+    rs.drill = "";
     runSearch(1);
   }
 
@@ -143,9 +171,6 @@
         <input type="search" placeholder="搜索经文（空格分隔关键词）" bind:value={query} aria-label="搜索" />
         <label class="check"><input type="checkbox" bind:checked={phrase} /> 精确短语</label>
         <button class="primary" disabled={searching || !st.index_ready}>{searching ? "搜索中…" : "搜索"}</button>
-        {#if result && view !== "results"}
-          <button type="button" onclick={() => (view = "results")}>返回结果</button>
-        {/if}
       </form>
       <div class="index muted">
         {#if progress}
@@ -183,34 +208,11 @@
         </select>
         <div class="tree">
           {#if treeLoading}<p class="muted">载入中…</p>{:else}
-            <Tree {nodes} onopen={openNode} current={vol?.book_id} />
+            <Tree {nodes} onopen={openNode} />
           {/if}
         </div>
       </nav>
-      <main class="content">
-        {#if view === "reader"}
-          <Reader
-            {vol}
-            {target}
-            onvolume={(p) => show(vol.book_id, p, null, true)}
-            onchapter={(c) => show(vol.book_id, c.path, c.lb, true)} />
-        {:else if view === "results" && result}
-          <Results
-            {result}
-            {scope}
-            {drill}
-            onfacet={(root, name) => { scope = `${root}/${name}`.replace(/^\//, ""); drill = ""; runSearch(1); }}
-            ondrill={(d) => { drill = d.replace(/^\//, ""); runSearch(result.page); }}
-            onclearscope={() => { scope = ""; drill = ""; runSearch(1); }}
-            onhit={(h, lb) => show(h.book_id, h.path, lb, true)}
-            onpage={(p) => runSearch(p)} />
-        {:else}
-          <div class="welcome muted">
-            <p>从左侧目录打开一部经，或在上方搜索。</p>
-            {#if !st.index_ready && !progress}<p>全文搜索需要先建立索引（约一分钟）。</p>{/if}
-          </div>
-        {/if}
-      </main>
+      <main class="content" bind:this={wsEl}></main>
     </div>
   {:else}
     <main class="setup muted">载入中…</main>
@@ -239,8 +241,7 @@
   }
   .side select { width: 100%; }
   .tree { flex: 1; overflow: auto; font-size: 15px; }
-  .content { flex: 1; min-width: 0; min-height: 0; }
-  .welcome { padding: 48px; font-size: 16px; }
+  .content { flex: 1; min-width: 0; min-height: 0; position: relative; }
   .setup { padding: 64px; max-width: 820px; }
   .setup form { display: flex; gap: 8px; margin-top: 16px; }
   .setup input { flex: 1; }

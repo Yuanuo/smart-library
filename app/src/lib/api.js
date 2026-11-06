@@ -11,3 +11,6 @@ export const search = (args) => invoke("search", args);
 export const buildIndex = () => invoke("build_index");
 export const onIndexProgress = (fn) => listen("index-progress", (e) => fn(e.payload));
 export const onIndexDone = (fn) => listen("index-done", (e) => fn(e.payload));
+export const resolveVolume = (bookId, path = null) => invoke("resolve_volume", { bookId, path });
+export const loadWorkspace = () => invoke("load_workspace");
+export const saveWorkspace = (workspace) => invoke("save_workspace", { workspace });
