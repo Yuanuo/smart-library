@@ -20,11 +20,12 @@
 - M0b（卷 XML 抽取，`core/src/volume.rs`）已完成：全部 21820 卷解析无失败，约 1.5 ms/卷，与 `tools/ref_extract.py` 逐卷对比全部一致。规则变化见规范附录 A.6（跳过 `cb:mulu`、缺字只占一个字符、更多编者符号不计入位置）。
 - M0c（分词、索引、搜索，`core/src/analyzer.rs`、`core/src/search.rs`）已完成：21233 卷建索引约 43 秒、761 MB；搜索毫秒级；宽松匹配、精确短语、繁简互查、分面、范围、命中行号与行内位置都已在真实数据上验证。
 - M1 界面骨架已完成（`app/`，Tauri 2 + Svelte 5）：目录树、按行阅读、目次跳转、搜索、分面、命中跳行高亮、界面内建索引，都已在真实数据上点过。
-- 下一步：阅读区按附录 A.6 做结构化渲染；`a/` 下 HTML 文章接入为内容节点；标题快搜（M2）。先和用户确认优先级。
+- 结构化阅读已完成（`core/src/render.rs`，与抽取共用遍历，全部卷计数一致）。
+- 下一步（用户已定顺序）：多标签阅读（停靠、浮动、进度还原），然后是知识库绑定（右键绑定 bookcase，CBETA 三棵树只能选一棵、默认 bulei，自加树可多选）。设计见规范 9a 节，其中「一个文档」的粒度和浮动方式待用户确认。
 
 ## 下一步
 
-1. 和用户确认 M1 之后的优先级（见上）。界面层只做参数转换（规范第 3 节），业务逻辑放在 core。
+1. 确认规范 9a 的待定点后实现多标签阅读，再做知识库绑定。界面层只做参数转换（规范第 3 节），业务逻辑放在 core。
 
 改动抽取规则时：先改 `tools/ref_extract.py` 和 `core/src/volume.rs` 两边，再跑下面的「抽取回归」两条命令，必须全部一致；锚点一致率不能下降。
 2. 待用户决定：`a/` 下的 HTML 叶子何时作为内容节点接入。
@@ -72,6 +73,7 @@ cargo run -p smart-library-cli --release -- check <bookcase.zip>
 target\release\smart-library.exe info C:\Devx\smartLib.d\bookcase.zip   # 编译后直接运行
 cargo run -p smart-library-cli --release -- text  <bookcase.zip> T0262 1          # 一卷，按原书行输出
 cargo run -p smart-library-cli --release -- volumes <bookcase.zip>                # 全部卷：失败数、耗时、段落锚点校验
+cargo run -p smart-library-cli --release -- volumes <bookcase.zip> XML/ --render  # 全部卷渲染：计数与抽取一致、图片都存在
 cargo run -p smart-library-cli --release -- index  <bookcase.zip>                 # 建索引到 app_data/repos/cbeta/index（先删旧目录）
 cargo run -p smart-library-cli --release -- search <bookcase.zip> 他念摄之令常在像
 cargo run -p smart-library-cli --release -- search <bookcase.zip> 如是我聞 --phrase --scope bulei/阿含部類 --facet bulei/阿含部類 --page 2

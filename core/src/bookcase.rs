@@ -12,6 +12,7 @@ use crate::source::Source;
 use crate::text::decode_auto;
 use crate::toc::{parse_toc, parse_volume_path, Toc};
 use crate::volume::{extract_volume, VolumeText};
+use crate::render::{render_volume, RenderOptions, RenderedVolume};
 use std::collections::BTreeMap;
 
 /// Files that must exist for a directory/zip to count as a bookcase.
@@ -209,6 +210,20 @@ impl Bookcase {
     pub fn volume_text(&self, path: &str) -> Result<VolumeText, String> {
         let bytes = self.source.read(path).ok_or_else(|| format!("{}: not in the bookcase", path))?;
         extract_volume(&decode_auto(&bytes)).map_err(|e| format!("{}: {}", path, e))
+    }
+
+    /// Structured HTML of one volume (`render.rs`), with optional highlights.
+    pub fn volume_html(&self, path: &str, opts: &RenderOptions) -> Result<RenderedVolume, String> {
+        let bytes = self.source.read(path).ok_or_else(|| format!("{}: not in the bookcase", path))?;
+        render_volume(&decode_auto(&bytes), opts).map_err(|e| format!("{}: {}", path, e))
+    }
+
+    /// A file of the bookcase that the reader may show (only `figures/…`).
+    pub fn asset(&self, path: &str) -> Option<Vec<u8>> {
+        if !path.starts_with("figures/") || path.contains("..") {
+            return None;
+        }
+        self.source.read(path)
     }
 
     /// All volumes (juan) of a book, ordered by juan number.

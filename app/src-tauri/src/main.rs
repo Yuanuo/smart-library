@@ -21,6 +21,21 @@ fn main() {
             ));
             Ok(())
         })
+        // `sl`: images of the bookcase (figures/…), read from the zip
+        .register_asynchronous_uri_scheme_protocol("sl", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            std::thread::spawn(move || {
+                let path = request.uri().path().trim_start_matches('/').to_string();
+                let state = app.state::<AppState>();
+                let response = match commands::asset(&state, &path) {
+                    Some((bytes, mime)) => tauri::http::Response::builder()
+                        .header(tauri::http::header::CONTENT_TYPE, mime)
+                        .body(bytes),
+                    None => tauri::http::Response::builder().status(404).body(Vec::new()),
+                };
+                responder.respond(response.unwrap());
+            });
+        })
         .invoke_handler(tauri::generate_handler![
             commands::status,
             commands::open_bookcase,

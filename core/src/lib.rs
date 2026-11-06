@@ -11,6 +11,7 @@ pub mod bookinfo;
 pub mod catalog;
 pub mod markup;
 pub mod nav;
+pub mod render;
 pub mod search;
 pub mod source;
 pub mod text;

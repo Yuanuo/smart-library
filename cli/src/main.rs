@@ -19,7 +19,7 @@ fn usage() {
   smart-library check <bookcase.zip|dir>
   smart-library text  <bookcase.zip|dir> <book id> [juan] [--punct]
   smart-library text  <bookcase.zip|dir> <volume path, e.g. XML/T/T01/T01n0004_001.xml> [--punct]
-  smart-library volumes <bookcase.zip|dir> [path prefix, e.g. XML/T/] [--out DIR] [--every N] [--keep-mulu]
+  smart-library volumes <bookcase.zip|dir> [path prefix, e.g. XML/T/] [--out DIR] [--every N] [--keep-mulu] [--render]
   smart-library index <bookcase.zip|dir> [--index DIR]
   smart-library search <bookcase.zip|dir> <query> [--phrase] [--scope bulei/阿含部類] [--page N] [--limit N]
                        [--facet bulei/阿含部類] [--index DIR]
@@ -112,7 +112,11 @@ fn main() {
             let prefix = args.get(3).filter(|a| !a.starts_with("--")).map(|s| s.as_str()).unwrap_or("XML/");
             let flag = |name: &str| args.iter().position(|a| a == name).and_then(|p| args.get(p + 1));
             let every = flag("--every").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).max(1);
-            cmd_volumes(&bc, prefix, flag("--out").map(|s| s.as_str()), every, args.iter().any(|a| a == "--keep-mulu"));
+            if args.iter().any(|a| a == "--render") {
+                cmd_render_check(&bc, prefix, every);
+            } else {
+                cmd_volumes(&bc, prefix, flag("--out").map(|s| s.as_str()), every, args.iter().any(|a| a == "--keep-mulu"));
+            }
         }
         _ => {
             usage();
@@ -619,5 +623,58 @@ fn cmd_volumes(bc: &Bookcase, prefix: &str, out: Option<&str>, every: usize, kee
     println!("volumes without any lb of their canon: {}", no_lines.len());
     for p in no_lines.iter().take(10) {
         println!("    {}", p);
+    }
+}
+
+/// Render every volume to HTML and check that the renderer counts exactly the
+/// extraction's `plain` text, and that every image it refers to exists.
+fn cmd_render_check(bc: &Bookcase, prefix: &str, every: usize) {
+    use smart_library_core::render::{render_volume, RenderOptions};
+    let mut paths: Vec<String> = bc
+        .source
+        .list()
+        .into_iter()
+        .filter(|p| p.starts_with(prefix) && p.starts_with("XML/") && p.ends_with(".xml"))
+        .collect();
+    paths.sort();
+    let paths: Vec<String> = paths.into_iter().step_by(every.max(1)).collect();
+    let opts = RenderOptions { asset_prefix: "@@".to_string(), ..Default::default() };
+    let start = std::time::Instant::now();
+    let (mut ok, mut bad, mut html_bytes, mut notes, mut images, mut missing) = (0, Vec::new(), 0usize, 0usize, 0usize, Vec::new());
+    for p in &paths {
+        let xml = match bc.source.read(p) {
+            Some(b) => smart_library_core::text::decode_auto(&b),
+            None => continue,
+        };
+        let (vt, r) = match (smart_library_core::volume::extract_volume(&xml), render_volume(&xml, &opts)) {
+            (Ok(v), Ok(r)) => (v, r),
+            (Err(e), _) | (_, Err(e)) => {
+                bad.push(format!("{}: {}", p, e));
+                continue;
+            }
+        };
+        if r.plain_chars != vt.plain.chars().count() {
+            bad.push(format!("{}: rendered {} plain chars, extracted {}", p, r.plain_chars, vt.plain.chars().count()));
+            continue;
+        }
+        ok += 1;
+        html_bytes += r.html.len();
+        notes += r.notes;
+        for part in r.html.split("src=\"@@").skip(1) {
+            let img = part.split('"').next().unwrap_or("");
+            images += 1;
+            if !bc.source.exists(img) {
+                missing.push(format!("{} -> {}", p, img));
+            }
+        }
+    }
+    let secs = start.elapsed().as_secs_f64();
+    println!("rendered {} volumes ({} ok, {} bad) in {:.1}s ({:.2} ms/volume)", paths.len(), ok, bad.len(), secs, secs * 1000.0 / paths.len().max(1) as f64);
+    println!("html {:.1} MB, {} note markers, {} images ({} missing)", html_bytes as f64 / 1e6, notes, images, missing.len());
+    for b in bad.iter().take(10) {
+        println!("  BAD {}", b);
+    }
+    for m in missing.iter().take(10) {
+        println!("  MISSING {}", m);
     }
 }

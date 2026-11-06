@@ -33,6 +33,7 @@
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::{NsReader, XmlVersion};
+use crate::render::{safe_style, HtmlOut, RenderOptions};
 use std::collections::HashMap;
 
 const TEI_NS: &str = "http://www.tei-c.org/ns/1.0";
@@ -51,7 +52,7 @@ pub fn is_punct(c: char) -> bool {
 
 /// Characters dropped from `plain`: punctuation and whitespace (as Python's
 /// `str.isspace`, which also counts U+001C..U+001F).
-fn is_dropped(c: char) -> bool {
+pub(crate) fn is_dropped(c: char) -> bool {
     is_punct(c) || c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
@@ -319,8 +320,24 @@ fn parse_code_point(s: &str) -> Option<char> {
     char::from_u32(u32::from_str_radix(hex, 16).ok()?)
 }
 
-/// Missing-glyph declarations: `CB01979` -> text to use (one char when possible).
-fn load_char_decl(root: &Elem) -> HashMap<String, String> {
+fn is_private_use(c: char) -> bool {
+    matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0x10FFFF)
+}
+
+/// A missing glyph (`charDecl/char`).
+#[derive(Debug, Clone)]
+pub(crate) struct Glyph {
+    /// what the text and the index see: one char when possible
+    text: String,
+    /// shown instead of `text` when that is a private-use char that no
+    /// normal font has, e.g. the composition `[木*翕]`
+    display: Option<String>,
+    /// composition and name, for a tooltip
+    title: String,
+}
+
+/// Missing-glyph declarations: `CB01979` -> glyph (one char when possible).
+fn load_char_decl(root: &Elem) -> HashMap<String, Glyph> {
     let mut decl = HashMap::new();
     root.for_each(&mut |ch| {
         if !ch.is(Ns::Tei, "char") {
@@ -342,22 +359,48 @@ fn load_char_decl(root: &Elem) -> HashMap<String, String> {
                 .and_then(|e| parse_code_point(e.head_text()))
                 .map(|c| c.to_string())
         };
+        let char_name = ch.child_text(Ns::Tei, "charName").trim().to_string();
         let normalized = props.get("normalized form").filter(|v| v.chars().count() == 1).cloned();
-        let pick = normalized
+        let text = normalized
             .or_else(|| mapping("unicode"))
             .or_else(|| mapping("normal_unicode"))
             .or_else(|| mapping("PUA"))
             .or_else(|| props.get("normalized form").filter(|v| !v.is_empty()).cloned())
             .or_else(|| props.get("composition").filter(|v| !v.is_empty()).cloned())
-            .unwrap_or_else(|| ch.child_text(Ns::Tei, "charName").trim().to_string());
-        decl.insert(id, pick);
+            .unwrap_or_else(|| char_name.clone());
+        let composition = props.get("composition").cloned().unwrap_or_default();
+        let roman = props
+            .get("romanized form in unicode transcription")
+            .or_else(|| props.get("romanized form in cbeta transcription"))
+            .cloned()
+            .unwrap_or_default();
+        let display = match text.chars().next() {
+            Some(c) if text.chars().count() == 1 && is_private_use(c) => {
+                if !composition.is_empty() {
+                    Some(composition.clone())
+                } else if !roman.is_empty() {
+                    Some(roman.clone())
+                } else {
+                    Some("□".to_string())
+                }
+            }
+            _ => None,
+        };
+        let mut title = id.clone();
+        for extra in [&composition, &roman] {
+            if !extra.is_empty() {
+                title.push(' ');
+                title.push_str(extra);
+            }
+        }
+        decl.insert(id, Glyph { text, display, title });
     });
     decl
 }
 
 struct Extractor<'a> {
     canon: &'a str,
-    decl: HashMap<String, String>,
+    decl: HashMap<String, Glyph>,
     /// (text, index into `lbs` of the current line)
     pieces: Vec<(String, Option<usize>)>,
     lbs: Vec<String>,
@@ -365,23 +408,113 @@ struct Extractor<'a> {
     /// (xml:id of a `p`, index into `pieces` where it starts)
     anchors: Vec<(String, usize)>,
     skip_mulu: bool,
+    /// structured HTML, written by the same walk (see `render.rs`)
+    html: Option<HtmlOut>,
+}
+
+/// Block-level HTML for TEI/CBETA elements: (local name, html tag, class).
+fn html_tag(el: &Elem) -> (&'static str, String) {
+    let attr_class = |prefix: &str, v: Option<&str>| match v {
+        Some(v) if !v.is_empty() => format!(" {}-{}", prefix, v.replace(|c: char| !c.is_alphanumeric(), "-")),
+        _ => String::new(),
+    };
+    match (el.ns, el.name.as_str()) {
+        (Ns::Cb, "div") => ("div", format!("div{}", attr_class("t", el.attr("type")))),
+        (_, "head") => ("div", "head".to_string()),
+        (_, "byline") => ("p", format!("byline{}", attr_class("t", el.attr("cb:type")))),
+        (Ns::Cb, "juan") => ("p", format!("juan{}", attr_class("f", el.attr("fun")))),
+        (Ns::Cb, "jhead") => ("span", "jhead".to_string()),
+        (Ns::Cb, "docNumber") => ("p", "docnumber".to_string()),
+        (_, "lg") => ("div", "lg".to_string()),
+        (_, "l") => ("div", "l".to_string()),
+        (_, "list") => ("ul", "list".to_string()),
+        (_, "item") => ("li", "item".to_string()),
+        (_, "table") => ("table", "table".to_string()),
+        (_, "row") => ("tr", String::new()),
+        (_, "cell") => ("td", String::new()),
+        (_, "trailer") => ("p", "trailer".to_string()),
+        (_, "entry") => ("div", "entry".to_string()),
+        (_, "form") => ("span", "form".to_string()),
+        (Ns::Cb, "def") => ("div", "def".to_string()),
+        (Ns::Cb, "dialog") => ("div", "dialog".to_string()),
+        (_, "sp") => ("div", format!("sp{}", attr_class("t", el.attr("cb:type")))),
+        (_, "hi") | (_, "seg") => ("span", format!("hi{}", attr_class("r", el.attr("rend")))),
+        (_, "figure") => ("span", "figure-box".to_string()),
+        (_, name) => ("span", format!("x-{}", name)),
+    }
 }
 
 impl<'a> Extractor<'a> {
     fn emit(&mut self, s: &str) {
         if !s.is_empty() {
             self.pieces.push((s.to_string(), self.cur_lb));
+            if let Some(h) = self.html.as_mut() {
+                h.text(s);
+            }
         }
     }
 
     fn children(&mut self, el: &Elem) {
-        for n in &el.children {
+        for (i, n) in el.children.iter().enumerate() {
             match n {
                 Node::Text(t) => {
                     let s: String = t.chars().filter(|c| !matches!(c, '\r' | '\n' | '\t')).collect();
                     self.emit(&s);
                 }
-                Node::Elem(e) => self.walk(e),
+                Node::Elem(e) => {
+                    // a Taisho note followed by CBETA's revision of the same note
+                    // (same `n`): show only the revision
+                    if self.html.is_some() && e.name == "note" && e.attr("place") != Some("inline") {
+                        let next = el.children[i + 1..].iter().find_map(|n| match n {
+                            Node::Elem(x) => Some(x),
+                            Node::Text(t) if t.trim().is_empty() => None,
+                            Node::Text(_) => Some(e), // text in between: stop looking
+                        });
+                        if let Some(x) = next {
+                            if !std::ptr::eq(x, e)
+                                && x.name == "note"
+                                && x.attr("n").is_some()
+                                && x.attr("n") == e.attr("n")
+                                && x.attr("place") != Some("inline")
+                            {
+                                continue;
+                            }
+                        }
+                    }
+                    self.walk(e)
+                }
+            }
+        }
+    }
+
+    /// Display text of an element that is not reading text (notes, variant
+    /// readings): glyphs resolved, inline notes in parentheses.
+    fn display_text(&self, el: &Elem, out: &mut String) {
+        for n in &el.children {
+            match n {
+                Node::Text(t) => out.extend(t.chars().filter(|c| !matches!(c, '\r' | '\n' | '\t'))),
+                Node::Elem(e) => match e.name.as_str() {
+                    "g" => {
+                        let id = e.attr("ref").unwrap_or("").trim_start_matches('#');
+                        match self.decl.get(id) {
+                            Some(g) => out.push_str(g.display.as_deref().unwrap_or(&g.text)),
+                            None => out.push('□'),
+                        }
+                    }
+                    "note" if e.attr("place") == Some("inline") || e.attr("place") == Some("interlinear") => {
+                        out.push('（');
+                        self.display_text(e, out);
+                        out.push('）');
+                    }
+                    "note" | "lb" | "pb" | "milestone" => {}
+                    "app" => {
+                        if let Some(lem) = e.elems().find(|x| x.name == "lem") {
+                            self.display_text(lem, out);
+                        }
+                    }
+                    "space" => out.push(' '),
+                    _ => self.display_text(e, out),
+                },
             }
         }
     }
@@ -391,16 +524,63 @@ impl<'a> Extractor<'a> {
             "teiHeader" => {}
             "lb" => {
                 if el.attr("ed") == Some(self.canon) {
-                    self.lbs.push(el.attr("n").unwrap_or("").to_string());
+                    let n = el.attr("n").unwrap_or("").to_string();
+                    if let Some(h) = self.html.as_mut() {
+                        if h.in_pre > 0 && !self.lbs.is_empty() {
+                            h.raw("<br>");
+                        }
+                        h.open("span", &[("class", "lb"), ("data-lb", &n)]);
+                        h.close("span");
+                    }
+                    self.lbs.push(n);
                     self.cur_lb = Some(self.lbs.len() - 1);
                 }
             }
-            "pb" | "milestone" | "unclear" => {}
+            "pb" => {
+                if el.attr("ed") == Some(self.canon) {
+                    if let Some(h) = self.html.as_mut() {
+                        h.open("span", &[("class", "pb"), ("data-pb", el.attr("n").unwrap_or(""))]);
+                        h.close("span");
+                    }
+                }
+            }
+            "milestone" => {}
+            "unclear" => {
+                if let Some(h) = self.html.as_mut() {
+                    h.raw("<span class=\"unclear\" title=\"字跡不清\">▆</span>");
+                }
+            }
+            "caesura" => {
+                if let Some(h) = self.html.as_mut() {
+                    h.raw("<span class=\"caesura\">　</span>");
+                }
+            }
             "note" => {
                 if el.attr("place") == Some("inline") {
+                    if let Some(h) = self.html.as_mut() {
+                        h.open("span", &[("class", "inline-note")]);
+                    }
                     self.emit("（");
                     self.children(el);
                     self.emit("）");
+                    if let Some(h) = self.html.as_mut() {
+                        h.close("span");
+                    }
+                } else if self.html.is_some() {
+                    let kind = el.attr("type").unwrap_or("");
+                    if !kind.is_empty() && !kind.starts_with("cf") {
+                        let mut text = String::new();
+                        self.display_text(el, &mut text);
+                        let label = match kind {
+                            "orig" => "校",
+                            "mod" => "CBETA 校",
+                            "add" => "CBETA 註",
+                            _ => "註",
+                        };
+                        if !text.trim().is_empty() {
+                            self.html.as_mut().unwrap().note(label, text.trim());
+                        }
+                    }
                 }
             }
             "app" => {
@@ -408,8 +588,29 @@ impl<'a> Extractor<'a> {
                     .elems()
                     .find(|e| e.is(Ns::Tei, "lem"))
                     .or_else(|| el.elems().find(|e| e.is(Ns::Tei, "rdg")));
+                let title = if self.html.is_some() {
+                    let mut t = String::new();
+                    for r in el.elems().filter(|e| e.name == "lem" || e.name == "rdg") {
+                        let mut s = String::new();
+                        self.display_text(r, &mut s);
+                        if !t.is_empty() {
+                            t.push('；');
+                        }
+                        t.push_str(r.attr("wit").unwrap_or("").trim());
+                        t.push_str(if s.trim().is_empty() { "（無）" } else { s.trim() });
+                    }
+                    t
+                } else {
+                    String::new()
+                };
+                if let Some(h) = self.html.as_mut() {
+                    h.open("span", &[("class", "app"), ("title", &title)]);
+                }
                 if let Some(lem) = pick {
                     self.children(lem);
+                }
+                if let Some(h) = self.html.as_mut() {
+                    h.close("span");
                 }
             }
             "rdg" => {}
@@ -418,15 +619,43 @@ impl<'a> Extractor<'a> {
                 if let Some(id) = el.attr("xml:id") {
                     self.anchors.push((id.to_string(), self.pieces.len()));
                 }
-                self.children(el)
+                let pre = el.attr("cb:type") == Some("pre");
+                if let Some(h) = self.html.as_mut() {
+                    let mut class = "p".to_string();
+                    if let Some(t) = el.attr("cb:type") {
+                        class.push_str(&format!(" t-{}", t));
+                    }
+                    if let Some(r) = el.attr("rend") {
+                        class.push_str(&format!(" r-{}", r));
+                    }
+                    let style = safe_style(el.attr("style").unwrap_or(""));
+                    h.open("p", &[("class", &class), ("id", el.attr("xml:id").unwrap_or("")), ("style", &style)]);
+                    if pre {
+                        h.in_pre += 1;
+                    }
+                }
+                self.children(el);
+                if let Some(h) = self.html.as_mut() {
+                    if pre {
+                        h.in_pre -= 1;
+                    }
+                    h.close("p");
+                }
             }
             "g" => {
                 let id = el.attr("ref").unwrap_or("").trim_start_matches('#');
-                let s = match self.decl.get(id) {
-                    Some(s) => s.clone(),
-                    None => format!("@Declare@{}", id),
+                let g = match self.decl.get(id) {
+                    Some(g) => g.clone(),
+                    None => Glyph {
+                        text: format!("@Declare@{}", id),
+                        display: None,
+                        title: String::new(),
+                    },
                 };
-                self.emit(&s);
+                self.pieces.push((g.text.clone(), self.cur_lb));
+                if let Some(h) = self.html.as_mut() {
+                    h.glyph(&g.text, g.display.as_deref(), &g.title);
+                }
             }
             "space" => {
                 let n: usize = el.attr("quantity").and_then(|q| q.trim().parse().ok()).unwrap_or(0);
@@ -437,12 +666,50 @@ impl<'a> Extractor<'a> {
                 let pick = ts
                     .iter()
                     .find(|t| t.attr("xml:lang") == Some("zh-Hant"))
-                    .or_else(|| ts.first());
+                    .or_else(|| ts.first())
+                    .copied();
+                if self.html.is_some() {
+                    let mut title = String::new();
+                    for t in ts.iter().filter(|t| pick.map_or(true, |p| !std::ptr::eq(**t, p))) {
+                        let mut s = String::new();
+                        self.display_text(t, &mut s);
+                        if !s.trim().is_empty() {
+                            if !title.is_empty() {
+                                title.push('；');
+                            }
+                            title.push_str(&format!("{}: {}", t.attr("xml:lang").unwrap_or(""), s.trim()));
+                        }
+                    }
+                    self.html.as_mut().unwrap().open("span", &[("class", "tt"), ("title", &title)]);
+                }
                 if let Some(t) = pick {
                     self.children(t);
                 }
+                if let Some(h) = self.html.as_mut() {
+                    h.close("span");
+                }
             }
-            _ => self.children(el),
+            "graphic" => {
+                if let Some(h) = self.html.as_mut() {
+                    h.image(el.attr("url").unwrap_or(""));
+                }
+            }
+            _ => {
+                if self.html.is_none() {
+                    self.children(el);
+                    return;
+                }
+                let (tag, class) = html_tag(el);
+                let style = safe_style(el.attr("style").unwrap_or(""));
+                let colspan = if tag == "td" { el.attr("cols").unwrap_or("") } else { "" };
+                let rowspan = if tag == "td" { el.attr("rows").unwrap_or("") } else { "" };
+                self.html.as_mut().unwrap().open(
+                    tag,
+                    &[("class", &class), ("style", &style), ("colspan", colspan), ("rowspan", rowspan)],
+                );
+                self.children(el);
+                self.html.as_mut().unwrap().close(tag);
+            }
         }
     }
 }
@@ -454,6 +721,16 @@ pub fn extract_volume(xml: &str) -> Result<VolumeText, String> {
 
 /// `skip_mulu = false` keeps the text of `cb:mulu` (old behaviour, only for comparison).
 pub fn extract_volume_with(xml: &str, skip_mulu: bool) -> Result<VolumeText, String> {
+    run(xml, skip_mulu, None).map(|(vt, _)| vt)
+}
+
+/// Extraction plus the structured HTML of `render.rs`, from one walk.
+pub(crate) fn extract_with_html(xml: &str, opts: &RenderOptions) -> Result<(VolumeText, HtmlOut), String> {
+    let (vt, html) = run(xml, true, Some(HtmlOut::new(opts)))?;
+    Ok((vt, html.expect("html requested")))
+}
+
+fn run(xml: &str, skip_mulu: bool, html: Option<HtmlOut>) -> Result<(VolumeText, Option<HtmlOut>), String> {
     let root = parse_tree(xml)?;
     let canon = root
         .find(&|e| e.is(Ns::Tei, "idno") && e.attr("type") == Some("canon"))
@@ -471,6 +748,7 @@ pub fn extract_volume_with(xml: &str, skip_mulu: bool) -> Result<VolumeText, Str
         cur_lb: None,
         anchors: Vec::new(),
         skip_mulu,
+        html,
     };
     ex.children(body);
 
@@ -510,14 +788,17 @@ pub fn extract_volume_with(xml: &str, skip_mulu: bool) -> Result<VolumeText, Str
     for (id, _) in &ex.anchors[next_anchor..] {
         anchors.push((id.clone(), plain_len));
     }
-    Ok(VolumeText {
-        canon,
-        text,
-        plain,
-        lines,
-        anchors,
-        plain_to_text,
-    })
+    Ok((
+        VolumeText {
+            canon: canon.clone(),
+            text,
+            plain,
+            lines,
+            anchors,
+            plain_to_text,
+        },
+        ex.html,
+    ))
 }
 
 #[cfg(test)]

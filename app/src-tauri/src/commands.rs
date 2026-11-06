@@ -8,6 +8,7 @@
 use serde::Serialize;
 use smart_library_core::bookcase::Bookcase;
 use smart_library_core::nav::NavNode;
+use smart_library_core::render::RenderOptions;
 use smart_library_core::search::{
     facet_label, locate, snippets, MatchMode, SearchIndex, SearchRequest,
 };
@@ -17,6 +18,26 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// URL prefix of the `sl` protocol (images of the bookcase). WebView2 on
+/// Windows reaches custom protocols as `http://<scheme>.localhost/`.
+#[cfg(windows)]
+pub const ASSET_PREFIX: &str = "http://sl.localhost/";
+#[cfg(not(windows))]
+pub const ASSET_PREFIX: &str = "sl://localhost/";
+
+/// Bytes of a bookcase image for the `sl` protocol, with its content type.
+pub fn asset(state: &AppState, path: &str) -> Option<(Vec<u8>, &'static str)> {
+    let bytes = state.bookcase().ok()?.asset(path)?;
+    let mime = match path.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
+        Some("gif") => "image/gif",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("svg") => "image/svg+xml",
+        _ => "application/octet-stream",
+    };
+    Some((bytes, mime))
+}
 
 pub struct AppState {
     config_file: PathBuf,
@@ -257,6 +278,8 @@ pub struct ReaderDto {
     volumes: Vec<VolumeItemDto>,
     chapters: Vec<ChapterDto>,
     lines: Vec<LineDto>,
+    /// structured view (design-spec A.6), hits wrapped in <mark>
+    html: String,
     /// number of hits of the query in this volume
     hits: usize,
     /// line of the first hit
@@ -298,11 +321,13 @@ pub async fn open_volume(
     let mut marks = vec![false; text.len()];
     let mut hits = 0;
     let mut first_hit_lb = None;
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
     if let Some(q) = query.as_deref().filter(|q| !q.trim().is_empty()) {
         let mode = if phrase.unwrap_or(false) { MatchMode::Phrase } else { MatchMode::Loose };
         let occ = locate(&vt, q, mode);
         hits = occ.len();
         first_hit_lb = occ.first().map(|o| o.lb.clone());
+        ranges = occ.iter().map(|o| (o.from, o.to)).collect();
         for o in &occ {
             let from = vt.plain_to_text[o.from] as usize;
             let to = vt.plain_to_text[o.to - 1] as usize;
@@ -332,6 +357,16 @@ pub async fn open_volume(
         })
         .collect();
 
+    let html = bc
+        .volume_html(
+            &vol.path,
+            &RenderOptions {
+                highlights: ranges,
+                asset_prefix: ASSET_PREFIX.to_string(),
+            },
+        )?
+        .html;
+
     let mut chapters = Vec::new();
     if let Some(toc) = bc.outline(&book_id) {
         flatten_chapters(&toc.chapters, 0, &mut chapters);
@@ -354,6 +389,7 @@ pub async fn open_volume(
             .collect(),
         chapters,
         lines,
+        html,
         hits,
         first_hit_lb,
     })
