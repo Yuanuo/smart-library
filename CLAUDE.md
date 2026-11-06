@@ -19,11 +19,12 @@
 - `check` 的结论已写进规范附录 A.1、A.3、A.4：zip 条目名 GBK、一卷分两册、LC 和 Y 两套未登记藏经、`a/` 与 `help/` 叶子。
 - M0b（卷 XML 抽取，`core/src/volume.rs`）已完成：全部 21820 卷解析无失败，约 1.5 ms/卷，与 `tools/ref_extract.py` 逐卷对比全部一致。规则变化见规范附录 A.6（跳过 `cb:mulu`、缺字只占一个字符、更多编者符号不计入位置）。
 - M0c（分词、索引、搜索，`core/src/analyzer.rs`、`core/src/search.rs`）已完成：21233 卷建索引约 43 秒、761 MB；搜索毫秒级；宽松匹配、精确短语、繁简互查、分面、范围、命中行号与行内位置都已在真实数据上验证。
-- 下一步是 M1（Tauri 界面骨架）。
+- M1 界面骨架已完成（`app/`，Tauri 2 + Svelte 5）：目录树、按行阅读、目次跳转、搜索、分面、命中跳行高亮、界面内建索引，都已在真实数据上点过。
+- 下一步：阅读区按附录 A.6 做结构化渲染；`a/` 下 HTML 文章接入为内容节点；标题快搜（M2）。先和用户确认优先级。
 
 ## 下一步
 
-1. **M1 界面骨架**：Tauri 2 窗口，左侧目录树（`Bookcase::nav`），右侧 Webview 阅读一卷，搜索面板调用 `SearchIndex::search` 与 `locate`/`snippets`，点击命中跳到行号。界面层只做参数转换（规范第 3 节）。开始前先和用户确认前端框架（Vue 或 Svelte）。
+1. 和用户确认 M1 之后的优先级（见上）。界面层只做参数转换（规范第 3 节），业务逻辑放在 core。
 
 改动抽取规则时：先改 `tools/ref_extract.py` 和 `core/src/volume.rs` 两边，再跑下面的「抽取回归」两条命令，必须全部一致；锚点一致率不能下降。
 2. 待用户决定：`a/` 下的 HTML 叶子何时作为内容节点接入。
@@ -54,6 +55,7 @@
 - 已实现：zip 条目名先按 UTF-8，失败按 GBK（`encoding_rs`）。
 - 未验证：`nav::clean_nav_title` 是否按括号切分（旧辅助函数没见到，是推测）。
 - 未验证：中文数字转换（`卷一`、`一百一十`）的写法与旧实现是否一致。
+- 已验证：Tauri 2 在 Windows GNU 工具链（`stable-x86_64-pc-windows-gnu`，w64devkit 的 windres）下可以编译运行；WebView2 已装。`npm run tauri build`（打安装包）还没试过。
 - 已验证：tantivy 0.27 用 `default-features = false, features = ["mmap", "lz4-compression"]`（默认特性里的 zstd 需要 C 编译器）。
 - 已验证：quick-xml 0.42（名称和文本都是 `&str`，实体引用是单独的 `Event::GeneralRef`）。
 - `Bookcase::volumes` 对 toc 中列出但文件不存在的卷保留并标记 `exists = false`，对 catalog 推出的卷则只保留文件存在的；按（卷号，路径）去重，一卷分两册时返回两条。
@@ -74,6 +76,10 @@ cargo run -p smart-library-cli --release -- index  <bookcase.zip>               
 cargo run -p smart-library-cli --release -- search <bookcase.zip> 他念摄之令常在像
 cargo run -p smart-library-cli --release -- search <bookcase.zip> 如是我聞 --phrase --scope bulei/阿含部類 --facet bulei/阿含部類 --page 2
 python tools/ref_extract.py samples/cbeta/T01n0004_001.xml     # 需要 lxml（pip install --user lxml；不要加 python -I）
+
+# 桌面程序（在 app/ 目录；第一次先 npm install）
+npm run tauri dev        # 开发模式，改前端即时生效；Rust 改动会自动重编
+npm run build            # 只构建前端（检查 Svelte 编译警告）
 
 # 抽取回归：Rust 与 Python 逐卷对比（--every 20 约 5 秒；不加 --every 是全部，约 2 GB 临时文件）
 target\release\smart-library.exe volumes <bookcase.zip> XML/ --every 20 --out <临时目录>

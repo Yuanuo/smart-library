@@ -248,7 +248,10 @@ app_data/
 - **M0a 目录装配**（已完成，已在 2025.Q1 真实数据上验证）：读取 bookcase.zip，装配 catalog、三棵目录树和每部经的 toc，命令行 `info/tree/find/book/check`。
 - **M0b 卷解析**（已完成）：`core/src/volume.rs` 用 quick-xml 解析一卷 XML，得到「带标点文本、纯文本、纯文本偏移到行号的映射、段落锚点」。2025.Q1 全部 21820 个卷文件解析无失败，平均约 1.5 ms/卷；与 `tools/ref_extract.py` 逐卷对比全部一致（`tools/diff_extract.py`）。
 - **M0c 索引与搜索**（已完成）：`aio` 分词器（二字组、单字、繁简折叠），Tantivy 索引（按卷），命令行 `index`、`search`：宽松匹配与精确短语、范围限定、分面计数与下钻、分页，每条结果给出命中处的行号、行内位置和带高亮的片段。
-- **M1 界面骨架**：Tauri 窗口，左侧树，右侧 Webview 阅读，CBETA 仓库可浏览、可全文搜索、可定位。
+- **M1 界面骨架**（已完成骨架）：`app/`，Tauri 2 + Svelte 5 + Vite。左侧目录树（可切换树，`a/` 叶子灰显、暂不可读），右侧阅读区按原书行显示一卷（行号在页边，卷与目次可切换，目次跨卷跳转），顶部搜索（宽松或精确短语），结果页带分面（点击即限定范围，部类可下钻）、分页、片段；点片段打开该卷、跳到行并高亮全部命中。没有索引时可在界面里建立，后台线程执行并显示进度。
+  - 命令层 `app/src-tauri/src/commands.rs`：`status`、`open_bookcase`、`tree`、`open_volume`、`search`、`build_index`（事件 `index-progress`、`index-done`）。耗时命令都是 async，不阻塞窗口主线程。
+  - 设置：bookcase 路径存在 `%APPDATA%\org.smartlibrary.desktop\config.json`（也可用环境变量 `SMART_LIBRARY_BOOKCASE`）；索引在 `%APPDATA%\org.smartlibrary.desktop\repos\cbeta\index`。
+  - 阅读区目前是「按行的纯文本」，还不是附录 A.6 的结构化渲染（段落、偈颂、校注气泡、图片），也不显示简体。这些是 M1 之后的工作。
 - **M2 标题快搜**：双击 Shift 即时检索。
 - **M3 本地目录适配器**：文件系统、增量索引、文档文本提取。
 - **M4 自维护知识库**：Note 模型、编辑器、实时索引。

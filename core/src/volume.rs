@@ -79,7 +79,40 @@ pub struct VolumeText {
     pub plain_to_text: Vec<u32>,
 }
 
+/// Opening marks start the next line; every other char between two lines
+/// (closing punctuation, spaces) stays at the end of the previous line.
+fn is_opening(c: char) -> bool {
+    "「『（〔［《〈“‘([<【〖".contains(c)
+}
+
 impl VolumeText {
+    /// The punctuated text cut into original lines: (lb, from, to) as char
+    /// ranges of `text`. The ranges are contiguous and cover all of `text`.
+    pub fn line_spans(&self) -> Vec<(Option<&str>, usize, usize)> {
+        let text: Vec<char> = self.text.chars().collect();
+        let mut starts: Vec<usize> = Vec::with_capacity(self.lines.len());
+        for (i, line) in self.lines.iter().enumerate() {
+            if i == 0 {
+                starts.push(0);
+                continue;
+            }
+            let first = self.plain_to_text[line.offset] as usize;
+            let mut b = self.plain_to_text[line.offset - 1] as usize + 1;
+            while b < first && !is_opening(text[b]) {
+                b += 1;
+            }
+            starts.push(b);
+        }
+        self.lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let to = starts.get(i + 1).copied().unwrap_or(text.len());
+                (l.lb.as_deref(), starts[i], to)
+            })
+            .collect()
+    }
+
     /// The line containing the given char offset of `plain`, and the
     /// 1-based position inside that line (punctuation not counted).
     pub fn locate(&self, offset: usize) -> Option<(&LineStart, usize)> {
@@ -667,6 +700,30 @@ mod tests {
         // 【】 are editorial; ○ 〃 ※ ～ 〇 are counted
         let v = extract_volume(&wrap("<p>【疏】三○初〃※～〇</p>")).unwrap();
         assert_eq!(v.plain, "疏三○初〃※～〇");
+    }
+
+    #[test]
+    fn cuts_text_into_original_lines() {
+        let v = extract_volume(&wrap(
+            r#"<p><lb n="0001a01" ed="T"/>甲乙，<lb n="0001a02" ed="T"/>「丙丁。」<lb n="0001a03" ed="T"/>戊</p>"#,
+        ))
+        .unwrap();
+        let text: Vec<char> = v.text.chars().collect();
+        let lines: Vec<(&str, String)> = v
+            .line_spans()
+            .into_iter()
+            .map(|(lb, a, b)| (lb.unwrap(), text[a..b].iter().collect()))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![("0001a01", "甲乙，".to_string()), ("0001a02", "「丙丁。」".to_string()), ("0001a03", "戊".to_string())]
+        );
+        // the real sample: lines cover the whole text
+        let v = extract_volume(T0004).unwrap();
+        let spans = v.line_spans();
+        assert_eq!(spans.len(), v.lines.len());
+        assert_eq!(spans.last().unwrap().2, v.text.chars().count());
+        assert!(spans.windows(2).all(|w| w[0].2 == w[1].1));
     }
 
     #[test]
