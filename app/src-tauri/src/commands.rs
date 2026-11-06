@@ -17,6 +17,8 @@ use smart_library_core::nav::NavNode;
 use smart_library_core::render::RenderOptions;
 use smart_library_core::search::{facet_label, locate, snippets, MatchMode, SearchIndex, SearchRequest};
 use smart_library_core::source::{DirSource, Source, ZipSource};
+use smart_library_core::cite::{parse_citations, parse_command};
+use smart_library_core::titles::{query_words, TitleIndex};
 use smart_library_core::toc::TocItem;
 use smart_library_core::volume::VolumeText;
 use std::collections::{HashMap, HashSet};
@@ -54,6 +56,8 @@ pub struct AppState {
     sources: RwLock<HashMap<String, Arc<Bookcase>>>,
     html: RwLock<HashMap<String, Arc<HtmlTree>>>,
     indexes: RwLock<HashMap<String, Arc<SearchIndex>>>,
+    /// title quick search, per library (built on first use)
+    titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
     building: Mutex<HashSet<String>>,
 }
 
@@ -68,6 +72,7 @@ impl AppState {
             sources: RwLock::new(HashMap::new()),
             html: RwLock::new(HashMap::new()),
             indexes: RwLock::new(HashMap::new()),
+            titles: RwLock::new(HashMap::new()),
             building: Mutex::new(HashSet::new()),
         }
     }
@@ -102,6 +107,19 @@ impl AppState {
         let bc = self.bookcase_of(lib)?;
         let t = Arc::new(HtmlTree::open(&bc, &lib.tree)?);
         self.html.write().unwrap().insert(lib.id.clone(), t.clone());
+        Ok(t)
+    }
+
+    fn titles(&self, lib: &Library) -> Result<Arc<TitleIndex>, String> {
+        if let Some(t) = self.titles.read().unwrap().get(&lib.id) {
+            return Ok(t.clone());
+        }
+        let t = Arc::new(if lib.kind == "html" {
+            TitleIndex::html(&*self.html_tree(lib)?)
+        } else {
+            TitleIndex::cbeta(&*self.bookcase_of(lib)?, &lib.tree)?
+        });
+        self.titles.write().unwrap().insert(lib.id.clone(), t.clone());
         Ok(t)
     }
 
@@ -400,6 +418,20 @@ pub async fn bind_libraries(
         }
     }
     state.save_registry()?;
+    // titles follow the tree
+    let ids: Vec<String> = state
+        .libraries
+        .read()
+        .unwrap()
+        .iter()
+        .filter(|l| same_path(&l.source, &path))
+        .map(|l| l.id.clone())
+        .collect();
+    let mut titles = state.titles.write().unwrap();
+    for id in ids {
+        titles.remove(&id);
+    }
+    drop(titles);
     Ok(status_of(&state))
 }
 
@@ -412,6 +444,7 @@ pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<St
     state.libraries.write().unwrap().retain(|l| l.id != id);
     state.indexes.write().unwrap().remove(&id);
     state.html.write().unwrap().remove(&id);
+    state.titles.write().unwrap().remove(&id);
     state.save_registry()?;
     let dir = state.data_dir.join("repos").join(&id);
     if dir.exists() {
@@ -926,6 +959,182 @@ pub async fn search(
         facets,
         hits,
     })
+}
+
+// ------------------------------------------------------------ quick search
+
+#[derive(Serialize)]
+pub struct QuickItemDto {
+    lib: String,
+    /// `book`, `chapter`, `juan`, `article`; `cite` for a CBETA citation
+    /// found in the query, `cite_missing` when it leads nowhere
+    kind: &'static str,
+    title: String,
+    /// the book of a chapter or juan, the folders of an article
+    context: String,
+    author: String,
+    book_id: Option<String>,
+    path: Option<String>,
+    lb: Option<String>,
+    /// citations: the quoted passage, highlighted when the volume opens
+    quote: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct QuickDto {
+    /// matches in every library (also those not shown)
+    libraries: Vec<LibCountDto>,
+    total: usize,
+    millis: f64,
+    items: Vec<QuickItemDto>,
+}
+
+/// Title quick search (design-spec 8.7) in one library or, without `lib`, in
+/// all of them (merged by match quality, then library order).
+#[tauri::command]
+pub async fn quick_search(
+    query: String,
+    lib: Option<String>,
+    limit: Option<usize>,
+    quote: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<QuickDto, String> {
+    let start = std::time::Instant::now();
+    let limit = limit.unwrap_or(200).clamp(1, 1000);
+    // `#...`: a command to go to a CBETA book, juan or line, nothing else
+    let command = query.trim_start().starts_with('#');
+    let words = query_words(&query);
+    let libs = state.libraries.read().unwrap().clone();
+    let indexes = titles_of(&state, &libs);
+    let mut counts = Vec::new();
+    let mut all = Vec::new(); // (rank, library order, entry)
+    for (n, (l, t)) in indexes.iter().enumerate() {
+        let m = if command { Vec::new() } else { t.search(&words) };
+        counts.push(LibCountDto {
+            id: l.id.clone(),
+            title: l.title.clone(),
+            count: m.len(),
+        });
+        if lib.as_deref().is_none_or(|id| id == l.id) {
+            all.extend(m.into_iter().map(|(r, i)| (r, n, i)));
+        }
+    }
+    // a `#` command, or a pasted CBETA citation `(CBETA 2025.Q1, T15, no.
+    // 614, p. 269c29)`: its passage first, whatever library tab is chosen
+    let mut cites = Vec::new();
+    let citations = if command {
+        let mut c: Vec<_> = parse_command(&query).into_iter().collect();
+        if let Some(c) = c.first_mut() {
+            c.quote = quote.filter(|q| !q.trim().is_empty());
+        }
+        c
+    } else {
+        parse_citations(&query)
+    };
+    if !citations.is_empty() {
+        let cbeta = libs.iter().find(|l| l.kind == "cbeta");
+        for c in citations {
+            let target = cbeta.and_then(|l| state.bookcase_of(l).ok()).and_then(|bc| bc.resolve_citation(&c));
+            cites.push(match (cbeta, target) {
+                (Some(l), Some(t)) => QuickItemDto {
+                    lib: l.id.clone(),
+                    kind: "cite",
+                    title: format!("{} {} {}", t.book_id, t.title, t.label).trim_end().to_string(),
+                    context: c.text.clone(),
+                    author: String::new(),
+                    book_id: Some(t.book_id),
+                    path: t.path,
+                    lb: t.lb,
+                    quote: c.quote.clone(),
+                },
+                _ => QuickItemDto {
+                    lib: cbeta.map(|l| l.id.clone()).unwrap_or_default(),
+                    kind: "cite_missing",
+                    title: if cbeta.is_some() { "没有找到这部经、卷或行".into() } else { "没有绑定 CBETA，无法定位".into() },
+                    context: c.text.clone(),
+                    author: String::new(),
+                    book_id: None,
+                    path: None,
+                    lb: None,
+                    quote: None,
+                },
+            });
+        }
+    }
+    let total = all.len();
+    let items = if limit < total {
+        all.select_nth_unstable(limit);
+        &mut all[..limit]
+    } else {
+        &mut all[..]
+    };
+    items.sort_unstable();
+    let items = items
+        .iter()
+        .map(|&(_, n, i)| {
+            let (l, t) = &indexes[n];
+            let e = &t.entries[i];
+            QuickItemDto {
+                lib: l.id.clone(),
+                kind: e.kind.as_str(),
+                title: e.title.clone(),
+                context: t.context(e).to_string(),
+                author: t.author(e).to_string(),
+                book_id: t.book_id(e).map(|s| s.to_string()),
+                path: e.path.clone(),
+                lb: e.lb.clone(),
+                quote: None,
+            }
+        })
+        .collect::<Vec<_>>();
+    let total = total + cites.len();
+    let items = cites.into_iter().chain(items).collect();
+    Ok(QuickDto {
+        libraries: counts,
+        total,
+        millis: start.elapsed().as_secs_f64() * 1000.0,
+        items,
+    })
+}
+
+#[derive(Serialize)]
+pub struct PastedCiteDto {
+    /// `#T15, no. 614, p. 269c29`
+    command: String,
+    quote: Option<String>,
+}
+
+/// Pasted text with a CBETA citation: the `#` command it means and its quote.
+#[tauri::command]
+pub async fn citation_command(text: String) -> Result<Option<PastedCiteDto>, String> {
+    Ok(parse_citations(&text).into_iter().next().map(|c| PastedCiteDto {
+        command: c.command(),
+        quote: c.quote,
+    }))
+}
+
+/// The title lists of the libraries that can be read, built in parallel
+/// the first time (a library that cannot be opened is left out).
+fn titles_of(state: &AppState, libs: &[Library]) -> Vec<(Library, Arc<TitleIndex>)> {
+    std::thread::scope(|s| {
+        let jobs: Vec<_> = libs.iter().map(|l| s.spawn(move || state.titles(l).ok())).collect();
+        libs.iter()
+            .zip(jobs)
+            .filter_map(|(l, j)| j.join().ok().flatten().map(|t| (l.clone(), t)))
+            .collect()
+    })
+}
+
+/// Build the title lists in the background, so that the first quick search
+/// does not wait.
+#[tauri::command]
+pub async fn prepare_titles(app: AppHandle) -> Result<(), String> {
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let libs = state.libraries.read().unwrap().clone();
+        titles_of(&state, &libs);
+    });
+    Ok(())
 }
 
 // ------------------------------------------------------------ index

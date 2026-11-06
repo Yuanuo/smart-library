@@ -5,6 +5,7 @@
   import * as workspace from "./lib/workspace.svelte.js";
   import LibraryPanel from "./lib/LibraryPanel.svelte";
   import BindDialog from "./lib/BindDialog.svelte";
+  import QuickSearch from "./lib/QuickSearch.svelte";
 
   let st = $state(null);
   let error = $state("");
@@ -17,6 +18,29 @@
 
   let progress = $state({}); // lib id -> { done, total }
   let binding = $state(null); // null, or { path } for the bind dialog
+  let quick = $state(false); // title quick search popup
+
+  // Shift pressed twice (no other key in between, within 400 ms)
+  let lastShift = 0;
+  let shiftAlone = false;
+  function shiftDown(e) {
+    if (e.key === "Shift") {
+      if (!e.repeat) shiftAlone = true;
+    } else {
+      shiftAlone = false;
+      lastShift = 0;
+    }
+  }
+  function shiftUp(e) {
+    if (e.key !== "Shift" || !shiftAlone) return;
+    const now = performance.now();
+    if (now - lastShift < 400) {
+      lastShift = 0;
+      if (!binding) quick = true;
+    } else {
+      lastShift = now;
+    }
+  }
 
   let wsEl = $state();
   let wsReady = false;
@@ -62,7 +86,9 @@
   });
 
   onMount(() => {
-    refresh();
+    refresh().then(() => st?.libraries.length && api.prepareTitles().catch(() => {}));
+    window.addEventListener("keydown", shiftDown, true);
+    window.addEventListener("keyup", shiftUp, true);
     const un1 = api.onIndexProgress((p) => (progress[p.lib] = p));
     const un2 = api.onIndexDone((d) => {
       delete progress[d.lib];
@@ -77,6 +103,8 @@
       un1.then((f) => f());
       un2.then((f) => f());
       window.removeEventListener("beforeunload", flush);
+      window.removeEventListener("keydown", shiftDown, true);
+      window.removeEventListener("keyup", shiftUp, true);
     };
   });
 
@@ -103,6 +131,22 @@
     }
   }
 
+  async function openQuick(item) {
+    try {
+      // a citation's quote is highlighted as a phrase
+      await workspace.openVolume({
+        lib: item.lib,
+        bookId: item.book_id,
+        path: item.path,
+        lb: item.lb,
+        query: item.quote ?? null,
+        phrase: !!item.quote,
+      });
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   function bound(newStatus) {
     const before = new Set(libraries.map((l) => l.id));
     st = newStatus;
@@ -111,6 +155,7 @@
     notice = added.length
       ? `已绑定：${added.map((l) => l.title).join("、")}。右键知识库可以建立索引。`
       : "目录树已更新。";
+    api.prepareTitles().catch(() => {});
   }
 
   async function unbind(l) {
@@ -174,6 +219,7 @@
 <div class="app">
   <header class="top">
     <div class="brand">Smart Library</div>
+    <button class="quick" onclick={() => (quick = true)} title="标题快搜：经名、品名、作译者（双击 Shift）">快搜 <kbd>⇧⇧</kbd></button>
     <form class="search" onsubmit={submit}>
       <input type="search" placeholder="搜索全部知识库（空格分隔关键词）" bind:value={query} aria-label="搜索" />
       <label class="check"><input type="checkbox" bind:checked={phrase} /> 精确短语</label>
@@ -214,6 +260,10 @@
   </div>
 </div>
 
+{#if quick}
+  <QuickSearch {libraries} onopen={openQuick} onclose={() => (quick = false)} />
+{/if}
+
 {#if binding}
   <BindDialog initialPath={binding.path} onclose={() => (binding = null)} onbound={bound} />
 {/if}
@@ -225,6 +275,8 @@
     border-bottom: 1px solid var(--line); background: var(--panel);
   }
   .brand { font-weight: 700; color: var(--accent); letter-spacing: 0.05em; white-space: nowrap; }
+  .quick { white-space: nowrap; font-size: 14px; }
+  .quick kbd { font-size: 11px; color: var(--muted); font-family: inherit; }
   .search { display: flex; gap: 8px; align-items: center; flex: 1; max-width: 760px; }
   .search input[type="search"] { flex: 1; min-width: 160px; }
   .check { display: flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 14px; }

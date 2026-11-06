@@ -14,7 +14,8 @@ use crate::toc::{parse_toc, parse_volume_path, Toc};
 use crate::volume::{extract_volume, VolumeText};
 use crate::article::{read_article, Article};
 use crate::render::{render_volume, RenderOptions, RenderedVolume};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::OnceLock;
 
 /// Files that must exist for a directory/zip to count as a bookcase.
 pub const REQUIRED_FILES: [&str; 7] = [
@@ -68,6 +69,8 @@ pub struct Bookcase {
     pub tripitakas: Vec<Tripitaka>,
     pub catalog: Catalog,
     pub trees: Vec<TreeInfo>,
+    /// volume file -> its first line, from `spine.txt` (read when first needed)
+    spine: OnceLock<HashMap<String, String>>,
 }
 
 impl Bookcase {
@@ -118,6 +121,18 @@ impl Bookcase {
             tripitakas,
             catalog,
             trees,
+            spine: OnceLock::new(),
+        })
+    }
+
+    /// First line of every volume file (`spine.txt`: `XML/T/T01/T01n0001_001.xml , 0001a01`).
+    pub fn spine(&self) -> &HashMap<String, String> {
+        self.spine.get_or_init(|| {
+            let text = self.source.read("spine.txt").map(|b| decode_auto(&b)).unwrap_or_default();
+            text.lines()
+                .filter_map(|l| l.split_once(','))
+                .map(|(p, lb)| (p.trim().to_string(), lb.trim().to_string()))
+                .collect()
         })
     }
 
@@ -242,6 +257,12 @@ impl Bookcase {
 
     /// All volumes (juan) of a book, ordered by juan number.
     pub fn volumes(&self, book_id: &str) -> Vec<VolumeRef> {
+        self.volumes_with_toc(book_id, self.outline(book_id).as_ref())
+    }
+
+    /// [`Bookcase::volumes`] with the book's toc already read (or `None` when
+    /// it has no toc file), so that callers needing both parse it once.
+    pub fn volumes_with_toc(&self, book_id: &str, toc: Option<&Toc>) -> Vec<VolumeRef> {
         let book = match self.catalog.books.get(book_id) {
             Some(b) => b,
             None => return Vec::new(),
@@ -250,7 +271,7 @@ impl Bookcase {
         // juan sorts in physical order
         let mut map: BTreeMap<(u16, String), VolumeRef> = BTreeMap::new();
 
-        if let Some(toc) = self.outline(book_id) {
+        if let Some(toc) = toc {
             for file in toc.volume_files() {
                 if let Some(vn) = parse_volume_path(&file) {
                     let exists = self.source.exists(&file);

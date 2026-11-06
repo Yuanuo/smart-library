@@ -12,6 +12,10 @@ export const openNode = (lib, bookId, path, query = null, phrase = false) =>
   invoke("open_node", { lib, bookId, path, query, phrase });
 export const resolveNode = (lib, bookId = null, path = null) => invoke("resolve_node", { lib, bookId, path });
 export const search = (args) => invoke("search", args);
+export const quickSearch = (query, lib = null, limit = 200, quote = null) =>
+  invoke("quick_search", { query, lib, limit, quote });
+export const citationCommand = (text) => invoke("citation_command", { text });
+export const prepareTitles = () => invoke("prepare_titles");
 export const buildIndex = (lib) => invoke("build_index", { lib });
 export const onIndexProgress = (fn) => listen("index-progress", (e) => fn(e.payload));
 export const onIndexDone = (fn) => listen("index-done", (e) => fn(e.payload));

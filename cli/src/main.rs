@@ -21,6 +21,7 @@ fn usage() {
   smart-library text  <bookcase.zip|dir> <volume path, e.g. XML/T/T01/T01n0004_001.xml> [--punct]
   smart-library volumes <bookcase.zip|dir> [path prefix, e.g. XML/T/] [--out DIR] [--every N] [--keep-mulu] [--render]
   smart-library libraries <bookcase.zip|dir>
+  smart-library titles <bookcase.zip|dir> [keywords ...] [--tree bulei|longzang|...] [--limit N]
   smart-library index <bookcase.zip|dir> [--index DIR] [--tree <id of an HTML tree, e.g. longzang>]
   smart-library search <bookcase.zip|dir> <query> [--phrase] [--scope bulei/阿含部類] [--page N] [--limit N]
                        [--facet bulei/阿含部類] [--index DIR]
@@ -87,6 +88,21 @@ fn main() {
             }
         },
         "libraries" => cmd_libraries(&bc),
+        "titles" => {
+            // every word that is not a flag or a flag's value is a keyword
+            let mut words = Vec::new();
+            let mut i = 3;
+            while i < args.len() {
+                if args[i].starts_with("--") {
+                    i += 2;
+                } else {
+                    words.push(args[i].as_str());
+                    i += 1;
+                }
+            }
+            let limit = flag_value(&args, "--limit").and_then(|v| v.parse().ok()).unwrap_or(20);
+            cmd_titles(&bc, flag_value(&args, "--tree").unwrap_or("bulei"), &words.join(" "), limit);
+        }
         "index" => {
             let dir = flag_value(&args, "--index").unwrap_or(DEFAULT_INDEX);
             cmd_index(&bc, Path::new(dir), flag_value(&args, "--tree"));
@@ -142,6 +158,75 @@ fn cmd_libraries(bc: &Bookcase) {
             TreeGroup::Other => "nothing readable".to_string(),
         };
         println!("{:<9} {:<16} {:>6} links  {}", t.id, t.title, t.leaves, group);
+    }
+}
+
+fn cmd_titles(bc: &Bookcase, tree: &str, query: &str, limit: usize) {
+    use smart_library_core::library::{classify_trees, HtmlTree, TreeGroup};
+    use smart_library_core::titles::TitleIndex;
+    use smart_library_core::cite::{parse_citations, parse_command};
+    let cites = match parse_command(query) {
+        Some(c) => vec![c],
+        None => parse_citations(query),
+    };
+    for c in cites {
+        match bc.resolve_citation(&c) {
+            Some(t) => println!(
+                "citation {} -> {} {} {} {}#{}{}",
+                c.text,
+                t.book_id,
+                t.title,
+                t.label,
+                t.path.as_deref().unwrap_or("(first volume)"),
+                t.lb.as_deref().unwrap_or(""),
+                if t.quote_found { " (quote found)" } else { "" }
+            ),
+            None => println!("citation {} -> not found", c.text),
+        }
+        if let Some(q) = &c.quote {
+            println!("  quote: {}", q);
+        }
+    }
+    let t0 = std::time::Instant::now();
+    let group = classify_trees(bc).into_iter().find(|t| t.id == tree).map(|t| t.group);
+    let index = match group {
+        Some(TreeGroup::Html(_)) => HtmlTree::open(bc, tree).map(|t| TitleIndex::html(&t)),
+        Some(_) => TitleIndex::cbeta(bc, tree),
+        None => Err(format!("unknown tree: {}", tree)),
+    };
+    let index = match index {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let built = t0.elapsed();
+    let t1 = std::time::Instant::now();
+    let (total, top) = index.top(query, limit);
+    let took = t1.elapsed();
+    println!(
+        "{} entries in tree {} (built in {:.0} ms); {} matches in {:.1} ms",
+        index.len(),
+        tree,
+        built.as_secs_f64() * 1000.0,
+        total,
+        took.as_secs_f64() * 1000.0
+    );
+    for e in top {
+        let mut line = format!("[{}] {}", e.kind.as_str(), e.title);
+        for extra in [index.context(e), index.author(e)] {
+            if !extra.is_empty() {
+                line.push_str(&format!(" / {}", extra));
+            }
+        }
+        if let Some(p) = &e.path {
+            line.push_str(&format!("  -> {}", p));
+        }
+        if let Some(lb) = &e.lb {
+            line.push_str(&format!("#{}", lb));
+        }
+        println!("{}", line);
     }
 }
 
