@@ -15,7 +15,10 @@ fn usage() {
   smart-library tree  <bookcase.zip|dir> [tree id from `info`, e.g. simple] [--depth N]
   smart-library find  <bookcase.zip|dir> <keyword>
   smart-library book  <bookcase.zip|dir> <book id, e.g. T0262>
-  smart-library check <bookcase.zip|dir>"
+  smart-library check <bookcase.zip|dir>
+  smart-library text  <bookcase.zip|dir> <book id> [juan] [--punct]
+  smart-library text  <bookcase.zip|dir> <volume path, e.g. XML/T/T01/T01n0004_001.xml> [--punct]
+  smart-library volumes <bookcase.zip|dir> [path prefix, e.g. XML/T/] [--out DIR] [--every N] [--keep-mulu]"
     );
 }
 
@@ -64,6 +67,22 @@ fn main() {
             }
         },
         "check" => cmd_check(&bc),
+        "text" => match args.get(3) {
+            Some(target) => {
+                let juan = args.get(4).filter(|a| !a.starts_with("--")).map(|s| s.as_str());
+                cmd_text(&bc, target, juan, args.iter().any(|a| a == "--punct"));
+            }
+            None => {
+                usage();
+                std::process::exit(2);
+            }
+        },
+        "volumes" => {
+            let prefix = args.get(3).filter(|a| !a.starts_with("--")).map(|s| s.as_str()).unwrap_or("XML/");
+            let flag = |name: &str| args.iter().position(|a| a == name).and_then(|p| args.get(p + 1));
+            let every = flag("--every").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).max(1);
+            cmd_volumes(&bc, prefix, flag("--out").map(|s| s.as_str()), every, args.iter().any(|a| a == "--keep-mulu"));
+        }
         _ => {
             usage();
             std::process::exit(2);
@@ -319,5 +338,154 @@ fn show(label: &str, books: &[&Book]) {
     println!("{}: {}", label, books.len());
     for b in books.iter().take(10) {
         println!("    {} {}", b.id, b.title);
+    }
+}
+
+/// Print one volume, one original line per output line: `lb  text`.
+fn cmd_text(bc: &Bookcase, target: &str, juan: Option<&str>, punct: bool) {
+    let path = if target.starts_with("XML/") {
+        target.to_string()
+    } else {
+        let vols = bc.volumes(target);
+        let idx: u16 = juan.and_then(|j| j.parse().ok()).unwrap_or(1);
+        match vols.iter().find(|v| v.idx == idx && v.exists) {
+            Some(v) => v.path.clone(),
+            None => {
+                eprintln!("{}: no volume {} (see `book {}`)", target, idx, target);
+                std::process::exit(1);
+            }
+        }
+    };
+    let v = match bc.volume_text(&path) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        }
+    };
+    println!("{}  canon {}, {} chars, {} plain chars, {} lines", path, v.canon, v.text.chars().count(), v.plain.chars().count(), v.lines.len());
+    if punct {
+        println!("{}", v.text);
+        return;
+    }
+    let plain: Vec<char> = v.plain.chars().collect();
+    for (i, line) in v.lines.iter().enumerate() {
+        let end = v.lines.get(i + 1).map(|l| l.offset).unwrap_or(plain.len());
+        let s: String = plain[line.offset..end].iter().collect();
+        println!("{:<8} {}", line.lb.as_deref().unwrap_or("-"), s);
+    }
+}
+
+/// Extract many volumes: report failures and timing; with `--out`, write
+/// `{stem}.text.txt`, `{stem}.plain.txt`, `{stem}.linemap.json` in the same
+/// format as `tools/ref_extract.py --golden` for `tools/diff_extract.py`.
+fn cmd_volumes(bc: &Bookcase, prefix: &str, out: Option<&str>, every: usize, keep_mulu: bool) {
+    let mut paths: Vec<String> = bc
+        .source
+        .list()
+        .into_iter()
+        .filter(|p| p.starts_with(prefix) && p.ends_with(".xml") && p.starts_with("XML/"))
+        .collect();
+    paths.sort();
+    let paths: Vec<String> = paths.into_iter().step_by(every).collect();
+    if let Some(dir) = out {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            eprintln!("error: {}: {}", dir, e);
+            std::process::exit(1);
+        }
+    }
+    let start = std::time::Instant::now();
+    let (mut ok, mut chars, mut no_lines) = (0usize, 0usize, Vec::new());
+    let mut failed: Vec<String> = Vec::new();
+    let (mut anchors_ok, mut anchors_bad) = (0usize, Vec::<String>::new());
+    for p in &paths {
+        let res = match (keep_mulu, bc.source.read(p)) {
+            (true, Some(bytes)) => smart_library_core::volume::extract_volume_with(
+                &smart_library_core::text::decode_auto(&bytes),
+                false,
+            ),
+            _ => bc.volume_text(p),
+        };
+        match res {
+            Ok(v) => {
+                ok += 1;
+                // `p` ids end with the line (7 chars) and the 1-based position in it
+                for (id, off) in &v.anchors {
+                    let n = id.len();
+                    if n < 9 || !id.is_char_boundary(n - 9) {
+                        continue;
+                    }
+                    let (want_lb, want_pos) = (&id[n - 9..n - 2], id[n - 2..].parse::<usize>().ok());
+                    let got = v.locate(*off).map(|(l, pos)| (l.lb.clone().unwrap_or_default(), pos));
+                    // a paragraph that starts right at a line end is reported on the next line
+                    let at_prev_end = |lb: &str, pos: usize| {
+                        pos == 1
+                            && v.lines.iter().position(|l| l.lb.as_deref() == Some(lb)).map_or(false, |i| {
+                                i > 0
+                                    && v.lines[i - 1].lb.as_deref() == Some(want_lb)
+                                    && Some(v.lines[i].offset - v.lines[i - 1].offset + 1) == want_pos
+                            })
+                    };
+                    match (got, want_pos) {
+                        (Some((lb, pos)), Some(wp)) if lb == want_lb && pos == wp => anchors_ok += 1,
+                        (Some((lb, pos)), _) if at_prev_end(&lb, pos) => anchors_ok += 1,
+                        (got, _) => anchors_bad.push(format!("{} {} -> {:?}", p, id, got)),
+                    }
+                }
+                chars += v.plain.chars().count();
+                if v.lines.iter().all(|l| l.lb.is_none()) {
+                    no_lines.push(p.clone());
+                }
+                if let Some(dir) = out {
+                    let stem = p.rsplit('/').next().unwrap_or(p).trim_end_matches(".xml");
+                    let base = Path::new(dir).join(stem);
+                    let mut json = String::from("[");
+                    for (i, l) in v.lines.iter().enumerate() {
+                        let lb = match &l.lb {
+                            Some(s) => format!("\"{}\"", s),
+                            None => "null".to_string(),
+                        };
+                        json.push_str(if i == 0 { "
+" } else { ",
+" });
+                        json.push_str(&format!(" {{
+  \"offset\": {},
+  \"lb\": {}
+ }}", l.offset, lb));
+                    }
+                    json.push_str("
+]");
+                    let w = |ext: &str, s: &str| std::fs::write(base.with_extension(ext), s);
+                    if let Err(e) = w("text.txt", &format!("{}
+", v.text))
+                        .and(w("plain.txt", &format!("{}
+", v.plain)))
+                        .and(w("linemap.json", &json))
+                    {
+                        eprintln!("error writing {}: {}", base.display(), e);
+                    }
+                }
+            }
+            Err(e) => failed.push(e),
+        }
+    }
+    let secs = start.elapsed().as_secs_f64();
+    println!("volumes: {} (every {}), ok {}, failed {}", paths.len(), every, ok, failed.len());
+    println!("plain chars: {}  time: {:.1}s ({:.2} ms/volume)", chars, secs, secs * 1000.0 / paths.len().max(1) as f64);
+    for e in failed.iter().take(20) {
+        println!("  FAILED {}", e);
+    }
+    println!("paragraph anchors matching their line/position: {} ok, {} not", anchors_ok, anchors_bad.len());
+    let mut bad_by_canon: BTreeMap<&str, usize> = BTreeMap::new();
+    for a in &anchors_bad {
+        *bad_by_canon.entry(a.split('/').nth(1).unwrap_or("?")).or_default() += 1;
+    }
+    println!("    by canon: {:?}", bad_by_canon);
+    for a in anchors_bad.iter().step_by((anchors_bad.len() / 15).max(1)).take(15) {
+        println!("    {}", a);
+    }
+    println!("volumes without any lb of their canon: {}", no_lines.len());
+    for p in no_lines.iter().take(10) {
+        println!("    {}", p);
     }
 }

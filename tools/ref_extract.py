@@ -6,8 +6,11 @@ rules in docs/design-spec.md appendix A (derived from the old Java implementatio
 
   * body text = reading text only: <lem> yes, <rdg>/<note type=orig|mod|cf1..> no
   * <note place="inline"> (夹注) is kept, wrapped in full-width parentheses
-  * <g ref="#CBxxxx"/> (missing glyph): charDecl normalized form > composition >
-    Siddham glyph > charName
+  * <g ref="#CBxxxx"/> (missing glyph) becomes exactly one char: single-char
+    normalized form > mapping unicode > mapping normal_unicode > PUA; composition or
+    charName only when none exists. ("Character in the Siddham font" is a font code.)
+  * <cb:tt> (with or without type="app"): the zh-Hant <cb:t>, else the first
+  * <cb:mulu> is an editorial outline label, not printed text: skipped
   * <space quantity="n"/> -> n spaces; milestone/pb/lb/unclear are skipped as text
   * source-file line breaks are layout only and are dropped
   * <lb ed="T"/> carries the original page/column/line; only lb whose ed equals the
@@ -36,7 +39,7 @@ def q(ns, name):
     return "{%s}%s" % (ns, name)
 
 # punctuation that CBETA added (the original books have none)
-PUNCT = set("，。、；：？！「」『』（）〔〕［］《》〈〉…—·．﹑﹔﹕﹖﹗“”‘’,.;:?!()[]<>")
+PUNCT = set("，。、；：？！「」『』（）〔〕［］《》〈〉…—·．﹑﹔﹕﹖﹗“”‘’,.;:?!()[]<>【】〖〗︵︶｀＇")
 
 def load_chardecl(root):
     decl = {}
@@ -47,8 +50,18 @@ def load_chardecl(root):
             name = (p.findtext(q(TEI, "localName")) or "").strip().lower()
             props[name] = (p.findtext(q(TEI, "value")) or "").strip()
         name = (ch.findtext(q(TEI, "charName")) or "").strip()
-        text = (props.get("normalized form") or props.get("composition")
-                or props.get("character in the siddham font") or name)
+        maps = {}
+        for m in ch.findall(q(TEI, "mapping")):
+            v = (m.text or "").strip()
+            if m.get("type") not in maps and v.upper().startswith("U+"):
+                try:
+                    maps[m.get("type")] = chr(int(v[2:], 16))
+                except ValueError:
+                    pass
+        norm = props.get("normalized form") or ""
+        text = ((norm if len(norm) == 1 else "") or maps.get("unicode")
+                or maps.get("normal_unicode") or maps.get("PUA")
+                or norm or props.get("composition") or name)
         decl[cid] = text
     return decl
 
@@ -101,18 +114,19 @@ class Extractor:
                 n = 0
             self.emit(" " * n)
             return
+        if tag == "mulu" and el.tag == q(CB, "mulu"):
+            return
         if tag == "tt" and el.tag == q(CB, "tt"):
-            if el.get("type") == "app":
-                ts = el.findall(q(CB, "t"))
-                pick = None
-                for t in ts:
-                    if t.get(q(XML, "lang")) == "zh-Hant":
-                        pick = t
-                        break
-                if pick is None and ts:
-                    pick = ts[0]
-                if pick is not None:
-                    self.children(pick)
+            ts = el.findall(q(CB, "t"))
+            pick = None
+            for t in ts:
+                if t.get(q(XML, "lang")) == "zh-Hant":
+                    pick = t
+                    break
+            if pick is None and ts:
+                pick = ts[0]
+            if pick is not None:
+                self.children(pick)
             return
         self.children(el)
 
@@ -161,10 +175,10 @@ def main():
     if "--golden" in sys.argv:
         out = sys.argv[sys.argv.index("--golden") + 1]
         stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-        open("%s/%s.text.txt" % (out, stem), "w", encoding="utf-8").write(text + "\n")
-        open("%s/%s.plain.txt" % (out, stem), "w", encoding="utf-8").write(plain + "\n")
+        open("%s/%s.text.txt" % (out, stem), "w", encoding="utf-8", newline=chr(10)).write(text + "\n")
+        open("%s/%s.plain.txt" % (out, stem), "w", encoding="utf-8", newline=chr(10)).write(plain + "\n")
         json.dump([{"offset": o, "lb": n} for o, n in line_map],
-                  open("%s/%s.linemap.json" % (out, stem), "w", encoding="utf-8"),
+                  open("%s/%s.linemap.json" % (out, stem), "w", encoding="utf-8", newline=chr(10)),
                   ensure_ascii=False, indent=1)
         print("golden files written to", out)
 

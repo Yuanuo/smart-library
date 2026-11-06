@@ -11,3 +11,4 @@ pub mod nav;
 pub mod source;
 pub mod text;
 pub mod toc;
+pub mod volume;

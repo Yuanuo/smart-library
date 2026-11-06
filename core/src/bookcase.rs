@@ -11,6 +11,7 @@ use crate::nav::{parse_nav, NavDoc};
 use crate::source::Source;
 use crate::text::decode_auto;
 use crate::toc::{parse_toc, parse_volume_path, Toc};
+use crate::volume::{extract_volume, VolumeText};
 use std::collections::BTreeMap;
 
 /// Files that must exist for a directory/zip to count as a bookcase.
@@ -199,6 +200,15 @@ impl Bookcase {
         let book = self.catalog.books.get(book_id)?;
         let bytes = self.source.read(&book.toc_path())?;
         Some(parse_toc(&decode_auto(&bytes)))
+    }
+
+    /// Reading text of one volume file (M0b). `Err` when the file is missing
+    /// or cannot be parsed; callers that build trees or indexes skip such a
+    /// volume instead of failing (design-spec A.4: entries without real
+    /// content are kept in the menu and ignored).
+    pub fn volume_text(&self, path: &str) -> Result<VolumeText, String> {
+        let bytes = self.source.read(path).ok_or_else(|| format!("{}: not in the bookcase", path))?;
+        extract_volume(&decode_auto(&bytes)).map_err(|e| format!("{}: {}", path, e))
     }
 
     /// All volumes (juan) of a book, ordered by juan number.
