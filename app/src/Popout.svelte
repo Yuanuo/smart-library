@@ -7,6 +7,7 @@
   import { emit } from "@tauri-apps/api/event";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import ReaderPanel from "./lib/ReaderPanel.svelte";
+  import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
 
   let { info } = $props();
   // `info` comes from the window URL and never changes
@@ -41,11 +42,23 @@
     const un2 = win.onCloseRequested(() => {
       if (!docking) emit("popout-closed", { tab: start.tab });
     });
+    // shortcuts are carried out by the main window
+    const offKeys = installShortcuts((type) => emit("popout-shortcut", { type, text: readerSelection().slice(0, 200) }));
     return () => {
       un1.then((f) => f());
       un2.then((f) => f());
+      offKeys();
     };
   });
+
+  /** Menu actions (search, bookmarks, tags) are carried out by the main window. */
+  function forward(a) {
+    const v = a.vol || {};
+    emit("popout-action", {
+      type: a.type, text: a.text, lb: a.lb, excerpt: a.excerpt,
+      vol: { lib: v.lib, path: v.path, book_id: v.book_id, title: v.title, label: v.label, author: v.author },
+    });
+  }
 
   let lastLb = start.lb;
   async function dock() {
@@ -64,6 +77,7 @@
     <ReaderPanel
       {p}
       onopen={(req) => emit("popout-open", req)}
+      onaction={forward}
       onprogress={(lb, mode) => {
         lastLb = lb;
         emit("popout-progress", { tab: start.tab, lb, mode });

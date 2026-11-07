@@ -1,10 +1,12 @@
 <script>
   // The reading history: every document opened so far, newest first, with
   // the position where it was left. Click to open there.
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import * as api from "./api.js";
 
-  let { onopen, onclose } = $props();
+  // `embedded`: shown in a window of its own (no backdrop, stays open);
+  // `refresh` changes when the data may have changed
+  let { onopen, onclose, onpopout = null, embedded = false, refresh = 0 } = $props();
   let filter = $state("");
   let items = $state([]);
   let sel = $state(0);
@@ -22,10 +24,11 @@
     }
   }
 
-  onMount(() => {
-    load();
-    input?.focus();
+  $effect(() => {
+    refresh;
+    untrack(load);
   });
+  onMount(() => input?.focus());
 
   function changed() {
     clearTimeout(timer);
@@ -43,7 +46,7 @@
 
   function go(it) {
     onopen(it);
-    onclose();
+    if (!embedded) onclose();
   }
 
   async function remove(it) {
@@ -57,7 +60,7 @@
   }
 
   function key(e) {
-    if (e.key === "Escape") onclose();
+    if (e.key === "Escape" && !embedded) onclose();
     else if (e.key === "ArrowDown") {
       e.preventDefault();
       sel = Math.min(items.length - 1, sel + 1);
@@ -73,12 +76,13 @@
   }
 </script>
 
-<div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
+<div class="backdrop" class:embedded role="presentation" onmousedown={(e) => !embedded && e.target === e.currentTarget && onclose()}>
   <div class="box" role="dialog" aria-modal="true" aria-label="最近打开" tabindex="-1" onkeydown={key}>
     <div class="head">
       <strong>最近打开</strong>
       <input type="search" placeholder="按标题筛选" bind:value={filter} bind:this={input} oninput={changed} />
       <button class="link" onclick={clearAll} disabled={!items.length}>清空历史</button>
+      {#if onpopout && !embedded}<button class="link" onclick={onpopout} title="在独立窗口中持续显示，可以和主窗口同时操作">新窗口</button>{/if}
     </div>
     {#if error}<p class="error">{error}</p>{/if}
     <ul bind:this={list}>
@@ -107,6 +111,8 @@
     width: min(760px, calc(100vw - 32px)); max-height: 72vh; display: flex; flex-direction: column;
     background: var(--paper); border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3); outline: none;
   }
+  .backdrop.embedded { position: static; background: none; padding: 0; display: block; height: 100%; }
+  .embedded .box { width: 100%; max-height: none; height: 100%; border-radius: 0; box-shadow: none; }
   .head { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .head input { flex: 1; }
   ul { list-style: none; margin: 0; padding: 4px; overflow: auto; }

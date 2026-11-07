@@ -275,6 +275,18 @@
     return (block?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
   }
 
+  /** The browser's own find bar (Ctrl+F), filled with the selected text. */
+  async function findInPage(text) {
+    // the bar takes the page's selection: make sure it is this text
+    if (window.getSelection()?.toString().trim() !== text) window.find?.(text, false, false, true);
+    await new Promise((r) => setTimeout(r, 60)); // let the menu close
+    try {
+      await api.findInPage();
+    } catch {
+      window.find?.(text, false, false, true);
+    }
+  }
+
   function readerMenu(e) {
     if (e.target.closest?.(".tip")) return;
     const s = window.getSelection();
@@ -296,11 +308,11 @@
         items.push(
           { label: `全文检索：${q}`, action: act("search") },
           { label: `全文检索（精确检索）：${q}`, action: act("phrase") },
+          { label: `全文检索（检索本书）：${q}`, action: act("book") },
           { label: `快捷检索（经名、作译者等）：${q}`, action: act("quick") },
         );
       }
-      items.push({ label: `页内查找：${q}`, action: () => window.find(text, false, false, true) });
-      if (onaction) items.push({ label: `全文检索（检索本书）：${q}`, action: act("book") });
+      items.push({ label: `页内查找：${q}`, action: () => findInPage(text) });
       items.push(
         "separator",
         { label: "查拼音（待支持）", action: () => {}, disabled: true },

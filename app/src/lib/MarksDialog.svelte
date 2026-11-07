@@ -3,12 +3,14 @@
   // that carry it; filter by words; look at everything or at the document
   // being read. Click an entry to go back to its place (when its library is
   // still bound).
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
   import * as api from "./api.js";
   import TagDialog from "./TagDialog.svelte";
 
   // `doc`: { lib, path, bookId, title } of the tab being read, or null
-  let { doc = null, onopen, onclose } = $props();
+  // `embedded`: shown in a window of its own (no backdrop, stays open);
+  // `refresh` changes when the data may have changed
+  let { doc = null, onopen, onclose, onpopout = null, embedded = false, refresh = 0 } = $props();
 
   const KINDS = [
     [null, "全部"],
@@ -42,8 +44,12 @@
     }
   }
 
-  onMount(() => {
-    load();
+  $effect(() => {
+    refresh;
+    doc?.path;
+    untrack(load);
+  });
+  $effect(() => {
     input?.focus();
   });
 
@@ -69,7 +75,7 @@
   function go(m) {
     if (!m.available) return;
     onopen(m);
-    onclose();
+    if (!embedded) onclose();
   }
 
   async function remove(m) {
@@ -90,14 +96,15 @@
         go(items[sel]);
       }
     }
-    if (e.key === "Escape" && !editing) onclose();
+    if (e.key === "Escape" && !editing && !embedded) onclose();
   }
 </script>
 
-<div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
+<div class="backdrop" class:embedded role="presentation" onmousedown={(e) => !embedded && e.target === e.currentTarget && onclose()}>
   <div class="box" role="dialog" aria-modal="true" aria-label="收藏与标签" tabindex="-1" onkeydown={key}>
     <div class="head">
       <strong>收藏与标签</strong>
+      {#if onpopout && !embedded}<button class="link" onclick={onpopout} title="在独立窗口中持续显示，可以和主窗口同时操作">新窗口</button>{/if}
       <div class="seg" role="group" aria-label="类型">
         {#each KINDS as [k, label]}
           <button class:on={kind === k} onclick={() => setKind(k)}>{label}</button>
@@ -173,6 +180,8 @@
     width: min(960px, calc(100vw - 32px)); height: min(76vh, 760px); display: flex; flex-direction: column;
     background: var(--paper); border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3); outline: none;
   }
+  .backdrop.embedded { position: static; background: none; padding: 0; display: block; height: 100%; }
+  .embedded .box { width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
   .head { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .head input[type="search"] { flex: 1; min-width: 180px; }
   .check { display: flex; gap: 4px; align-items: center; font-size: 13px; white-space: nowrap; }

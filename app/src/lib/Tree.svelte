@@ -29,7 +29,7 @@
           <Icon name={hasChildren ? (open ? "folder-open" : "folder") : "file"} size={17} />
         </span>
         {#if node.book_id || node.path}
-          <button class="leaf" class:seen={wasOpened(node)} onclick={() => onopen(node, key)} title={node.title}>{node.title}</button>
+          <button class="leaf" class:seen={wasOpened(node)} onclick={() => { onopen(node, key); if (hasChildren) ontoggle(key); }} title={node.title}>{node.title}</button>
         {:else if node.href}
           <span class="leaf unsupported" title="内容尚未接入：{node.href}">{node.title}</span>
         {:else}

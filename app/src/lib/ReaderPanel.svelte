@@ -34,7 +34,7 @@
         // the tab shows the title; its tooltip also the id, author and path
         const t = v.label ? `${v.title} ${v.label}` : v.title;
         const who = [v.book_id, v.author].filter(Boolean).join(" · ");
-        ontitle?.(t, [t, who, v.path].filter(Boolean).join("\n"));
+        ontitle?.(t, [t, who, v.path].filter(Boolean).join("\n"), { author: v.author || "" });
       })
       .catch((e) => (error = String(e)));
   });

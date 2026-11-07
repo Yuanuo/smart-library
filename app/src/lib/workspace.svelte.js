@@ -13,7 +13,7 @@
 
 import { createDockview } from "dockview-core";
 import { mount, unmount } from "svelte";
-import { emitTo, listen } from "@tauri-apps/api/event";
+import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api.js";
 import ReaderPanel from "./ReaderPanel.svelte";
@@ -29,6 +29,7 @@ let hooks = {};
 let progress = {}; // tab -> { lb, mode, t }
 let popouts = {}; // tab -> { label, lib, bookId, path, title }
 let tooltips = {}; // tab -> tooltip of its tab (title, author, path)
+let metas = {}; // tab -> { author } of its document
 let restoring = false;
 let saveTimer = null;
 let defaultMode = "para";
@@ -147,9 +148,10 @@ function readerRenderer() {
           onlocate: () => hooks.onlocate?.({ lib: state.lib, bookId: state.bookId, path: state.path }),
           onaction: (a) => hooks.onaction?.(a),
           onprogress: (lb, mode) => recordProgress(tab, lb, mode),
-          ontitle: (t, tooltip) => {
+          ontitle: (t, tooltip, meta) => {
             panelApi?.setTitle(t);
-            if (panelApi?.isActive) ws.current = { title: t, lib: state.lib, path: state.path, bookId: state.bookId };
+            metas[panelApi.id] = meta || {};
+            if (panelApi?.isActive) ws.current = { title: t, lib: state.lib, path: state.path, bookId: state.bookId, author: meta?.author || "" };
             tooltips[panelApi.id] = tooltip;
             applyTooltip(panelApi.id);
           },
@@ -168,7 +170,10 @@ function readerRenderer() {
       }
     },
     dispose() {
-      if (panelApi) delete tooltips[panelApi.id];
+      if (panelApi) {
+        delete tooltips[panelApi.id];
+        delete metas[panelApi.id];
+      }
       if (instance) unmount(instance);
     },
   };
@@ -324,7 +329,7 @@ export async function init(element, h) {
   dv.onDidActivePanelChange((panel) => {
     ws.current =
       panel && panel.id !== "search" && panel.params?.lib
-        ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null }
+        ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null, author: metas[panel.id]?.author || "" }
         : null;
   });
   dv.onDidAddPanel(refreshEmpty);
@@ -370,7 +375,10 @@ export async function init(element, h) {
  */
 export async function openVolume({ lib, bookId = null, path = null, lb = null, query = null, phrase = false }) {
   const id = await api.resolveNode(lib, bookId, path);
-  api.recentTouch(id.lib, id.path, id.book_id, id.title).then(() => ws.opened++).catch(() => {});
+  api.recentTouch(id.lib, id.path, id.book_id, id.title).then(() => {
+      ws.opened++;
+      emit("data-changed").catch(() => {});
+    }).catch(() => {});
   if (popouts[id.tab]) {
     const w = await WebviewWindow.getByLabel(popouts[id.tab].label);
     if (w) {

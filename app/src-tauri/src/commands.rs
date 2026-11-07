@@ -2065,3 +2065,89 @@ pub async fn save_workspace(workspace: serde_json::Value, state: State<'_, AppSt
     std::fs::write(&tmp, serde_json::to_vec(&workspace).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, file).map_err(|e| e.to_string())
 }
+
+// ------------------------------------------------------------ program info, fonts, find
+
+#[derive(Serialize)]
+pub struct AppInfo {
+    name: String,
+    /// YY.MM.DD
+    version: String,
+    data_dir: String,
+}
+
+/// Cargo's version is semver (`26.11.8`); the program shows it as a date.
+fn display_version() -> String {
+    let v = env!("CARGO_PKG_VERSION");
+    let p: Vec<&str> = v.split('.').collect();
+    if p.len() == 3 {
+        format!("{}.{:0>2}.{:0>2}", p[0], p[1], p[2])
+    } else {
+        v.to_string()
+    }
+}
+
+#[tauri::command]
+pub async fn app_info(state: State<'_, AppState>) -> Result<AppInfo, String> {
+    Ok(AppInfo {
+        name: "Smart Library".into(),
+        version: display_version(),
+        data_dir: state.data_dir.display().to_string(),
+    })
+}
+
+#[derive(Serialize, Clone)]
+pub struct FontDto {
+    family: String,
+    label: String,
+    cjk: bool,
+}
+
+/// The fonts installed on this computer (made once per run).
+#[tauri::command]
+pub async fn list_fonts() -> Result<Vec<FontDto>, String> {
+    static FONTS: std::sync::OnceLock<Vec<FontDto>> = std::sync::OnceLock::new();
+    if let Some(f) = FONTS.get() {
+        return Ok(f.clone());
+    }
+    let list = tauri::async_runtime::spawn_blocking(|| {
+        crate::fonts::installed()
+            .into_iter()
+            .map(|f| FontDto { family: f.family, label: f.label, cjk: f.cjk })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(FONTS.get_or_init(|| list).clone())
+}
+
+/// Open the browser's own find bar (what Ctrl+F does) by pressing the keys:
+/// the page cannot do it, and the bar takes the selected text as its input.
+#[tauri::command]
+pub async fn find_in_page() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL,
+        };
+        fn key(vk: u16, up: bool) -> INPUT {
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: if up { KEYEVENTF_KEYUP } else { 0 }, time: 0, dwExtraInfo: 0 },
+                },
+            }
+        }
+        let f = b'F' as u16;
+        let inputs = [key(VK_CONTROL, false), key(f, false), key(f, true), key(VK_CONTROL, true)];
+        let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+        if sent as usize == inputs.len() {
+            return Ok(());
+        }
+        Err("无法发送按键".into())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("不支持".into())
+    }
+}

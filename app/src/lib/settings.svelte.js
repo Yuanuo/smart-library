@@ -34,8 +34,10 @@ function load() {
 
 export const settings = $state(load());
 
-function stack(kind, custom) {
-  if (kind === "custom") return custom.trim() ? `"${custom.trim().replace(/"/g, "")}", serif` : null;
+function stack(kind, custom, fallback) {
+  if (kind === "custom") return custom.trim() ? `"${custom.trim().replace(/"/g, "")}", ${fallback}` : null;
+  // a font installed on this computer: `sys:<family>`
+  if (kind.startsWith("sys:")) return `"${kind.slice(4).replace(/"/g, "")}", ${fallback}`;
   return FONTS.find((f) => f[0] === kind)?.[2] ?? null;
 }
 
@@ -47,8 +49,8 @@ export function apply() {
   if (settings.theme === "auto") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", settings.theme);
   const set = (name, value) => (value == null ? root.style.removeProperty(name) : root.style.setProperty(name, value));
-  set("--ui-font", stack(settings.uiFont, settings.uiFontCustom));
-  set("--reader-font", stack(settings.readerFont, settings.readerFontCustom));
+  set("--ui-font", stack(settings.uiFont, settings.uiFontCustom, "sans-serif"));
+  set("--reader-font", stack(settings.readerFont, settings.readerFontCustom, "serif"));
   set("--reader-size", `${settings.readerSize}px`);
   set("--reader-line", String(settings.readerLine));
   if (settings.uiZoom !== appliedZoom) {

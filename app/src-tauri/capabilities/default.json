@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Permissions of the main window and of the pop-out reader windows",
-  "windows": ["main", "reader-*"],
+  "windows": ["main", "reader-*", "panel-*"],
   "permissions": [
     "core:default",
     "core:webview:allow-create-webview-window",

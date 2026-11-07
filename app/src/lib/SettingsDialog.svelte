@@ -1,10 +1,49 @@
 <script>
   // Settings: theme, interface zoom and font, reader font, size and line
   // height. Changes apply at once and are kept.
+  import { onMount } from "svelte";
+  import * as api from "./api.js";
   import { settings, update, reset, FONTS } from "./settings.svelte.js";
 
   let { onclose } = $props();
+
+  // the fonts installed on this computer (from the program, not the browser)
+  let cjk = $state([]);
+  let other = $state([]);
+  onMount(() => {
+    api
+      .listFonts()
+      .then((l) => {
+        cjk = l.filter((f) => f.cjk);
+        other = l.filter((f) => !f.cjk);
+      })
+      .catch(() => {});
+  });
+  const css = (f) => f.replace(/["';]/g, "");
+  const shown = (f) => (f.label !== f.family ? `${f.label}（${f.family}）` : f.family);
 </script>
+
+{#snippet picker(field, customField, hint)}
+  <select value={settings[field]} onchange={(e) => update({ [field]: e.currentTarget.value })}>
+    {#each FONTS.filter((f) => f[0] !== "custom") as [v, label]}<option value={v}>{label}</option>{/each}
+    {#if cjk.length}
+      <optgroup label="本机中文字体">
+        {#each cjk as f (f.family)}<option value={"sys:" + f.family} style="font-family: '{css(f.family)}'">{shown(f)}</option>{/each}
+      </optgroup>
+    {/if}
+    {#if other.length}
+      <optgroup label="本机其他字体">
+        {#each other as f (f.family)}<option value={"sys:" + f.family} style="font-family: '{css(f.family)}'">{shown(f)}</option>{/each}
+      </optgroup>
+    {/if}
+    <option value="custom">手动输入字体名…</option>
+  </select>
+  {#if settings[field] === "custom"}
+    <input type="text" placeholder={hint} value={settings[customField]}
+      onchange={(e) => update({ [customField]: e.currentTarget.value })} />
+  {/if}
+{/snippet}
+
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
   <div class="dialog" role="dialog" aria-modal="true" aria-label="设置" tabindex="-1"
@@ -29,13 +68,7 @@
       </div>
       <div class="row">
         <span>界面字体</span>
-        <select value={settings.uiFont} onchange={(e) => update({ uiFont: e.currentTarget.value })}>
-          {#each FONTS as [v, label]}<option value={v}>{label}</option>{/each}
-        </select>
-        {#if settings.uiFont === "custom"}
-          <input type="text" placeholder="字体名称，如 Microsoft YaHei" value={settings.uiFontCustom}
-            onchange={(e) => update({ uiFontCustom: e.currentTarget.value })} />
-        {/if}
+        {@render picker("uiFont", "uiFontCustom", "字体名称，如 Microsoft YaHei")}
       </div>
     </fieldset>
 
@@ -43,13 +76,7 @@
       <legend>阅读器</legend>
       <div class="row">
         <span>字体</span>
-        <select value={settings.readerFont} onchange={(e) => update({ readerFont: e.currentTarget.value })}>
-          {#each FONTS as [v, label]}<option value={v}>{label}</option>{/each}
-        </select>
-        {#if settings.readerFont === "custom"}
-          <input type="text" placeholder="字体名称，如 KaiTi" value={settings.readerFontCustom}
-            onchange={(e) => update({ readerFontCustom: e.currentTarget.value })} />
-        {/if}
+        {@render picker("readerFont", "readerFontCustom", "字体名称，如 KaiTi")}
       </div>
       <div class="row">
         <span>字号</span>
@@ -89,6 +116,7 @@
   .row > span { width: 72px; flex: none; }
   .row input[type="range"] { flex: 1; min-width: 140px; }
   .row input[type="text"] { flex: 1; min-width: 160px; }
+  .row select { max-width: 340px; }
   output { width: 56px; text-align: right; color: var(--muted); }
   .seg { display: flex; }
   .seg button { border-radius: 0; margin-left: -1px; }

@@ -3,15 +3,20 @@ import "./vendor/dockview.css";
 import "./app.css";
 import App from "./App.svelte";
 import Popout from "./Popout.svelte";
+import PanelWindow from "./PanelWindow.svelte";
 import { initSettings } from "./lib/settings.svelte.js";
 
 initSettings();
 
 // the main window, or a reading tab popped out into its own window
-const popout = new URLSearchParams(location.search).get("popout");
+const params = new URLSearchParams(location.search);
+const popout = params.get("popout");
+const panel = params.get("panel");
 const target = document.getElementById("app");
 if (popout) {
   mount(Popout, { target, props: { info: JSON.parse(popout) } });
+} else if (panel) {
+  mount(PanelWindow, { target, props: { kind: panel } });
 } else {
   mount(App, { target });
 }

@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod fonts;
 
 use commands::AppState;
 use tauri::Manager;
@@ -33,6 +34,15 @@ fn main() {
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // closing the main window ends the program (also closes the pop-out
+        // readers and panel windows)
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::Destroyed = event {
+                    window.app_handle().exit(0);
+                }
+            }
+        })
         .setup(|app| {
             let (config_dir, data_dir) = match portable {
                 Some(dirs) => dirs,
@@ -58,6 +68,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::status,
+            commands::app_info,
+            commands::list_fonts,
+            commands::find_in_page,
             commands::inspect_source,
             commands::inspect_folder,
             commands::add_folder,

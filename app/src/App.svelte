@@ -11,6 +11,10 @@
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import TagDialog from "./lib/TagDialog.svelte";
   import MarksDialog from "./lib/MarksDialog.svelte";
+  import AboutDialog from "./lib/AboutDialog.svelte";
+  import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
+  import { openPanelWindow } from "./lib/panels.js";
+  import { emit, listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let st = $state(null);
@@ -73,50 +77,29 @@
   let binding = $state(null); // null, or { path } for the bind dialog
   let quick = $state(false); // title quick search popup
 
-  // Shift pressed twice (no other key in between, within 400 ms)
-  let lastShift = 0;
-  let shiftAlone = false;
-  function shiftDown(e) {
-    // Ctrl/Cmd+G: title quick search; Ctrl/Cmd+H: full-text search
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
-      const k = e.key.toLowerCase();
-      if (k === "," && !binding) {
-        e.preventDefault();
-        settingsBox = true;
-        return;
-      }
-      if (k === "g" || k === "h" || k === "e" || k === "b") {
-        e.preventDefault();
-        shiftAlone = false;
-        if (!binding) (k === "g" ? openQuickSearch : k === "h" ? openSearch : k === "e" ? openRecent : openMarks)();
-        return;
-      }
-    }
-    if (e.key === "Shift") {
-      if (!e.repeat) shiftAlone = true;
-    } else {
-      shiftAlone = false;
-      lastShift = 0;
-    }
-  }
-  function shiftUp(e) {
-    if (e.key !== "Shift" || !shiftAlone) return;
-    const now = performance.now();
-    if (now - lastShift < 400) {
-      lastShift = 0;
-      if (!binding) openQuickSearch();
-    } else {
-      lastShift = now;
-    }
+  /**
+   * A shortcut (or one forwarded from a pop-out reader). With text selected
+   * in a reader the searches start from it: Ctrl+G / Shift twice = title
+   * quick search, Ctrl+H = full-text search.
+   */
+  function shortcut(type, text = "") {
+    if (binding) return;
+    text = text.slice(0, 200);
+    if (type === "quick") text ? readerAction({ type: "quick", text }) : openQuickSearch();
+    else if (type === "search") text ? readerAction({ type: "search", text }) : openSearch();
+    else if (type === "recent") openRecent();
+    else if (type === "marks") openMarks();
+    else if (type === "settings") settingsBox = true;
   }
 
   let quickQuery = $state(null); // text to start the quick search with
 
   /** Actions of the reader's context menu that the main window carries out. */
   function readerAction(a) {
-    const v = a.vol;
+    const v = a.vol ?? {};
     if (a.type === "search" || a.type === "phrase" || a.type === "book") {
       query = a.text;
+      searchBox = false;
       phrase = a.type === "phrase";
       rs.scope = "";
       rs.drill = "";
@@ -140,6 +123,8 @@
   }
 
   // ---- bookmarks, collections and tags
+  /** Tell the windows of their own (recent, marks) that data changed. */
+  const ping = () => emit("data-changed").catch(() => {});
   let tagDlg = $state(null); // props of the TagDialog
   let marksBox = $state(false);
 
@@ -154,6 +139,7 @@
           quote: a.excerpt ?? "", note: "", docTitle: docTitle(v), author: v.author ?? "", tags: "",
         });
         notice = `已添加书签：${docTitle(v)}${a.lb ? " · " + a.lb : ""}`;
+        ping();
       } else if (a.type === "clip") {
         tagDlg = {
           heading: "添加收藏", subtitle: `${docTitle(v)}${a.lb ? " · " + a.lb : ""}`, quote: a.text, withNote: true, okLabel: "添加",
@@ -163,6 +149,7 @@
               quote: a.text, note, docTitle: docTitle(v), author: v.author ?? "", tags,
             });
             notice = "已添加收藏。";
+            ping();
           },
         };
       } else if (a.type === "tag") {
@@ -181,6 +168,7 @@
       onok: async (tags) => {
         await api.nodeTagsSet(lib, bookId, path, title, tags);
         notice = tags.trim() ? "标签已保存。" : "已清除标签。";
+        ping();
       },
     };
   }
@@ -255,14 +243,39 @@
     });
   }
 
-  // window title: the document being read and its library
+  // window title: the document being read (with its author), its library,
+  // then the program and its version; just the program when nothing is open
+  let appInfo = $state(null);
   $effect(() => {
     const c = workspace.ws.current;
     const lib = c ? libraries.find((l) => l.id === c.lib)?.title : "";
-    const title = c ? `${c.title}${lib ? " · " + lib : ""} — Smart Library` : "Smart Library";
+    const prog = `Smart Library${appInfo ? " " + appInfo.version : ""}`;
+    const title = c
+      ? [`${c.title}${c.author ? " by " + c.author : ""}`, lib ? `『${lib}』` : "", prog].filter(Boolean).join(" - ")
+      : prog;
     document.title = title;
     getCurrentWindow().setTitle(title).catch(() => {});
   });
+
+  // the dialogs that can live in a window of their own
+  async function popoutPanel(kind) {
+    recentBox = false;
+    marksBox = false;
+    try {
+      await openPanelWindow(kind);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+  function sendDoc() {
+    const c = workspace.ws.current;
+    emit("current-doc", c ? { ...c } : null).catch(() => {});
+  }
+  $effect(() => {
+    workspace.ws.current;
+    sendDoc();
+  });
+  let aboutBox = $state(false);
 
   let wsEl = $state();
   let libPanel = $state();
@@ -368,8 +381,30 @@
 
   onMount(() => {
     refresh().then(() => st?.libraries.length && api.prepareTitles().catch(() => {}));
-    window.addEventListener("keydown", shiftDown, true);
-    window.addEventListener("keyup", shiftUp, true);
+    const offKeys = installShortcuts((type) => shortcut(type, readerSelection()));
+    api.appInfo().then((i) => (appInfo = i)).catch(() => {});
+    const focusMain = async () => {
+      const w = getCurrentWindow();
+      await w.unminimize().catch(() => {});
+      await w.setFocus().catch(() => {});
+    };
+    // what the windows of their own ask of this one
+    const offs = [
+      listen("popout-action", (e) => {
+        focusMain();
+        readerAction(e.payload);
+      }),
+      listen("popout-shortcut", (e) => {
+        focusMain();
+        shortcut(e.payload.type, e.payload.text || "");
+      }),
+      listen("panel-open", (e) => {
+        focusMain();
+        if (e.payload.kind === "recent") openRecentItem(e.payload.item);
+        else openMark(e.payload.item);
+      }),
+      listen("panel-ready", () => sendDoc()),
+    ];
     const un1 = api.onIndexProgress((p) => (progress[p.lib] = p));
     const un2 = api.onIndexDone((d) => {
       delete progress[d.lib];
@@ -384,8 +419,8 @@
       un1.then((f) => f());
       un2.then((f) => f());
       window.removeEventListener("beforeunload", flush);
-      window.removeEventListener("keydown", shiftDown, true);
-      window.removeEventListener("keyup", shiftUp, true);
+      offKeys();
+      offs.forEach((p) => p.then((f) => f()));
     };
   });
 
@@ -539,6 +574,16 @@
           <p class="muted">载入中…</p>
         {/if}
       </div>
+      <div class="side-foot">
+        <span class="muted building">{buildingText}</span>
+        <span class="tools">
+          <button class="icon" onclick={() => (settingsBox = true)} title="设置（Ctrl+,）" aria-label="设置"><Icon name="gear" size={18} /></button>
+          <button class="icon" onclick={() => (showLog = !showLog)} title="本次运行期间的消息" aria-label="消息">
+            <Icon name="message" size={18} />{#if log.length}<span class="badge">{log.length}</span>{/if}
+          </button>
+          <button class="icon" onclick={() => (aboutBox = true)} title="关于" aria-label="关于"><Icon name="info" size={18} /></button>
+        </span>
+      </div>
     </nav>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
     <div class="splitter" class:dragging role="separator" aria-orientation="vertical" aria-label="调整目录宽度"
@@ -546,12 +591,6 @@
       ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
     <main class="content" bind:this={wsEl}></main>
   </div>
-  <footer class="status">
-    <span class="muted">{buildingText}</span>
-    <span class="grow"></span>
-    <button class="link" onclick={() => (settingsBox = true)} title="设置（Ctrl+,）">设置</button>
-    <button class="link" onclick={() => (showLog = !showLog)} title="本次运行期间的消息">消息{log.length ? ` (${log.length})` : ""}</button>
-  </footer>
 </div>
 
 {#if searchBox}
@@ -600,7 +639,11 @@
 {/if}
 
 {#if marksBox}
-  <MarksDialog doc={workspace.ws.current} onopen={openMark} onclose={() => (marksBox = false)} />
+  <MarksDialog doc={workspace.ws.current} onopen={openMark} onclose={() => (marksBox = false)} onpopout={() => popoutPanel("marks")} />
+{/if}
+
+{#if aboutBox}
+  <AboutDialog info={appInfo} onclose={() => (aboutBox = false)} />
 {/if}
 
 {#if settingsBox}
@@ -608,7 +651,7 @@
 {/if}
 
 {#if recentBox}
-  <RecentDialog onopen={openRecentItem} onclose={() => (recentBox = false)} />
+  <RecentDialog onopen={openRecentItem} onclose={() => (recentBox = false)} onpopout={() => popoutPanel("recent")} />
 {/if}
 
 {#if quick}
@@ -627,10 +670,16 @@
     border: none; background: none; padding: 0; color: var(--accent); border-radius: 6px; font-size: 16px;
   }
   .icon:hover { background: var(--accent-soft); }
-  .status {
-    display: flex; align-items: center; gap: 12px; padding: 2px 12px; min-height: 24px; font-size: 12px;
-    border-top: 1px solid var(--line); background: var(--panel);
+  .icon { position: relative; }
+  .badge {
+    position: absolute; top: -2px; right: -4px; min-width: 14px; padding: 0 3px; border-radius: 7px;
+    background: var(--accent); color: var(--paper); font-size: 10px; line-height: 14px; text-align: center;
   }
+  .side-foot {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 0;
+    border-top: 1px solid var(--line); font-size: 12px; min-height: 32px;
+  }
+  .building { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .backdrop {
     position: fixed; inset: 0; z-index: 900; background: rgba(0, 0, 0, 0.2);
     display: flex; align-items: flex-start; justify-content: center; padding-top: 14vh;
@@ -644,14 +693,14 @@
   .searchbox input[type="search"] { flex: 1; min-width: 160px; font-size: 16px; }
   .check { display: flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 14px; }
   .toast {
-    position: fixed; right: 16px; bottom: 36px; z-index: 1000; max-width: min(520px, calc(100vw - 32px));
+    position: fixed; right: 16px; bottom: 16px; z-index: 1000; max-width: min(520px, calc(100vw - 32px));
     display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 8px;
     background: var(--paper); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   .toast.error { background: var(--hl-bg); color: var(--hl); border-color: var(--hl); }
   .log {
-    position: fixed; right: 16px; bottom: 32px; z-index: 990; width: min(520px, calc(100vw - 32px)); max-height: 60vh;
+    position: fixed; left: 12px; bottom: 44px; z-index: 990; width: min(520px, calc(100vw - 32px)); max-height: 60vh;
     overflow: auto; padding: 10px 14px; border-radius: 8px; background: var(--paper);
     border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
   }
