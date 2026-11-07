@@ -176,7 +176,13 @@
     if (noteMode === "num") sel += ", .note";
     if (coloring) sel += ", .app.v, .note.lone";
     const el = e.target.closest?.(sel);
-    if (!el || el === tip?.el) return;
+    if (!el) return;
+    if (el === tip?.el) {
+      clearTimeout(hideTimer);
+      return;
+    }
+    if (pinned) return; // text is being selected in the open tip
+    clearTimeout(hideTimer);
     const groups = tipFor(el).filter((g) => g.length);
     if (!groups.length) return;
     const r = el.getBoundingClientRect();
@@ -189,9 +195,40 @@
     });
   }
 
-  function outDoc(e) {
-    if (tip && !tip.el.contains(e.relatedTarget)) tip = null;
+  // the tip stays a moment after the pointer leaves the text, so that it can
+  // move into the tip; pressing the mouse in the tip (to select and copy)
+  // pins it until a click elsewhere, Escape or scrolling
+  let hideTimer = null;
+  let pinned = false;
+
+  function closeTip() {
+    clearTimeout(hideTimer);
+    pinned = false;
+    tip = null;
   }
+
+  function hideSoon() {
+    clearTimeout(hideTimer);
+    if (!pinned) hideTimer = setTimeout(closeTip, 300);
+  }
+
+  function outDoc(e) {
+    if (tip && !tip.el.contains(e.relatedTarget) && !tipEl?.contains(e.relatedTarget)) hideSoon();
+  }
+
+  $effect(() => {
+    if (!tip) return;
+    const down = (e) => {
+      if (pinned && !tipEl?.contains(e.target)) closeTip();
+    };
+    const key = (e) => e.key === "Escape" && closeTip();
+    window.addEventListener("mousedown", down, true);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("mousedown", down, true);
+      window.removeEventListener("keydown", key);
+    };
+  });
 
   function chapterChange(e) {
     const c = vol.chapters[e.target.value];
@@ -230,7 +267,7 @@
           {#if vol.kind !== "html"}
             <div class="seg notes" role="group" aria-label="编注显示方式">
               {#each NOTE_MODES as [k, label, help]}
-                <button class:on={noteMode === k} title={help} onclick={() => ((shared.noteMode = k), (tip = null))}>{label}</button>
+                <button class:on={noteMode === k} title={help} onclick={() => ((shared.noteMode = k), closeTip())}>{label}</button>
               {/each}
             </div>
           {/if}
@@ -240,7 +277,7 @@
       </div>
     </header>
     <!-- svelte-ignore a11y_mouse_events_have_key_events -->
-    <div class="scroll" bind:this={scroller} onscroll={(e) => ((tip = null), onScroll(e))}
+    <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))}
       onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para"}
         <article class="doc notes-{noteMode}" class:show-lb={showLb}>{@html vol.html}</article>
@@ -260,7 +297,9 @@
 
 {#if tip}
   {@const above = tip.top > 160}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="tip" class:below={!above} bind:this={tipEl} role="tooltip"
+    onmouseenter={() => clearTimeout(hideTimer)} onmouseleave={hideSoon} onmousedown={() => (pinned = true)}
     style="left: {tipLeft}px; {above ? `bottom: ${window.innerHeight - tip.top + 10}px` : `top: ${tip.bottom + 10}px`}; --arrow: {tip.x - tipLeft}px">
     <table>
       <tbody>
@@ -279,7 +318,8 @@
   .tip {
     position: fixed; z-index: 2000; transform: translateX(-50%); max-width: min(32em, calc(100vw - 16px));
     background: var(--ink); color: var(--paper); border-radius: 6px; padding: 8px 12px;
-    font-size: 15px; line-height: 1.6; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); pointer-events: none;
+    font-size: 15px; line-height: 1.6; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+    user-select: text; cursor: text;
   }
   .tip::after {
     content: ""; position: absolute; left: calc(50% + var(--arrow, 0px)); bottom: -6px; transform: translateX(-50%);
