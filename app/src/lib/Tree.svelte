@@ -4,6 +4,7 @@
   // kept by the owner (`expanded`: key -> true, a key is the index path
   // `/0/3/5`), so that a node can be revealed from outside.
   import Tree from "./Tree.svelte";
+  import Icon from "./Icon.svelte";
 
   let { nodes, onopen, ontoggle, oncontext = null, expanded, depth = 0, prefix = "", current = null } = $props();
 </script>
@@ -18,11 +19,14 @@
         role="presentation" oncontextmenu={(e) => oncontext?.(node, key, e)}>
         {#if hasChildren}
           <button class="twisty" onclick={() => ontoggle(key)} aria-label={open ? "收起" : "展开"}>
-            {open ? "▾" : "▸"}
+            <Icon name={open ? "chevron-down" : "chevron-right"} size={14} />
           </button>
         {:else}
           <span class="twisty"></span>
         {/if}
+        <span class="kind" class:file={!hasChildren} class:dim={!node.book_id && !node.path && node.href}>
+          <Icon name={hasChildren ? (open ? "folder-open" : "folder") : "file"} size={17} />
+        </span>
         {#if node.book_id || node.path}
           <button class="leaf" onclick={() => onopen(node, key)} title={node.title}>{node.title}</button>
         {:else if node.href}
@@ -40,12 +44,20 @@
 
 <style>
   ul { list-style: none; margin: 0; padding: 0; }
-  .row { display: flex; align-items: center; gap: 2px; min-height: 26px; border-radius: 4px; }
+  .row {
+    display: flex; align-items: center; gap: 3px; min-height: 30px; border-radius: 4px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .kind { display: inline-flex; flex: none; color: #4f9de8; }
+  .kind.file { color: #6aa7e8; }
+  .kind.dim { opacity: 0.45; }
+  .row.current .kind { color: #2fb36a; }
   .row.current { background: var(--accent-soft); }
   .row.current .leaf, .row.current .folder { color: var(--accent); }
   .twisty {
-    width: 18px; flex: none; border: none; background: none; padding: 0;
-    color: var(--muted); font-size: 12px;
+    width: 22px; height: 22px; flex: none; border: none; background: none; padding: 0;
+    color: var(--muted); display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 4px;
   }
   .leaf, .folder {
     border: none; background: none; padding: 2px 4px; text-align: left;
@@ -53,6 +65,7 @@
     border-radius: 4px;
   }
   .folder { font-weight: 600; }
+  .twisty:hover { background: var(--accent-soft); color: var(--accent); }
   .leaf:hover, .folder:hover { background: var(--accent-soft); }
   .unsupported { color: var(--muted); cursor: default; }
 </style>

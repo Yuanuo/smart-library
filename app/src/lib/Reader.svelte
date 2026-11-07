@@ -31,6 +31,7 @@
   // `quiet` restores a position without the flash. While the reader scrolls,
   // `onprogress(lb)` reports the first line at the top of the view.
   import { tick } from "svelte";
+  import Icon from "./Icon.svelte";
 
   let {
     vol,
@@ -271,7 +272,7 @@
           {/if}
         {/if}
         {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
-        {#if onlocate}<button class="locate" onclick={onlocate} title="在目录树中定位">⌖</button>{/if}
+        {#if onlocate}<button class="locate" onclick={onlocate} title="在目录树中定位" aria-label="在目录树中定位"><Icon name="locate" size={20} /></button>{/if}
       </div>
     </header>
     <!-- svelte-ignore a11y_mouse_events_have_key_events -->
@@ -343,7 +344,7 @@
   .seg button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
   .seg button.on { background: var(--accent); color: var(--paper); border-color: var(--accent); }
   .check { display: flex; gap: 4px; align-items: center; }
-  .locate { padding: 2px 8px; font-size: 16px; line-height: 1.2; }
+  .locate { padding: 3px 9px; line-height: 1; display: inline-flex; align-items: center; }
   .scroll { flex: 1; overflow: auto; background: var(--paper); }
 
   /* original lines */
@@ -391,7 +392,11 @@
   /* notes by mode: a note point holds .nb-orig and/or .nb-cb */
   .doc :global(.note sup), .doc :global(.note .nb-orig), .doc :global(.note .nb-cb) { display: none; }
   .doc.notes-num :global(.note) { cursor: help; }
-  .doc.notes-num :global(.note sup) { display: inline; color: var(--accent); font-size: 0.6em; padding: 0 1px; }
+  .doc.notes-num :global(.note sup) {
+    display: inline; color: var(--accent); font-size: 0.85em; font-weight: 700; padding: 0 3px; margin: 0 1px;
+    border-radius: 4px; background: var(--accent-soft); vertical-align: super; line-height: 1;
+  }
+  .doc.notes-num :global(.note:hover sup) { background: var(--accent); color: var(--paper); }
   .doc.notes-orig :global(.note .nb-orig),
   .doc.notes-cb :global(.note .nb-cb),
   .doc.notes-cb :global(.note:not(:has(.nb-cb)) .nb-orig) {

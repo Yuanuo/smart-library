@@ -1,11 +1,13 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import * as api from "./lib/api.js";
   import * as workspace from "./lib/workspace.svelte.js";
   import LibraryPanel from "./lib/LibraryPanel.svelte";
   import BindDialog from "./lib/BindDialog.svelte";
   import QuickSearch from "./lib/QuickSearch.svelte";
+  import Icon from "./lib/Icon.svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let st = $state(null);
   let error = $state("");
@@ -71,6 +73,16 @@
   let lastShift = 0;
   let shiftAlone = false;
   function shiftDown(e) {
+    // Ctrl/Cmd+G: title quick search; Ctrl/Cmd+H: full-text search
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+      const k = e.key.toLowerCase();
+      if (k === "g" || k === "h") {
+        e.preventDefault();
+        shiftAlone = false;
+        if (!binding) (k === "g" ? openQuickSearch : openSearch)();
+        return;
+      }
+    }
     if (e.key === "Shift") {
       if (!e.repeat) shiftAlone = true;
     } else {
@@ -83,11 +95,35 @@
     const now = performance.now();
     if (now - lastShift < 400) {
       lastShift = 0;
-      if (!binding) quick = true;
+      if (!binding) openQuickSearch();
     } else {
       lastShift = now;
     }
   }
+
+  let searchBox = $state(false); // full-text search popup
+  let searchInput = $state();
+  function openQuickSearch() {
+    searchBox = false;
+    quick = true;
+  }
+  function openSearch() {
+    quick = false;
+    searchBox = true;
+    tick().then(() => {
+      searchInput?.focus();
+      searchInput?.select();
+    });
+  }
+
+  // window title: the document being read and its library
+  $effect(() => {
+    const c = workspace.ws.current;
+    const lib = c ? libraries.find((l) => l.id === c.lib)?.title : "";
+    const title = c ? `${c.title}${lib ? " · " + lib : ""} — Smart Library` : "Smart Library";
+    document.title = title;
+    getCurrentWindow().setTitle(title).catch(() => {});
+  });
 
   let wsEl = $state();
   let libPanel = $state();
@@ -135,6 +171,17 @@
   let wsReady = false;
 
   const libraries = $derived(st?.libraries ?? []);
+  const buildingText = $derived.by(() => {
+    const ids = Object.keys(progress);
+    if (!ids.length) return "";
+    return ids
+      .map((id) => {
+        const p = progress[id];
+        const t = libraries.find((l) => l.id === id)?.title ?? id;
+        return `${t}：建索引 ${Math.floor((100 * p.done) / Math.max(1, p.total))}%`;
+      })
+      .join("　");
+  });
   const searchable = $derived(libraries.some((l) => l.index_ready));
 
   // props of the search results tab (mounted by the workspace)
@@ -305,6 +352,8 @@
 
   function submit(e) {
     e.preventDefault();
+    if (!query.trim()) return;
+    searchBox = false;
     rs.scope = "";
     rs.drill = "";
     runSearch(1, null);
@@ -312,25 +361,16 @@
 </script>
 
 <div class="app">
-  <header class="top">
-    <div class="brand">Smart Library</div>
-    <button class="quick" onclick={() => (quick = true)} title="标题快搜：经名、品名、作译者（双击 Shift）">快搜 <kbd>⇧⇧</kbd></button>
-    <form class="search" onsubmit={submit}>
-      <input type="search" placeholder="搜索全部知识库（空格分隔关键词）" bind:value={query} aria-label="搜索" />
-      <label class="check"><input type="checkbox" bind:checked={phrase} /> 精确短语</label>
-      <button class="primary" disabled={searching || !searchable} title={searchable ? "" : "请先为知识库建立索引"}>
-        {searching ? "搜索中…" : "搜索"}
-      </button>
-    </form>
-    <button class="quick" onclick={() => (showLog = !showLog)} title="本次运行期间的消息">消息{log.length ? ` ${log.length}` : ""}</button>
-  </header>
-
 
   <div class="body">
     <nav class="side" aria-label="知识库目录" style="width: {sideWidth}px">
       <div class="side-head">
         <span class="muted">知识库</span>
-        <button class="link" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加">＋</button>
+        <span class="tools">
+          <button class="icon" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加" aria-label="添加"><Icon name="plus" size={18} /></button>
+          <button class="icon" onclick={openQuickSearch} title="标题快搜（双击 Shift 或 Ctrl+G）" aria-label="标题快搜"><Icon name="plane" size={18} /></button>
+          <button class="icon" onclick={openSearch} title="全文搜索（Ctrl+H）" aria-label="全文搜索"><Icon name="search" size={18} /></button>
+        </span>
       </div>
       <div class="tree">
         {#if st}
@@ -354,7 +394,24 @@
       ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
     <main class="content" bind:this={wsEl}></main>
   </div>
+  <footer class="status">
+    <span class="muted">{buildingText}</span>
+    <span class="grow"></span>
+    <button class="link" onclick={() => (showLog = !showLog)} title="本次运行期间的消息">消息{log.length ? ` (${log.length})` : ""}</button>
+  </footer>
 </div>
+
+{#if searchBox}
+  <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && (searchBox = false)}>
+    <form class="searchbox" onsubmit={submit} onkeydown={(e) => e.key === "Escape" && (searchBox = false)}>
+      <input type="search" placeholder="全文搜索：全部知识库（空格分隔关键词）" bind:value={query} bind:this={searchInput} aria-label="全文搜索" />
+      <label class="check"><input type="checkbox" bind:checked={phrase} /> 精确短语</label>
+      <button class="primary" disabled={searching || !searchable || !query.trim()} title={searchable ? "" : "请先为知识库建立索引"}>
+        {searching ? "搜索中…" : "搜索"}
+      </button>
+    </form>
+  </div>
+{/if}
 
 {#if toast}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -391,25 +448,35 @@
 
 <style>
   .app { display: flex; flex-direction: column; height: 100%; }
-  .top {
-    display: flex; align-items: center; gap: 16px; padding: 8px 16px;
-    border-bottom: 1px solid var(--line); background: var(--panel);
+  .tools { display: flex; gap: 2px; }
+  .icon {
+    display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px;
+    border: none; background: none; padding: 0; color: var(--accent); border-radius: 6px; font-size: 16px;
   }
-  .brand { font-weight: 700; color: var(--accent); letter-spacing: 0.05em; white-space: nowrap; }
-  .quick { white-space: nowrap; font-size: 14px; }
-  .quick kbd { font-size: 11px; color: var(--muted); font-family: inherit; }
-  .search { display: flex; gap: 8px; align-items: center; flex: 1; max-width: 760px; }
-  .search input[type="search"] { flex: 1; min-width: 160px; }
+  .icon:hover { background: var(--accent-soft); }
+  .status {
+    display: flex; align-items: center; gap: 12px; padding: 2px 12px; min-height: 24px; font-size: 12px;
+    border-top: 1px solid var(--line); background: var(--panel);
+  }
+  .backdrop {
+    position: fixed; inset: 0; z-index: 900; background: rgba(0, 0, 0, 0.2);
+    display: flex; align-items: flex-start; justify-content: center; padding-top: 14vh;
+  }
+  .searchbox {
+    display: flex; gap: 10px; align-items: center; width: min(720px, calc(100vw - 32px)); padding: 12px 16px;
+    background: var(--paper); border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  }
+  .searchbox input[type="search"] { flex: 1; min-width: 160px; font-size: 16px; }
   .check { display: flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 14px; }
   .toast {
-    position: fixed; right: 16px; bottom: 16px; z-index: 1000; max-width: min(520px, calc(100vw - 32px));
+    position: fixed; right: 16px; bottom: 36px; z-index: 1000; max-width: min(520px, calc(100vw - 32px));
     display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 8px;
     background: var(--paper); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   .toast.error { background: var(--hl-bg); color: var(--hl); border-color: var(--hl); }
   .log {
-    position: fixed; right: 16px; top: 52px; z-index: 990; width: min(520px, calc(100vw - 32px)); max-height: 60vh;
+    position: fixed; right: 16px; bottom: 32px; z-index: 990; width: min(520px, calc(100vw - 32px)); max-height: 60vh;
     overflow: auto; padding: 10px 14px; border-radius: 8px; background: var(--paper);
     border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
   }
@@ -429,7 +496,10 @@
   }
   .splitter:hover, .splitter.dragging, .splitter:focus-visible { background: var(--accent-soft); outline: none; }
   .body:has(.splitter.dragging) { user-select: none; cursor: col-resize; }
-  .side-head { display: flex; justify-content: space-between; align-items: center; padding: 0 4px; font-size: 13px; }
+  .side-head {
+    display: flex; justify-content: space-between; align-items: center; padding: 0 4px 6px; font-size: 13px;
+    border-bottom: 1px solid var(--line);
+  }
   .tree { flex: 1; overflow: auto; font-size: 15px; }
   .content { flex: 1; min-width: 0; min-height: 0; position: relative; }
 </style>

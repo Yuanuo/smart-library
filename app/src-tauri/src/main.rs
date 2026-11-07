@@ -10,12 +10,34 @@ mod commands;
 use commands::AppState;
 use tauri::Manager;
 
+/// Where the data lives. Portable: a `data` folder next to the program (used
+/// when it exists, and always in release builds), so the whole folder can be
+/// copied or carried on a stick. Development builds use the system's app
+/// folders unless a `data` folder was made next to the executable. Returns
+/// `(config dir, data dir)`.
+fn data_dirs() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let exe = std::env::current_exe().ok()?;
+    let root = exe.parent()?.join("data");
+    if root.is_dir() || !cfg!(debug_assertions) {
+        std::fs::create_dir_all(&root).ok()?;
+        return Some((root.join("config"), root.clone()));
+    }
+    None
+}
+
 fn main() {
+    let portable = data_dirs();
+    if let Some((_, data)) = &portable {
+        // WebView2 keeps its own profile (local storage …): keep it here too
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", data.join("webview"));
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
-            let config_dir = app.path().app_config_dir()?;
+            let (config_dir, data_dir) = match portable {
+                Some(dirs) => dirs,
+                None => (app.path().app_config_dir()?, app.path().app_data_dir()?),
+            };
             app.manage(AppState::new(config_dir, data_dir));
             Ok(())
         })

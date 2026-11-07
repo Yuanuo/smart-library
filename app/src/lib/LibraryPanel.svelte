@@ -7,6 +7,7 @@
   import Tree from "./Tree.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import NameDialog from "./NameDialog.svelte";
+  import Icon from "./Icon.svelte";
   import * as workspace from "./workspace.svelte.js";
   import { ask } from "@tauri-apps/plugin-dialog";
 
@@ -153,7 +154,7 @@
   function addItems() {
     return [
       {
-        label: "文件（笔记）…",
+        label: "笔记…",
         action: addNoteHere,
         disabled: !libraries.some((l) => l.kind === "notes"), // only internal libraries are writable
       },
@@ -337,7 +338,10 @@
       <div class="root" role="treeitem" aria-expanded={!!open[l.id]} aria-selected="false" tabindex="0"
         oncontextmenu={(e) => libMenu(e, l)}
         onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggle(l))}>
-        <button class="twisty" onclick={() => toggle(l)} tabindex="-1" aria-hidden="true">{open[l.id] ? "▾" : "▸"}</button>
+        <button class="twisty" onclick={() => toggle(l)} tabindex="-1" aria-hidden="true">
+          <Icon name={open[l.id] ? "chevron-down" : "chevron-right"} size={14} />
+        </button>
+        <span class="libicon"><Icon name="library" size={18} /></span>
         <button class="title" onclick={() => toggle(l)} tabindex="-1" title={`${l.title}\n${l.source}`}>{l.title}</button>
         {#if b}<span class="badge" class:warn={b.warn}>{b.text}</span>{/if}
       </div>
@@ -385,7 +389,12 @@
     display: flex; align-items: center; gap: 2px; min-height: 30px; border-radius: 6px; padding-right: 2px;
   }
   .root:hover, .root:focus-visible { background: var(--accent-soft); outline: none; }
-  .twisty { width: 18px; flex: none; border: none; background: none; padding: 0; color: var(--muted); font-size: 12px; }
+  .twisty {
+    width: 22px; height: 22px; flex: none; border: none; background: none; padding: 0; color: var(--muted);
+    display: inline-flex; align-items: center; justify-content: center; border-radius: 4px;
+  }
+  .twisty:hover { background: var(--accent-soft); color: var(--accent); }
+  .libicon { display: inline-flex; color: var(--accent); }
   .title {
     flex: 1; min-width: 0; border: none; background: none; text-align: left; padding: 2px 4px;
     font-weight: 700; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

@@ -33,7 +33,7 @@ let restoring = false;
 let saveTimer = null;
 let defaultMode = "para";
 
-export const ws = $state({ empty: true });
+export const ws = $state({ empty: true, current: null }); // current: { title, lib } of the active reading tab
 
 function labelFor(tab) {
   return "reader-" + tab.replace(/[^A-Za-z0-9]/g, "_");
@@ -76,10 +76,17 @@ function readerRenderer() {
   // dockview takes a hidden tab's element out of the page, which resets its
   // scroll position: remember it while visible, put it back when shown
   let scrollTop = 0;
+  // a tab restored after a restart but never shown has no scroll position
+  // yet (its content was laid out while hidden): go to the saved line when
+  // it is first shown
+  let positioned = false;
   element.addEventListener(
     "scroll",
     (e) => {
-      if (element.isConnected && e.target.classList?.contains("scroll")) scrollTop = e.target.scrollTop;
+      if (element.isConnected && e.target.classList?.contains("scroll")) {
+        scrollTop = e.target.scrollTop;
+        if (scrollTop > 0) positioned = true;
+      }
     },
     true,
   );
@@ -89,6 +96,11 @@ function readerRenderer() {
       panelApi = params.api;
       panelApi.onDidVisibilityChange(({ isVisible }) => {
         if (!isVisible) return;
+        if (!positioned && p?.target) {
+          positioned = true;
+          p.nonce += 1;
+          return;
+        }
         const top = scrollTop;
         requestAnimationFrame(() => {
           const s = element.querySelector(".scroll");
@@ -121,6 +133,7 @@ function readerRenderer() {
           onprogress: (lb, mode) => recordProgress(tab, lb, mode),
           ontitle: (t, tooltip) => {
             panelApi?.setTitle(t);
+            if (panelApi?.isActive) ws.current = { title: t, lib: state.lib };
             tooltips[panelApi.id] = tooltip;
             applyTooltip(panelApi.id);
           },
@@ -292,6 +305,9 @@ export async function init(element, h) {
     for (const id of Object.keys(tooltips)) applyTooltip(id);
   });
   const refreshEmpty = () => (ws.empty = dv.panels.length === 0);
+  dv.onDidActivePanelChange((panel) => {
+    ws.current = panel && panel.id !== "search" && panel.params?.lib ? { title: panel.title, lib: panel.params.lib } : null;
+  });
   dv.onDidAddPanel(refreshEmpty);
   dv.onDidRemovePanel(refreshEmpty);
   listenToPopouts();
