@@ -11,6 +11,8 @@ export const addFolder = (path, title, exts, maxMb) => invoke("add_folder", { pa
 export const folderChildren = (lib, rel) => invoke("folder_children", { lib, rel });
 export const createNotesLibrary = (title) => invoke("create_notes_library", { title });
 export const createNote = (lib, parent, title) => invoke("create_note", { lib, parent, title });
+export const noteTargets = (query) => invoke("note_targets", { query });
+export const createNoteAt = (defaultLib, position, title) => invoke("create_note_at", { defaultLib, position, title });
 export const renameNote = (lib, id, title) => invoke("rename_note", { lib, id, title });
 export const saveNote = (lib, id, content) => invoke("save_note", { lib, id, content });
 export const deleteNote = (lib, id) => invoke("delete_note", { lib, id });

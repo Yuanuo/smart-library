@@ -64,6 +64,8 @@ fn main() {
             commands::folder_children,
             commands::create_notes_library,
             commands::create_note,
+            commands::note_targets,
+            commands::create_note_at,
             commands::rename_note,
             commands::save_note,
             commands::delete_note,

@@ -214,6 +214,47 @@ impl NotesStore {
         Ok(())
     }
 
+    /// The child of `parent` with this title (the first one).
+    pub fn find_child(&self, parent: Option<i64>, title: &str) -> Result<Option<i64>, String> {
+        let c = self.conn.lock().unwrap();
+        c.query_row(
+            "SELECT id FROM notes WHERE parent_id IS ?1 AND title = ?2 ORDER BY position, id LIMIT 1",
+            params![parent, title],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)
+    }
+
+    /// The note at a path of titles, making the missing ones on the way
+    /// (`None`: the top of the library, for an empty path).
+    pub fn ensure_path(&self, parts: &[String]) -> Result<Option<i64>, String> {
+        let mut cur = None;
+        for p in parts {
+            let p = p.trim();
+            if p.is_empty() {
+                continue;
+            }
+            cur = Some(match self.find_child(cur, p)? {
+                Some(id) => id,
+                None => self.create(cur, p, "")?,
+            });
+        }
+        Ok(cur)
+    }
+
+    /// Ids from the top down to `id` (itself last).
+    pub fn chain(&self, id: i64) -> Result<Vec<i64>, String> {
+        let mut out = vec![id];
+        let mut cur = self.get(id)?.and_then(|n| n.parent);
+        while let Some(p) = cur {
+            out.push(p);
+            cur = self.get(p)?.and_then(|n| n.parent);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
     /// Titles of the notes above `id`, top first.
     pub fn folders_of(&self, id: i64) -> Result<Vec<String>, String> {
         let mut out = Vec::new();
@@ -342,6 +383,20 @@ mod tests {
         assert_eq!(s.delete(a).unwrap(), 4);
         assert!(s.children(None).unwrap().is_empty());
         assert_ne!(before, s.fingerprint());
+    }
+
+    #[test]
+    fn makes_missing_path_nodes() {
+        let s = NotesStore::memory().unwrap();
+        let a = s.create(None, "a", "").unwrap();
+        let path: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+        let c = s.ensure_path(&path).unwrap().unwrap();
+        // `a` was reused, `b` and `c` made; a second call changes nothing
+        assert_eq!(s.chain(c).unwrap().len(), 3);
+        assert_eq!(s.chain(c).unwrap()[0], a);
+        assert_eq!(s.ensure_path(&path).unwrap(), Some(c));
+        assert_eq!(s.rows().unwrap().len(), 3);
+        assert_eq!(s.ensure_path(&[]).unwrap(), None);
     }
 
     #[test]

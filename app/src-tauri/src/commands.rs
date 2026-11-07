@@ -628,6 +628,99 @@ pub async fn create_notes_library(title: String, state: State<'_, AppState>) -> 
     Ok(status_of(&state))
 }
 
+/// A place where a note can be added: a library's top or one of its notes.
+#[derive(Serialize)]
+pub struct NoteTargetDto {
+    lib: String,
+    /// `""` for the top of the library
+    id: String,
+    /// `library / folder / note`, as typed in the add dialog
+    path: String,
+}
+
+/// Internal-library places matching what the user types (every word must
+/// appear in the path), for the add-note dialog.
+#[tauri::command]
+pub async fn note_targets(query: String, state: State<'_, AppState>) -> Result<Vec<NoteTargetDto>, String> {
+    let words: Vec<String> = query
+        .split(|c: char| c == '/' || c.is_whitespace())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .collect();
+    let libs: Vec<Library> = state.libraries.read().unwrap().iter().filter(|l| l.kind == "notes").cloned().collect();
+    let mut out = Vec::new();
+    for l in libs {
+        let hit = |p: &str| {
+            let p = p.to_lowercase();
+            words.iter().all(|w| p.contains(w.as_str()))
+        };
+        if hit(&l.title) {
+            out.push(NoteTargetDto { lib: l.id.clone(), id: String::new(), path: l.title.clone() });
+        }
+        for r in state.notes(&l)?.rows()? {
+            let mut parts = vec![l.title.clone()];
+            parts.extend(r.folders.iter().cloned());
+            parts.push(r.title.clone());
+            let path = parts.join("/");
+            if hit(&path) {
+                out.push(NoteTargetDto { lib: l.id.clone(), id: r.id.to_string(), path });
+            }
+            if out.len() >= 30 {
+                return Ok(out);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+pub struct NewNoteDto {
+    lib: String,
+    id: String,
+    /// ids from the top of the library down to the new note
+    chain: Vec<String>,
+}
+
+/// Add a note at `position` (`library/folder/folder`, or just folders for
+/// `default_lib`); folders that do not exist yet are made.
+#[tauri::command]
+pub async fn create_note_at(
+    default_lib: Option<String>,
+    position: String,
+    title: String,
+    state: State<'_, AppState>,
+) -> Result<NewNoteDto, String> {
+    let libs: Vec<Library> = state.libraries.read().unwrap().iter().filter(|l| l.kind == "notes").cloned().collect();
+    if libs.is_empty() {
+        return Err("还没有自建知识库，请先在「＋」→「知识库…」里创建一个".into());
+    }
+    let mut parts: Vec<String> = position.split('/').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    // the first part names a library, else the default one (or the first)
+    let lib = match parts.first().and_then(|p| libs.iter().find(|l| l.title.to_lowercase() == p.to_lowercase())) {
+        Some(l) => {
+            parts.remove(0);
+            l.clone()
+        }
+        None => default_lib
+            .and_then(|d| libs.iter().find(|l| l.id == d))
+            .unwrap_or(&libs[0])
+            .clone(),
+    };
+    state.titles.write().unwrap().remove(&lib.id);
+    let store = state.notes(&lib)?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("标题不能为空".into());
+    }
+    let parent = store.ensure_path(&parts)?;
+    let id = store.create(parent, title, "")?;
+    Ok(NewNoteDto {
+        lib: lib.id,
+        chain: store.chain(id)?.iter().map(|i| i.to_string()).collect(),
+        id: id.to_string(),
+    })
+}
+
 fn notes_of(state: &AppState, lib: &str) -> Result<Arc<NotesStore>, String> {
     let l = state.library(lib)?;
     if l.kind != "notes" {

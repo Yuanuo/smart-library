@@ -7,6 +7,7 @@
   import Tree from "./Tree.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import NameDialog from "./NameDialog.svelte";
+  import NoteDialog from "./NoteDialog.svelte";
   import Icon from "./Icon.svelte";
   import * as workspace from "./workspace.svelte.js";
   import { ask } from "@tauri-apps/plugin-dialog";
@@ -14,6 +15,7 @@
   let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex } = $props();
 
   let nameDlg = $state(null); // { title, label, value, okLabel, onok }
+  let noteDlg = $state(null); // { position, defaultLib }
   let selected = $state(null); // { lib, key }: the last note opened from the tree
 
   const isNotes = (id) => libraries.find((l) => l.id === id)?.kind === "notes";
@@ -54,25 +56,53 @@
     }
   };
 
+  /** Titles from the library down to the node at `key`, for the dialog. */
+  function pathOf(lib, key) {
+    const parts = [libraries.find((l) => l.id === lib)?.title ?? ""];
+    let list = nodes[lib] ?? [];
+    let k = "";
+    for (const i of (key ?? "").split("/").filter(Boolean)) {
+      const n = list[Number(i)];
+      if (!n) break;
+      parts.push(n.title);
+      list = n.children;
+    }
+    return parts.join("/");
+  }
+
   function newNote(lib, parent, key) {
-    nameDlg = {
-      title: parent ? `在「${parent.title}」下新建笔记` : "新建笔记",
-      label: "标题",
-      value: "",
-      okLabel: "创建",
-      onok: guard(lib, async (title) => {
-        const id = await api.createNote(lib, parent?.rel ?? null, title);
-        await refresh(lib, key);
-        await workspace.openVolume({ lib, path: id });
-      }),
-    };
+    noteDlg = { position: pathOf(lib, key), defaultLib: lib };
+  }
+
+  /** Add the note, show it in the tree and open it. */
+  async function addNote(defaultLib, position, title) {
+    const r = await api.createNoteAt(defaultLib, position, title);
+    // load the way down to the new note (every level on its chain)
+    await refresh(r.lib, null);
+    let key = "";
+    let list = nodes[r.lib];
+    for (const rel of r.chain.slice(0, -1)) {
+      const i = list.findIndex((n) => n.rel === rel);
+      if (i < 0) break;
+      key += `/${i}`;
+      await refresh(r.lib, key);
+      list = nodeAt(r.lib, key).children;
+    }
+    const idx = list.findIndex((n) => n.rel === r.id);
+    if (idx >= 0) {
+      current = { lib: r.lib, key: `${key}/${idx}` };
+      selected = current;
+    }
+    await tick();
+    panel?.querySelector(`[data-lib="${r.lib}"] [data-key="${current?.key}"]`)?.scrollIntoView({ block: "center" });
+    await workspace.openVolume({ lib: r.lib, path: r.id });
   }
 
   function addNoteHere() {
     const sel = selected && isNotes(selected.lib) ? selected : null;
     const lib = sel?.lib ?? libraries.find((l) => l.kind === "notes")?.id;
     if (!lib) return;
-    newNote(lib, sel ? nodeAt(sel.lib, sel.key) : null, sel?.key ?? null);
+    newNote(lib, null, sel?.key ?? null);
   }
 
   function renameNote(lib, node, key) {
@@ -373,6 +403,10 @@
     </div>
   {/each}
 </div>
+
+{#if noteDlg}
+  <NoteDialog {...noteDlg} onok={(pos, title) => addNote(noteDlg.defaultLib, pos, title)} onclose={() => (noteDlg = null)} />
+{/if}
 
 {#if nameDlg}
   <NameDialog {...nameDlg} onclose={() => (nameDlg = null)} />
