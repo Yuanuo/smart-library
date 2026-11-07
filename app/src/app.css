@@ -11,13 +11,15 @@
   --hl-bg: #fde3c8;
   --focus: #fff1a8;
   --note: #2f8f5b;
-  font-family: "Noto Serif TC", "Source Han Serif TC", "PMingLiU", "MingLiU", "SimSun", serif;
+  --font-serif: "Noto Serif TC", "Source Han Serif TC", "PMingLiU", "MingLiU", "SimSun", serif;
+  font-family: var(--ui-font, var(--font-serif));
   color: var(--ink);
   background: var(--bg);
 }
 
+/* dark: the system's choice unless the settings say light; or chosen */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1f1c18;
     --paper: #26221d;
     --panel: #2c2722;
@@ -31,6 +33,20 @@
     --focus: #5a5020;
     --note: #6cc58f;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #1f1c18;
+  --paper: #26221d;
+  --panel: #2c2722;
+  --ink: #e9e2d2;
+  --muted: #a59a88;
+  --line: #3d362e;
+  --accent: #e0a070;
+  --accent-soft: #4a3526;
+  --hl: #ff8a70;
+  --hl-bg: #5a3322;
+  --focus: #5a5020;
+  --note: #6cc58f;
 }
 
 * { box-sizing: border-box; }

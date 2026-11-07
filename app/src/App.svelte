@@ -8,6 +8,7 @@
   import QuickSearch from "./lib/QuickSearch.svelte";
   import Icon from "./lib/Icon.svelte";
   import RecentDialog from "./lib/RecentDialog.svelte";
+  import SettingsDialog from "./lib/SettingsDialog.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let st = $state(null);
@@ -77,6 +78,11 @@
     // Ctrl/Cmd+G: title quick search; Ctrl/Cmd+H: full-text search
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
       const k = e.key.toLowerCase();
+      if (k === "," && !binding) {
+        e.preventDefault();
+        settingsBox = true;
+        return;
+      }
       if (k === "g" || k === "h" || k === "e") {
         e.preventDefault();
         shiftAlone = false;
@@ -112,6 +118,7 @@
     } else openSearch(scope);
   }
   let searchInput = $state();
+  let settingsBox = $state(false);
   let recentBox = $state(false); // reading history popup
   function openRecent() {
     searchBox = false;
@@ -434,6 +441,7 @@
   <footer class="status">
     <span class="muted">{buildingText}</span>
     <span class="grow"></span>
+    <button class="link" onclick={() => (settingsBox = true)} title="设置（Ctrl+,）">设置</button>
     <button class="link" onclick={() => (showLog = !showLog)} title="本次运行期间的消息">消息{log.length ? ` (${log.length})` : ""}</button>
   </footer>
 </div>
@@ -477,6 +485,10 @@
       <p class="muted">还没有消息。</p>
     {/each}
   </div>
+{/if}
+
+{#if settingsBox}
+  <SettingsDialog onclose={() => (settingsBox = false)} />
 {/if}
 
 {#if recentBox}

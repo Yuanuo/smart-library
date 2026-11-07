@@ -10,6 +10,7 @@
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-set-title",
+    "core:webview:allow-set-webview-zoom",
     "core:window:allow-outer-position",
     "core:window:allow-outer-size",
     "core:window:allow-unminimize",

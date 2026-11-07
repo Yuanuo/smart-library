@@ -349,7 +349,7 @@
 
   /* original lines */
   .lines { padding: 16px 24px 48px; }
-  .line { display: flex; gap: 16px; line-height: 2; font-size: 19px; border-radius: 4px; }
+  .line { display: flex; gap: 16px; line-height: var(--reader-line, 2); font-size: var(--reader-size, 19px); font-family: var(--reader-font, inherit); border-radius: 4px; }
   .line:global(.flash) { background: var(--focus); animation: fade 2.5s ease-out 0.5s forwards; }
   .lbn {
     flex: none; width: 64px; text-align: right; font-family: ui-monospace, Consolas, monospace;
@@ -359,7 +359,10 @@
   @keyframes fade { to { background: transparent; } }
 
   /* structured view: the HTML comes from core/src/render.rs */
-  .doc { max-width: 46em; margin: 0 auto; padding: 24px 32px 64px; font-size: 19px; line-height: 2; letter-spacing: 0.04em; }
+  .doc {
+    max-width: 46em; margin: 0 auto; padding: 24px 32px 64px; font-size: var(--reader-size, 19px);
+    line-height: var(--reader-line, 2); letter-spacing: 0.04em; font-family: var(--reader-font, inherit);
+  }
   .doc :global(mark) { color: var(--hl); background: var(--hl-bg); border-radius: 2px; }
   .doc :global(.div) { margin: 0.2em 0; }
   .doc :global(.head) { font-weight: 700; font-size: 1.08em; margin: 1em 0 0.4em; color: var(--accent); }

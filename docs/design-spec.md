@@ -345,6 +345,11 @@ M2 的实现（`core/src/titles.rs`，命令行 `titles`，界面 `app/src/lib/Q
 - 实现：`SearchRequest.within`（`Within { books, paths }`，用 `TermSetQuery` 限定 `book` 或 `path` 字段，核心有测试）。CBETA 取节点下的经号，HTML 库取文章路径（前端手里有整棵树）；文件夹库和自建库的树是按需加载的，前端只传 `rel`（文件夹路径或笔记编号），由后端展开成文件或笔记（`resolve_within`）。整个知识库的根只限定知识库。
 - 标题快搜用同一个范围对象过滤条目（经号或路径在集合里）；全文搜索的结果页在分面上方显示「范围：知识库 › 节点」，可清除。弹出的搜索框里也有范围标签，可取消。
 
+**设置（2026-11）**
+
+- 状态栏的「设置」或 Ctrl/Cmd+,：主题（跟随系统、浅色、深色，深色靠 `<html data-theme>`）、界面缩放（80–150%，用 WebView 的缩放）、界面字体、阅读器字体、字号（14–34）、行距。不做复杂的主题机制，只有明暗两套颜色变量。
+- 保存在 WebView 的 localStorage（便携模式下就在 `data/webview/` 里），`settings.svelte.js` 把它写成 CSS 变量（`--ui-font`、`--reader-font`、`--reader-size`、`--reader-line`）；弹出的阅读窗口同源，改动通过 `storage` 事件同步。
+
 **HTML 文章（`core/src/article.rs`）**
 
 - 两种格式：`a/LZ/` 是 Trilium 导出（正文在 `div.ck-content`，标题在 `h1[data-trilium-h1]` 重复一次，跳过）；`a/ZB/` 有 `<meta author= library= catalog= period= book= name=>`，正文是带 id 的 `p`，部分文章有同目录下的配图（`src="a/69.jpg"`，相对文章所在目录）。
