@@ -12,14 +12,25 @@
   let localTarget = $state(null);
   let localNonce = $state(0);
 
+  // internal libraries: the Markdown source can be edited in the tab
+  let editing = $state(false);
+  let draft = $state("");
+  let saving = $state(false);
+  let reloads = $state(0);
+  let seen = ""; // the note the editor was last opened for
+
   // (re)load when the query of the tab changes; the path never changes
   $effect(() => {
     const { lib, bookId, path, query, phrase } = p;
+    const _r = reloads;
     api
       .openNode(lib, bookId, path, query || null, !!phrase)
       .then((v) => {
         vol = v;
         error = "";
+        // a new, empty note opens in the editor
+        if (v.kind === "notes" && !v.raw && seen !== p.lib + "|" + v.path) startEdit(v);
+        seen = p.lib + "|" + v.path;
         // the tab shows the title; its tooltip also the id, author and path
         const t = v.label ? `${v.title} ${v.label}` : v.title;
         const who = [v.book_id, v.author].filter(Boolean).join(" · ");
@@ -35,6 +46,35 @@
     localNonce = p.nonce ?? 0;
   });
 
+  function startEdit(v = vol) {
+    draft = v.raw ?? "";
+    editing = true;
+  }
+
+  async function saveEdit() {
+    saving = true;
+    try {
+      await api.saveNote(p.lib, p.path, draft);
+      editing = false;
+      reloads += 1;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      saving = false;
+    }
+  }
+
+  function cancelEdit() {
+    editing = false;
+  }
+
+  function editorKey(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      saveEdit();
+    } else if (e.key === "Escape") cancelEdit();
+  }
+
   function chapter(c) {
     if (c.path === p.path) {
       localTarget = c.lb;
@@ -48,8 +88,25 @@
 
 {#if error}
   <p class="error">{error}</p>
+{:else if vol && editing}
+  <div class="editor">
+    <div class="bar">
+      <strong>{vol.title}</strong>
+      <span class="muted">Markdown · Ctrl+S 保存</span>
+      <span class="grow"></span>
+      <button onclick={cancelEdit}>取消</button>
+      <button class="primary" disabled={saving} onclick={saveEdit}>保存</button>
+    </div>
+    <!-- svelte-ignore a11y_autofocus -->
+    <textarea bind:value={draft} onkeydown={editorKey} autofocus spellcheck="false"
+      placeholder="# 标题&#10;正文……（支持 # 标题、- 列表、**粗体**、*斜体*）"></textarea>
+  </div>
 {:else if vol}
+  {#snippet editButton()}
+    {#if vol.kind === "notes"}<button title="编辑这篇笔记" onclick={() => startEdit()}>编辑</button>{/if}
+  {/snippet}
   <Reader
+    extra={editButton}
     {vol}
     target={localTarget}
     nonce={localNonce}
@@ -65,5 +122,12 @@
 
 <style>
   .error { padding: 24px; color: var(--hl); }
+  .editor { display: flex; flex-direction: column; height: 100%; }
+  .bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .grow { flex: 1; }
+  textarea {
+    flex: 1; border: none; resize: none; padding: 14px 18px; outline: none;
+    font: 15px/1.7 ui-monospace, Consolas, "Microsoft YaHei", monospace; background: var(--paper); color: inherit;
+  }
   .loading { padding: 24px; }
 </style>

@@ -359,6 +359,17 @@ export async function openVolume({ lib, bookId = null, path = null, lb = null, q
   });
 }
 
+/** Close the tab of one document (a deleted note). */
+export function closeDocument(lib, path) {
+  dv?.getPanel(`${lib}|${path}`)?.api.close();
+  scheduleSave();
+}
+
+/** Show a new title on the tab of a document (a renamed note). */
+export function retitle(lib, path, title) {
+  dv?.getPanel(`${lib}|${path}`)?.api.setTitle(title);
+}
+
 /** Close every tab and pop-out window of a library (after unbinding it). */
 export async function closeLibrary(lib) {
   for (const panel of [...(dv?.panels || [])]) {

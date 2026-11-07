@@ -12,8 +12,10 @@
 
 use serde::{Deserialize, Serialize};
 use smart_library_core::bookcase::Bookcase;
+use smart_library_core::folder::{self, FolderFilter, FolderLibrary};
 use smart_library_core::library::{classify_trees, HtmlTree, TreeGroup};
 use smart_library_core::nav::NavNode;
+use smart_library_core::notes::{self, NotesStore};
 use smart_library_core::render::RenderOptions;
 use smart_library_core::search::{facet_label, locate, snippets, MatchMode, SearchIndex, SearchRequest};
 use smart_library_core::source::{DirSource, Source, ZipSource};
@@ -46,6 +48,11 @@ pub struct Library {
     pub source: String,
     /// tree shown for this library (`bulei`, `longzang` …)
     pub tree: String,
+    /// folder libraries: suffixes that are indexed, and the size limit in MB (0 = none)
+    #[serde(default)]
+    pub exts: Vec<String>,
+    #[serde(default)]
+    pub max_mb: u64,
 }
 
 pub struct AppState {
@@ -55,6 +62,8 @@ pub struct AppState {
     libraries: RwLock<Vec<Library>>,
     sources: RwLock<HashMap<String, Arc<Bookcase>>>,
     html: RwLock<HashMap<String, Arc<HtmlTree>>>,
+    folders: RwLock<HashMap<String, Arc<FolderLibrary>>>,
+    notes: RwLock<HashMap<String, Arc<NotesStore>>>,
     indexes: RwLock<HashMap<String, Arc<SearchIndex>>>,
     /// title quick search, per library (built on first use)
     titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
@@ -71,6 +80,8 @@ impl AppState {
             libraries: RwLock::new(libraries),
             sources: RwLock::new(HashMap::new()),
             html: RwLock::new(HashMap::new()),
+            folders: RwLock::new(HashMap::new()),
+            notes: RwLock::new(HashMap::new()),
             indexes: RwLock::new(HashMap::new()),
             titles: RwLock::new(HashMap::new()),
             building: Mutex::new(HashSet::new()),
@@ -110,11 +121,37 @@ impl AppState {
         Ok(t)
     }
 
+    /// An external folder library (kind `folder`).
+    fn folder(&self, lib: &Library) -> Result<Arc<FolderLibrary>, String> {
+        if let Some(f) = self.folders.read().unwrap().get(&lib.id) {
+            return Ok(f.clone());
+        }
+        let f = Arc::new(FolderLibrary::open(Path::new(&lib.source), filter_of(lib))?);
+        self.folders.write().unwrap().insert(lib.id.clone(), f.clone());
+        Ok(f)
+    }
+
+    /// The notes of an internal library (kind `notes`).
+    fn notes(&self, lib: &Library) -> Result<Arc<NotesStore>, String> {
+        if let Some(n) = self.notes.read().unwrap().get(&lib.id) {
+            return Ok(n.clone());
+        }
+        let n = Arc::new(NotesStore::open(&self.data_dir.join("repos").join(&lib.id).join("notes.db"))?);
+        self.notes.write().unwrap().insert(lib.id.clone(), n.clone());
+        Ok(n)
+    }
+
     fn titles(&self, lib: &Library) -> Result<Arc<TitleIndex>, String> {
         if let Some(t) = self.titles.read().unwrap().get(&lib.id) {
             return Ok(t.clone());
         }
-        let t = Arc::new(if lib.kind == "html" {
+        let t = Arc::new(if lib.kind == "notes" {
+            TitleIndex::notes(&self.notes(lib)?.rows()?, &lib.title)
+        } else if lib.kind == "folder" {
+            let f = self.folder(lib)?;
+            let name = Path::new(&lib.source).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            TitleIndex::folder(&f.files(), &name)
+        } else if lib.kind == "html" {
             TitleIndex::html(&*self.html_tree(lib)?)
         } else {
             TitleIndex::cbeta(&*self.bookcase_of(lib)?, &lib.tree)?
@@ -171,8 +208,37 @@ fn load_registry(config_dir: &Path) -> Vec<Library> {
             title: "大藏经 · 部類目錄".into(),
             source,
             tree: "bulei".into(),
+            exts: Vec::new(),
+            max_mb: 0,
         }],
         None => Vec::new(),
+    }
+}
+
+fn filter_of(l: &Library) -> FolderFilter {
+    FolderFilter { exts: l.exts.clone(), max_mb: l.max_mb }
+}
+
+/// Libraries whose documents are read as articles (paragraph view).
+fn is_article(l: &Library) -> bool {
+    l.kind != "cbeta"
+}
+
+/// The article of a document of an article-like library.
+fn article_of(
+    state: &AppState,
+    l: &Library,
+    path: &str,
+    render: Option<&RenderOptions>,
+) -> Result<smart_library_core::article::Article, String> {
+    if l.kind == "folder" {
+        state.folder(l)?.article(path, render)
+    } else if l.kind == "notes" {
+        let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
+        let note = state.notes(l)?.get(id)?.ok_or("笔记不存在")?;
+        Ok(notes::article(&note.content, render))
+    } else {
+        state.bookcase_of(l)?.article(path, render)
     }
 }
 
@@ -243,6 +309,8 @@ pub struct LibraryDto {
     title: String,
     source: String,
     tree: String,
+    exts: Vec<String>,
+    max_mb: u64,
     /// the source cannot be opened (moved, deleted …)
     error: Option<String>,
     data_version: Option<String>,
@@ -263,11 +331,21 @@ fn status_of(state: &AppState) -> StatusDto {
     let libraries = libs
         .into_iter()
         .map(|l| {
-            let bc = state.bookcase_of(&l);
+            let (error, data_version) = if l.kind == "notes" {
+                match state.notes(&l) {
+                    Ok(n) => (None, Some(n.fingerprint())),
+                    Err(e) => (Some(e), None),
+                }
+            } else if l.kind == "folder" {
+                (state.folder(&l).err(), None)
+            } else {
+                let bc = state.bookcase_of(&l);
+                (bc.as_ref().err().cloned(), bc.as_ref().ok().map(|b| b.data_version()))
+            };
             let dir = state.index_dir(&l.id);
             LibraryDto {
-                error: bc.as_ref().err().cloned(),
-                data_version: bc.as_ref().ok().map(|b| b.data_version()),
+                error,
+                data_version,
                 index_ready: state.index(&l.id).is_some(),
                 index_data_version: SearchIndex::data_version(&dir),
                 building: building.contains(&l.id),
@@ -276,6 +354,8 @@ fn status_of(state: &AppState) -> StatusDto {
                 title: l.title,
                 source: l.source,
                 tree: l.tree,
+                exts: l.exts,
+                max_mb: l.max_mb,
             }
         })
         .collect();
@@ -359,8 +439,7 @@ pub async fn inspect_source(path: String, state: State<'_, AppState>) -> Result<
 }
 
 /// Bind a source: the CBETA data with one tree (`cbeta_tree`, or none), and
-/// the chosen HTML trees. Rebinding CBETA with another tree only changes the
-/// tree: the data, and so the index, stay the same.
+/// the chosen HTML trees. The CBETA tree is fixed once bound.
 #[tauri::command]
 pub async fn bind_libraries(
     path: String,
@@ -378,11 +457,16 @@ pub async fn bind_libraries(
                 .iter()
                 .find(|c| c.id == tree && c.group == TreeGroup::Cbeta)
                 .ok_or_else(|| format!("{} 不是 CBETA 的目录树", tree))?;
-            match libs.iter_mut().find(|l| same_path(&l.source, &path) && l.kind == "cbeta") {
-                Some(l) => {
-                    l.tree = t.id.clone();
-                    l.title = t.title.clone();
+            // The tree is chosen once: the index records where each volume sits
+            // in it. To use another tree, unbind the library and bind it again.
+            match libs.iter().find(|l| same_path(&l.source, &path) && l.kind == "cbeta") {
+                Some(l) if l.tree != t.id => {
+                    return Err(format!(
+                        "这个数据包的 CBETA 已按「{}」绑定，不能更换目录树。如需更换，请先解除绑定再重新绑定。",
+                        l.title
+                    ))
                 }
+                Some(_) => {}
                 None => {
                     let id = new_id("cbeta", &libs);
                     libs.push(Library {
@@ -391,6 +475,8 @@ pub async fn bind_libraries(
                         title: t.title.clone(),
                         source: path.clone(),
                         tree: t.id.clone(),
+                        exts: Vec::new(),
+                        max_mb: 0,
                     });
                 }
             }
@@ -414,6 +500,8 @@ pub async fn bind_libraries(
                 title: t.title.clone(),
                 source: path.clone(),
                 tree: t.id.clone(),
+                exts: Vec::new(),
+                max_mb: 0,
             });
         }
     }
@@ -444,6 +532,8 @@ pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<St
     state.libraries.write().unwrap().retain(|l| l.id != id);
     state.indexes.write().unwrap().remove(&id);
     state.html.write().unwrap().remove(&id);
+    state.folders.write().unwrap().remove(&id);
+    state.notes.write().unwrap().remove(&id);
     state.titles.write().unwrap().remove(&id);
     state.save_registry()?;
     let dir = state.data_dir.join("repos").join(&id);
@@ -451,6 +541,146 @@ pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<St
         let _ = std::fs::remove_dir_all(&dir);
     }
     Ok(status_of(&state))
+}
+
+/// Check a folder before it is linked.
+#[derive(Serialize)]
+pub struct FolderDto {
+    path: String,
+    name: String,
+    /// why it cannot be linked, if so
+    conflict: Option<String>,
+}
+
+#[tauri::command]
+pub async fn inspect_folder(path: String, state: State<'_, AppState>) -> Result<FolderDto, String> {
+    let canon = folder::canonical(&path)?;
+    let libs = state.libraries.read().unwrap().clone();
+    let existing: Vec<&str> = libs.iter().filter(|l| l.kind == "folder").map(|l| l.source.as_str()).collect();
+    Ok(FolderDto {
+        name: Path::new(&canon).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| canon.clone()),
+        conflict: folder::conflict(&existing, &canon),
+        path: canon,
+    })
+}
+
+/// Link a folder as a library. `exts`: suffixes separated by commas or
+/// spaces; `max_mb`: size limit, 0 for none.
+#[tauri::command]
+pub async fn add_folder(
+    path: String,
+    title: Option<String>,
+    exts: String,
+    max_mb: u64,
+    state: State<'_, AppState>,
+) -> Result<StatusDto, String> {
+    let canon = folder::canonical(&path)?;
+    let exts = FolderFilter::parse_exts(&exts);
+    if exts.is_empty() {
+        return Err("请至少填写一种文件后缀".into());
+    }
+    {
+        let mut libs = state.libraries.write().unwrap();
+        let existing: Vec<&str> = libs.iter().filter(|l| l.kind == "folder").map(|l| l.source.as_str()).collect();
+        if let Some(c) = folder::conflict(&existing, &canon) {
+            return Err(c);
+        }
+        let name = Path::new(&canon).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "folder".into());
+        let id = new_id("folder", &libs);
+        libs.push(Library {
+            id,
+            kind: "folder".into(),
+            title: title.filter(|t| !t.trim().is_empty()).unwrap_or(name),
+            source: canon,
+            tree: String::new(),
+            exts,
+            max_mb,
+        });
+    }
+    state.save_registry()?;
+    Ok(status_of(&state))
+}
+
+// ------------------------------------------------------------ internal libraries
+
+/// Create an internal (read-write) library.
+#[tauri::command]
+pub async fn create_notes_library(title: String, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("请填写知识库名称".into());
+    }
+    let lib = {
+        let mut libs = state.libraries.write().unwrap();
+        if libs.iter().any(|l| l.title == title) {
+            return Err("已经有同名的知识库".into());
+        }
+        let id = new_id("notes", &libs);
+        let lib = Library { id, kind: "notes".into(), title, source: String::new(), tree: String::new(), exts: Vec::new(), max_mb: 0 };
+        libs.push(lib.clone());
+        lib
+    };
+    if let Err(e) = state.notes(&lib) {
+        state.libraries.write().unwrap().retain(|l| l.id != lib.id);
+        return Err(e);
+    }
+    state.save_registry()?;
+    Ok(status_of(&state))
+}
+
+fn notes_of(state: &AppState, lib: &str) -> Result<Arc<NotesStore>, String> {
+    let l = state.library(lib)?;
+    if l.kind != "notes" {
+        return Err("这个知识库是只读的".into());
+    }
+    // every call here edits the notes: the title list is out of date
+    state.titles.write().unwrap().remove(lib);
+    state.notes(&l)
+}
+
+fn note_id(s: &str) -> Result<i64, String> {
+    s.parse().map_err(|_| format!("笔记编号不对：{}", s))
+}
+
+/// Add a note below `parent` (`None`: top of the library); returns its id.
+#[tauri::command]
+pub async fn create_note(lib: String, parent: Option<String>, title: String, state: State<'_, AppState>) -> Result<String, String> {
+    let parent = match parent.filter(|p| !p.is_empty()) {
+        Some(p) => Some(note_id(&p)?),
+        None => None,
+    };
+    Ok(notes_of(&state, &lib)?.create(parent, &title, "")?.to_string())
+}
+
+#[tauri::command]
+pub async fn rename_note(lib: String, id: String, title: String, state: State<'_, AppState>) -> Result<(), String> {
+    notes_of(&state, &lib)?.update(note_id(&id)?, Some(&title), None)
+}
+
+#[tauri::command]
+pub async fn save_note(lib: String, id: String, content: String, state: State<'_, AppState>) -> Result<(), String> {
+    notes_of(&state, &lib)?.update(note_id(&id)?, None, Some(&content))
+}
+
+/// Delete a note and everything below it; returns the number removed.
+#[tauri::command]
+pub async fn delete_note(lib: String, id: String, state: State<'_, AppState>) -> Result<usize, String> {
+    notes_of(&state, &lib)?.delete(note_id(&id)?)
+}
+
+#[tauri::command]
+pub async fn move_note(
+    lib: String,
+    id: String,
+    parent: Option<String>,
+    index: usize,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let parent = match parent.filter(|p| !p.is_empty()) {
+        Some(p) => Some(note_id(&p)?),
+        None => None,
+    };
+    notes_of(&state, &lib)?.move_to(note_id(&id)?, parent, index)
 }
 
 // ------------------------------------------------------------ tree
@@ -466,6 +696,10 @@ pub struct NodeDto {
     path: Option<String>,
     /// original link
     href: Option<String>,
+    /// folder libraries: path below the root
+    rel: Option<String>,
+    /// folder libraries: a folder whose children are not loaded yet
+    lazy: bool,
     children: Vec<NodeDto>,
 }
 
@@ -477,6 +711,8 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
             start: None,
             path: None,
             href: None,
+            rel: None,
+            lazy: false,
             children: children.iter().map(|c| node_dto(bc, html, c)).collect(),
         },
         NavNode::Leaf { href, text, children, .. } => {
@@ -489,6 +725,8 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
                     start: None,
                     path: t.leaf(p).map(|l| l.path.clone()),
                     href: Some(href.clone()),
+                    rel: None,
+                    lazy: false,
                     children,
                 };
             }
@@ -503,15 +741,74 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
                 start: entry.as_ref().and_then(|e| e.start.clone()),
                 path: None,
                 href: Some(href.clone()),
+                rel: None,
+                lazy: false,
                 children,
             }
         }
     }
 }
 
+fn note_nodes(n: &NotesStore, parent: Option<i64>) -> Result<Vec<NodeDto>, String> {
+    Ok(n.children(parent)?
+        .into_iter()
+        .map(|r| NodeDto {
+            title: r.title,
+            book_id: None,
+            start: None,
+            path: Some(r.id.to_string()),
+            href: None,
+            rel: Some(r.id.to_string()),
+            lazy: r.has_children,
+            children: Vec::new(),
+        })
+        .collect())
+}
+
+fn folder_nodes(f: &FolderLibrary, rel: &str) -> Result<Vec<NodeDto>, String> {
+    Ok(f.children(rel)?
+        .into_iter()
+        .map(|e| NodeDto {
+            title: if e.is_dir {
+                e.name.clone()
+            } else {
+                e.name.rsplit_once('.').map(|(s, _)| s.to_string()).filter(|s| !s.is_empty()).unwrap_or(e.name.clone())
+            },
+            book_id: None,
+            start: None,
+            path: if e.is_dir { None } else { Some(e.rel.clone()) },
+            href: None,
+            rel: Some(e.rel),
+            lazy: e.is_dir,
+            children: Vec::new(),
+        })
+        .collect())
+}
+
+/// One level of a folder library, loaded when its folder is opened.
+#[tauri::command]
+pub async fn folder_children(lib: String, rel: String, state: State<'_, AppState>) -> Result<Vec<NodeDto>, String> {
+    let l = state.library(&lib)?;
+    if l.kind == "notes" {
+        let parent = if rel.is_empty() { None } else { Some(rel.parse().map_err(|_| "笔记编号不对")?) };
+        let n = state.notes(&l)?;
+        return note_nodes(&n, parent);
+    }
+    let f = state.folder(&l)?;
+    folder_nodes(&f, &rel)
+}
+
 #[tauri::command]
 pub async fn tree(lib: String, state: State<'_, AppState>) -> Result<Vec<NodeDto>, String> {
     let l = state.library(&lib)?;
+    if l.kind == "notes" {
+        let n = state.notes(&l)?;
+        return note_nodes(&n, None);
+    }
+    if l.kind == "folder" {
+        let f = state.folder(&l)?;
+        return folder_nodes(&f, "");
+    }
     let bc = state.bookcase_of(&l)?;
     if l.kind == "html" {
         let t = state.html_tree(&l)?;
@@ -574,6 +871,8 @@ pub struct ReaderDto {
     hits: usize,
     /// line of the first hit
     first_hit_lb: Option<String>,
+    /// internal libraries: the Markdown source, for editing
+    raw: Option<String>,
 }
 
 fn flatten_chapters(items: &[TocItem], depth: usize, out: &mut Vec<ChapterDto>) {
@@ -643,8 +942,95 @@ pub async fn open_node(
     state: State<'_, AppState>,
 ) -> Result<ReaderDto, String> {
     let l = state.library(&lib)?;
-    let bc = state.bookcase_of(&l)?;
     let asset_prefix = format!("{}{}/", ASSET_PREFIX, l.id);
+
+    if l.kind == "notes" {
+        let store = state.notes(&l)?;
+        let path = path.ok_or("没有指定笔记")?;
+        let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
+        let note = store.get(id)?.ok_or("笔记不存在")?;
+        let plain = notes::article(&note.content, None);
+        let (ranges, hits, first_hit_lb) = hits_of(&plain.text, query.as_deref(), phrase);
+        let a = notes::article(&note.content, Some(&RenderOptions { highlights: ranges.clone(), asset_prefix }));
+        let siblings = store.children(note.parent)?;
+        return Ok(ReaderDto {
+            lib: l.id.clone(),
+            kind: l.kind.clone(),
+            book_id: None,
+            title: note.title.clone(),
+            author: store.folders_of(id)?.join(" / "),
+            path: path.clone(),
+            juan: 0,
+            label: String::new(),
+            volumes: siblings
+                .iter()
+                .enumerate()
+                .map(|(i, s)| VolumeItemDto { idx: i as u16 + 1, label: s.title.clone(), path: s.id.to_string(), exists: true })
+                .collect(),
+            chapters: a
+                .headings
+                .iter()
+                .map(|h| ChapterDto {
+                    title: h.text.clone(),
+                    path: path.clone(),
+                    lb: Some(h.lb.clone()),
+                    depth: h.level.saturating_sub(1) as usize,
+                })
+                .collect(),
+            lines: line_view(&a.text, &ranges),
+            html: a.html.unwrap_or_default(),
+            hits,
+            first_hit_lb,
+            raw: Some(note.content),
+        });
+    }
+    if l.kind == "folder" {
+        let f = state.folder(&l)?;
+        let path = path.ok_or("没有指定文件")?;
+        let plain = f.article(&path, None)?;
+        let (ranges, hits, first_hit_lb) = hits_of(&plain.text, query.as_deref(), phrase);
+        let a = f.article(&path, Some(&RenderOptions { highlights: ranges.clone(), asset_prefix }))?;
+        let name = path.rsplit('/').next().unwrap_or(&path);
+        let title = name.rsplit_once('.').map(|(s, _)| s).filter(|s| !s.is_empty()).unwrap_or(name).to_string();
+        let dir = path.rsplit_once('/').map(|(d, _)| d.replace('/', " / ")).unwrap_or_default();
+        return Ok(ReaderDto {
+            lib: l.id.clone(),
+            kind: l.kind.clone(),
+            book_id: None,
+            title,
+            author: dir,
+            path: path.clone(),
+            juan: 0,
+            label: String::new(),
+            volumes: f
+                .siblings(&path)
+                .iter()
+                .enumerate()
+                .map(|(i, s)| VolumeItemDto {
+                    idx: i as u16 + 1,
+                    label: s.name.rsplit_once('.').map(|(a, _)| a.to_string()).unwrap_or(s.name.clone()),
+                    path: s.rel.clone(),
+                    exists: true,
+                })
+                .collect(),
+            chapters: a
+                .headings
+                .iter()
+                .map(|h| ChapterDto {
+                    title: h.text.clone(),
+                    path: path.clone(),
+                    lb: Some(h.lb.clone()),
+                    depth: h.level.saturating_sub(2) as usize,
+                })
+                .collect(),
+            lines: line_view(&a.text, &ranges),
+            html: a.html.unwrap_or_default(),
+            hits,
+            first_hit_lb,
+            raw: None,
+        });
+    }
+    let bc = state.bookcase_of(&l)?;
 
     if l.kind == "html" {
         let t = state.html_tree(&l)?;
@@ -691,6 +1077,7 @@ pub async fn open_node(
             html: a.html.unwrap_or_default(),
             hits,
             first_hit_lb,
+            raw: None,
         });
     }
 
@@ -735,6 +1122,7 @@ pub async fn open_node(
         html,
         hits,
         first_hit_lb,
+        raw: None,
     })
 }
 
@@ -759,6 +1147,23 @@ pub async fn resolve_node(
     state: State<'_, AppState>,
 ) -> Result<NodeIdDto, String> {
     let l = state.library(&lib)?;
+    if l.kind == "notes" {
+        let path = path.ok_or("没有指定笔记")?;
+        let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
+        let note = state.notes(&l)?.get(id)?.ok_or("笔记不存在")?;
+        return Ok(NodeIdDto { tab: format!("{}|{}", l.id, path), lib: l.id.clone(), book_id: None, path, title: note.title });
+    }
+    if l.kind == "folder" {
+        let path = path.ok_or("没有指定文件")?;
+        let name = path.rsplit('/').next().unwrap_or(&path);
+        return Ok(NodeIdDto {
+            tab: format!("{}|{}", l.id, path),
+            lib: l.id.clone(),
+            book_id: None,
+            title: name.rsplit_once('.').map(|(s, _)| s).filter(|s| !s.is_empty()).unwrap_or(name).to_string(),
+            path,
+        });
+    }
     if l.kind == "html" {
         let t = state.html_tree(&l)?;
         let path = path.ok_or("没有指定文章")?;
@@ -886,7 +1291,6 @@ pub async fn search(
         .unwrap_or_else(|| counts[0].id.clone());
     let l = state.library(&selected)?;
     let idx = state.index(&selected).ok_or("索引不可用")?;
-    let bc = state.bookcase_of(&l)?;
     let html = if l.kind == "html" { Some(state.html_tree(&l)?) } else { None };
 
     let page = page.unwrap_or(1).max(1);
@@ -897,10 +1301,10 @@ pub async fn search(
 
     let mut hits = Vec::new();
     for h in &r.hits {
-        let text = if l.kind == "html" {
-            bc.article(&h.path, None).map(|a| a.text)
+        let text = if is_article(&l) {
+            article_of(&state, &l, &h.path, None).map(|a| a.text)
         } else {
-            bc.volume_text(&h.path)
+            state.bookcase_of(&l)?.volume_text(&h.path)
         };
         let (occurrences, sn) = match text {
             Ok(vt) => {
@@ -919,11 +1323,19 @@ pub async fn search(
         };
         let subtitle = match &html {
             Some(t) => t.leaf(&h.path).map(|x| x.folders.join(" / ")).unwrap_or_default(),
+            None if l.kind == "notes" => h
+                .path
+                .parse::<i64>()
+                .ok()
+                .and_then(|id| state.notes(&l).ok()?.folders_of(id).ok())
+                .map(|f| f.join(" / "))
+                .unwrap_or_default(),
+            None if l.kind == "folder" => h.path.rsplit_once('/').map(|(d, _)| d.replace('/', " / ")).unwrap_or_default(),
             None => format!("卷{}", smart_library_core::bookcase::chinese_number(h.juan as u32)),
         };
         hits.push(HitDto {
             lib: l.id.clone(),
-            book_id: if l.kind == "html" { None } else { Some(h.book.clone()) },
+            book_id: if is_article(&l) { None } else { Some(h.book.clone()) },
             title: h.title.clone(),
             subtitle,
             path: h.path.clone(),
@@ -1158,7 +1570,18 @@ struct IndexDoneDto {
 #[tauri::command]
 pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let l = state.library(&lib)?;
-    let bc = state.bookcase_of(&l)?;
+    let notes_store = if l.kind == "notes" { Some(state.notes(&l)?) } else { None };
+    let lib_title = l.title.clone();
+    state.titles.write().unwrap().remove(&lib);
+    let folder = if l.kind == "folder" {
+        // the folder may have changed: read it afresh
+        state.folders.write().unwrap().remove(&lib);
+        state.titles.write().unwrap().remove(&lib);
+        Some(state.folder(&l)?)
+    } else {
+        None
+    };
+    let bc = if folder.is_some() || notes_store.is_some() { None } else { Some(state.bookcase_of(&l)?) };
     let html = if l.kind == "html" { Some(state.html_tree(&l)?) } else { None };
     if !state.building.lock().unwrap().insert(lib.clone()) {
         return Err("正在建立这个知识库的索引".to_string());
@@ -1176,9 +1599,24 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
             let progress = move |done, total| {
                 let _ = app2.emit("index-progress", ProgressDto { lib: lib2.clone(), done, total });
             };
-            let stats = match &html {
-                Some(t) => SearchIndex::build_html(&bc, t, &dir, progress)?,
-                None => SearchIndex::build(&bc, &dir, progress)?,
+            let stats = match (&folder, &bc, &html) {
+                _ if notes_store.is_some() => {
+                    let n = notes_store.as_ref().unwrap();
+                    let docs = notes::docs(&n.rows()?, &lib_title);
+                    let meta = serde_json::json!({ "kind": "notes", "data_version": n.fingerprint() });
+                    smart_library_core::search::build_index(&dir, meta, docs.len(), docs.into_iter().map(Ok), progress)?
+                }
+                (Some(f), _, _) => {
+                    let files = f.files();
+                    let meta = serde_json::json!({
+                        "kind": "folder",
+                        "data_version": f.fingerprint(&files),
+                    });
+                    smart_library_core::search::build_index(&dir, meta, files.len(), f.docs(&files), progress)?
+                }
+                (_, Some(bc), Some(t)) => SearchIndex::build_html(bc, t, &dir, progress)?,
+                (_, Some(bc), None) => SearchIndex::build(bc, &dir, progress)?,
+                _ => return Err("没有数据".into()),
             };
             Ok(format!(
                 "已索引 {} 篇，用时 {:.0} 秒{}",

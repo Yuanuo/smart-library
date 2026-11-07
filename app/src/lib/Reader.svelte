@@ -42,6 +42,7 @@
     onchapter,
     onprogress = null,
     onlocate = null,
+    extra = null,
   } = $props();
   let scroller = $state();
 
@@ -241,7 +242,7 @@
   <div class="reader">
     <header>
       <div class="nav">
-        <select aria-label={vol.kind === "html" ? "同一目录的文章" : "卷"} class="vols" value={vol.path} onchange={(e) => onvolume(e.target.value)}>
+        <select aria-label={vol.kind !== "cbeta" ? "同一目录的文章" : "卷"} class="vols" value={vol.path} onchange={(e) => onvolume(e.target.value)}>
           {#each vol.volumes as v}
             <option value={v.path} disabled={!v.exists}>{v.label}{v.exists ? "" : "（缺）"}</option>
           {/each}
@@ -254,13 +255,14 @@
             {/each}
           </select>
         {/if}
+        {@render extra?.()}
         <div class="seg" role="group" aria-label="版式">
           <button class:on={mode === "para"} onclick={() => (mode = "para")}>段落</button>
           <button class:on={mode === "lines"} onclick={() => (mode = "lines")}>原书行</button>
         </div>
         {#if mode === "para"}
           <label class="check"><input type="checkbox" bind:checked={showLb} /> 行号</label>
-          {#if vol.kind !== "html"}
+          {#if vol.kind === "cbeta"}
             <div class="seg notes" role="group" aria-label="编注显示方式">
               {#each NOTE_MODES as [k, label, help]}
                 <button class:on={noteMode === k} title={help} onclick={() => ((shared.noteMode = k), closeTip())}>{label}</button>

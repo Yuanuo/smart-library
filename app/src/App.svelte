@@ -11,6 +11,53 @@
   let error = $state("");
   let notice = $state("");
 
+  // Messages appear as a toast over the window (the layout never moves) and
+  // are kept in a list for the rest of the run. A toast goes away after a few
+  // seconds, but stays while the mouse rests on it or nothing was touched
+  // since it appeared (the user may be away).
+  let log = $state([]); // { id, time, kind, text }, newest first
+  let toast = $state(null);
+  let showLog = $state(false);
+  let lastActive = Date.now();
+  let toastTimer = null;
+  let toastSeq = 0;
+  let toastHover = false;
+
+  function push(kind, text) {
+    const m = { id: ++toastSeq, time: new Date().toLocaleTimeString("zh-CN", { hour12: false }), kind, text };
+    log = [m, ...log].slice(0, 200);
+    toast = m;
+    scheduleHide(m.id, Date.now(), kind === "error" ? 10000 : 5000);
+  }
+
+  function scheduleHide(id, shownAt, ms) {
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      if (toast?.id !== id) return;
+      if (toastHover || lastActive < shownAt) scheduleHide(id, shownAt, 2000);
+      else toast = null;
+    }, ms);
+  }
+
+  $effect(() => {
+    if (error) {
+      push("error", error);
+      error = "";
+    }
+  });
+  $effect(() => {
+    if (notice) {
+      push("notice", notice);
+      notice = "";
+    }
+  });
+  $effect(() => {
+    const touch = () => (lastActive = Date.now());
+    const evs = ["mousemove", "pointerdown", "keydown", "wheel"];
+    evs.forEach((e) => window.addEventListener(e, touch, { passive: true }));
+    return () => evs.forEach((e) => window.removeEventListener(e, touch));
+  });
+
   let query = $state("");
   let phrase = $state(false);
   let searching = $state(false);
@@ -201,17 +248,23 @@
   }
 
   async function unbind(l) {
-    const ok = await ask(`解除绑定「${l.title}」？\n它的索引会被删除；数据包本身不受影响，以后可以重新绑定。`, {
-      title: "解除绑定",
-      kind: "warning",
-      okLabel: "解除绑定",
-      cancelLabel: "取消",
-    });
+    const own = l.kind === "notes";
+    const ok = await ask(
+      own
+        ? `删除知识库「${l.title}」？\n里面的全部笔记会被永久删除，不能恢复。`
+        : `解除绑定「${l.title}」？\n它的索引会被删除；数据包本身不受影响，以后可以重新绑定。`,
+      {
+        title: own ? "删除知识库" : "解除绑定",
+        kind: "warning",
+        okLabel: own ? "永久删除" : "解除绑定",
+        cancelLabel: "取消",
+      },
+    );
     if (!ok) return;
     try {
       await workspace.closeLibrary(l.id);
       st = await api.unbindLibrary(l.id);
-      notice = `已解除绑定：${l.title}`;
+      notice = `${own ? "已删除" : "已解除绑定"}：${l.title}`;
     } catch (e) {
       error = String(e);
     }
@@ -269,19 +322,15 @@
         {searching ? "搜索中…" : "搜索"}
       </button>
     </form>
+    <button class="quick" onclick={() => (showLog = !showLog)} title="本次运行期间的消息">消息{log.length ? ` ${log.length}` : ""}</button>
   </header>
 
-  {#if error}
-    <div class="msg error" role="alert">{error} <button class="link" onclick={() => (error = "")}>关闭</button></div>
-  {:else if notice}
-    <div class="msg" role="status">{notice} <button class="link" onclick={() => (notice = "")}>关闭</button></div>
-  {/if}
 
   <div class="body">
     <nav class="side" aria-label="知识库目录" style="width: {sideWidth}px">
       <div class="side-head">
         <span class="muted">知识库</span>
-        <button class="link" onclick={() => (binding = { path: "" })} title="绑定知识库">＋ 绑定</button>
+        <button class="link" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加">＋</button>
       </div>
       <div class="tree">
         {#if st}
@@ -307,6 +356,31 @@
   </div>
 </div>
 
+{#if toast}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="toast" class:error={toast.kind === "error"} role={toast.kind === "error" ? "alert" : "status"}
+    onmouseenter={() => (toastHover = true)} onmouseleave={() => (toastHover = false)}>
+    <span>{toast.text}</span>
+    <button class="link" onclick={() => ((toast = null), (toastHover = false))} aria-label="关闭">×</button>
+  </div>
+{/if}
+
+{#if showLog}
+  <div class="log" role="dialog" aria-label="消息列表">
+    <div class="log-head">
+      <strong>消息</strong>
+      <span class="grow"></span>
+      <button class="link" onclick={() => (log = [])}>清空</button>
+      <button class="link" onclick={() => (showLog = false)}>关闭</button>
+    </div>
+    {#each log as m (m.id)}
+      <div class="log-item" class:error={m.kind === "error"}><time>{m.time}</time> {m.text}</div>
+    {:else}
+      <p class="muted">还没有消息。</p>
+    {/each}
+  </div>
+{/if}
+
 {#if quick}
   <QuickSearch {libraries} onopen={openQuick} onclose={() => (quick = false)} />
 {/if}
@@ -327,8 +401,23 @@
   .search { display: flex; gap: 8px; align-items: center; flex: 1; max-width: 760px; }
   .search input[type="search"] { flex: 1; min-width: 160px; }
   .check { display: flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 14px; }
-  .msg { padding: 6px 16px; background: var(--accent-soft); font-size: 14px; border-bottom: 1px solid var(--line); }
-  .msg.error { background: var(--hl-bg); color: var(--hl); }
+  .toast {
+    position: fixed; right: 16px; bottom: 16px; z-index: 1000; max-width: min(520px, calc(100vw - 32px));
+    display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 8px;
+    background: var(--paper); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .toast.error { background: var(--hl-bg); color: var(--hl); border-color: var(--hl); }
+  .log {
+    position: fixed; right: 16px; top: 52px; z-index: 990; width: min(520px, calc(100vw - 32px)); max-height: 60vh;
+    overflow: auto; padding: 10px 14px; border-radius: 8px; background: var(--paper);
+    border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+  }
+  .log-head { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; }
+  .grow { flex: 1; }
+  .log-item { padding: 4px 0; border-top: 1px solid var(--line); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .log-item.error { color: var(--hl); }
+  .log-item time { color: var(--muted); margin-right: 6px; }
   .body { flex: 1; display: flex; min-height: 0; }
   .side {
     flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 8px;

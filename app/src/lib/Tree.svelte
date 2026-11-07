@@ -5,16 +5,17 @@
   // `/0/3/5`), so that a node can be revealed from outside.
   import Tree from "./Tree.svelte";
 
-  let { nodes, onopen, ontoggle, expanded, depth = 0, prefix = "", current = null } = $props();
+  let { nodes, onopen, ontoggle, oncontext = null, expanded, depth = 0, prefix = "", current = null } = $props();
 </script>
 
 <ul class:root={depth === 0}>
   {#each nodes as node, i}
     {@const key = `${prefix}/${i}`}
-    {@const hasChildren = node.children.length > 0}
+    {@const hasChildren = node.children.length > 0 || !!node.lazy}
     {@const open = !!expanded[key]}
     <li>
-      <div class="row" class:current={current === key} data-key={key} style="padding-left: {depth * 14 + 4}px">
+      <div class="row" class:current={current === key} data-key={key} style="padding-left: {depth * 14 + 4}px"
+        role="presentation" oncontextmenu={(e) => oncontext?.(node, key, e)}>
         {#if hasChildren}
           <button class="twisty" onclick={() => ontoggle(key)} aria-label={open ? "收起" : "展开"}>
             {open ? "▾" : "▸"}
@@ -23,7 +24,7 @@
           <span class="twisty"></span>
         {/if}
         {#if node.book_id || node.path}
-          <button class="leaf" onclick={() => onopen(node)} title={node.title}>{node.title}</button>
+          <button class="leaf" onclick={() => onopen(node, key)} title={node.title}>{node.title}</button>
         {:else if node.href}
           <span class="leaf unsupported" title="内容尚未接入：{node.href}">{node.title}</span>
         {:else}
@@ -31,7 +32,7 @@
         {/if}
       </div>
       {#if hasChildren && open}
-        <Tree nodes={node.children} {onopen} {ontoggle} {expanded} depth={depth + 1} prefix={key} {current} />
+        <Tree nodes={node.children} {onopen} {ontoggle} {oncontext} {expanded} depth={depth + 1} prefix={key} {current} />
       {/if}
     </li>
   {/each}

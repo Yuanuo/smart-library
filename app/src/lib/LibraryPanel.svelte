@@ -6,8 +6,160 @@
   import * as api from "./api.js";
   import Tree from "./Tree.svelte";
   import ContextMenu from "./ContextMenu.svelte";
+  import NameDialog from "./NameDialog.svelte";
+  import * as workspace from "./workspace.svelte.js";
+  import { ask } from "@tauri-apps/plugin-dialog";
 
   let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex } = $props();
+
+  let nameDlg = $state(null); // { title, label, value, okLabel, onok }
+  let selected = $state(null); // { lib, key }: the last note opened from the tree
+
+  const isNotes = (id) => libraries.find((l) => l.id === id)?.kind === "notes";
+  const parentKey = (key) => key.slice(0, key.lastIndexOf("/"));
+
+  /** Reload one level of a library (`key` null: its top), keeping what was
+   * loaded below the notes that are still there. */
+  async function refresh(lib, key) {
+    const fresh = key ? await api.folderChildren(lib, nodeAt(lib, key)?.rel ?? "") : await api.tree(lib);
+    const old = key ? (nodeAt(lib, key)?.children ?? []) : (nodes[lib] ?? []);
+    const byRel = new Map(old.map((n) => [n.rel, n]));
+    for (const n of fresh) {
+      const o = byRel.get(n.rel);
+      if (o && o.children.length) {
+        n.children = o.children;
+        n.lazy = false;
+      }
+    }
+    if (key) {
+      const n = nodeAt(lib, key);
+      if (n) {
+        n.children = fresh;
+        n.lazy = false;
+        (expanded[lib] ??= {})[key] = true;
+      }
+    } else {
+      nodes[lib] = fresh;
+      open[lib] = true;
+    }
+  }
+
+  const guard = (lib, f) => async (...a) => {
+    try {
+      await f(...a);
+    } catch (e) {
+      errors[lib] = String(e);
+      throw e;
+    }
+  };
+
+  function newNote(lib, parent, key) {
+    nameDlg = {
+      title: parent ? `在「${parent.title}」下新建笔记` : "新建笔记",
+      label: "标题",
+      value: "",
+      okLabel: "创建",
+      onok: guard(lib, async (title) => {
+        const id = await api.createNote(lib, parent?.rel ?? null, title);
+        await refresh(lib, key);
+        await workspace.openVolume({ lib, path: id });
+      }),
+    };
+  }
+
+  function addNoteHere() {
+    const sel = selected && isNotes(selected.lib) ? selected : null;
+    const lib = sel?.lib ?? libraries.find((l) => l.kind === "notes")?.id;
+    if (!lib) return;
+    newNote(lib, sel ? nodeAt(sel.lib, sel.key) : null, sel?.key ?? null);
+  }
+
+  function renameNote(lib, node, key) {
+    nameDlg = {
+      title: "重命名笔记",
+      label: "标题",
+      value: node.title,
+      okLabel: "确定",
+      onok: guard(lib, async (title) => {
+        await api.renameNote(lib, node.rel, title);
+        workspace.retitle(lib, node.rel, title);
+        await refresh(lib, parentKey(key) || null);
+      }),
+    };
+  }
+
+  async function deleteNote(lib, node, key) {
+    const more = node.lazy || node.children.length ? "\n它下面的笔记会一起删除。" : "";
+    const ok = await ask(`删除笔记「${node.title}」？${more}\n删除后不能恢复。`, {
+      title: "删除笔记",
+      kind: "warning",
+      okLabel: "删除",
+      cancelLabel: "取消",
+    });
+    if (!ok) return;
+    try {
+      await api.deleteNote(lib, node.rel);
+      workspace.closeDocument(lib, node.rel);
+      if (selected?.lib === lib && selected.key.startsWith(key)) selected = null;
+      await refresh(lib, parentKey(key) || null);
+    } catch (e) {
+      errors[lib] = String(e);
+    }
+  }
+
+  function canShift(lib, node, key, by) {
+    const pk = parentKey(key);
+    const siblings = pk ? nodeAt(lib, pk)?.children : nodes[lib];
+    const idx = siblings?.findIndex((n) => n.rel === node.rel) ?? -1;
+    return idx >= 0 && idx + by >= 0 && idx + by < siblings.length;
+  }
+
+  async function shiftNote(lib, node, key, by) {
+    try {
+      const pk = parentKey(key);
+      const siblings = pk ? nodeAt(lib, pk).children : nodes[lib];
+      const idx = siblings.findIndex((n) => n.rel === node.rel);
+      if (idx + by < 0 || idx + by >= siblings.length) return; // already first / last
+      const parent = pk ? nodeAt(lib, pk).rel : null;
+      await api.moveNote(lib, node.rel, parent, idx + by);
+      await refresh(lib, pk || null);
+    } catch (e) {
+      errors[lib] = String(e);
+    }
+  }
+
+  function noteMenu(e, l, node, key) {
+    e.preventDefault();
+    e.stopPropagation();
+    menu = {
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: "新建子笔记…", action: () => newNote(l.id, node, key) },
+        { label: "重命名…", action: () => renameNote(l.id, node, key) },
+        "separator",
+        { label: "上移", action: () => shiftNote(l.id, node, key, -1), disabled: !canShift(l.id, node, key, -1) },
+        { label: "下移", action: () => shiftNote(l.id, node, key, 1), disabled: !canShift(l.id, node, key, 1) },
+        "separator",
+        { label: "删除…", action: () => deleteNote(l.id, node, key) },
+      ],
+    };
+  }
+
+  /** Menu of the add button: files (internal libraries only), libraries. */
+  export function addMenu(x, y) {
+    menu = { x, y, items: addItems() };
+  }
+  function addItems() {
+    return [
+      {
+        label: "文件（笔记）…",
+        action: addNoteHere,
+        disabled: !libraries.some((l) => l.kind === "notes"), // only internal libraries are writable
+      },
+      { label: "知识库…", action: onbind },
+    ];
+  }
 
   let open = $state({}); // lib id -> expanded
   let nodes = $state({}); // lib id -> tree nodes
@@ -43,10 +195,36 @@
     }
   }
 
-  function toggleNode(lib, key) {
+  /** The node at an index path key (`/0/3/5`). */
+  function nodeAt(lib, key) {
+    let list = nodes[lib] ?? [];
+    let n = null;
+    for (const i of key.split("/").filter(Boolean)) {
+      n = list[Number(i)];
+      if (!n) return null;
+      list = n.children;
+    }
+    return n;
+  }
+
+  /** Folder libraries list one level at a time. */
+  async function loadChildren(lib, n) {
+    if (!n?.lazy) return;
+    try {
+      n.children = await api.folderChildren(lib, n.rel);
+      n.lazy = false;
+    } catch (e) {
+      errors[lib] = String(e);
+    }
+  }
+
+  async function toggleNode(lib, key) {
     const ex = (expanded[lib] ??= {});
     if (ex[key]) delete ex[key];
-    else ex[key] = true;
+    else {
+      await loadChildren(lib, nodeAt(lib, key));
+      ex[key] = true;
+    }
   }
 
   /** Index path of the node showing a document, or null. CBETA: the leaf of
@@ -71,12 +249,33 @@
     return exact ?? best?.[0] ?? null;
   }
 
+  const isFolder = (id) => libraries.find((l) => l.id === id)?.kind === "folder";
+
+  /** Index path of a file of a folder library, loading the folders on the way. */
+  async function findFolderNode(lib, path) {
+    const parts = (path ?? "").split("/");
+    let list = nodes[lib] ?? [];
+    const trail = [];
+    for (let d = 0; d < parts.length; d++) {
+      const rel = parts.slice(0, d + 1).join("/");
+      const i = list.findIndex((n) => n.rel === rel);
+      if (i < 0) return null;
+      trail.push(i);
+      const n = list[i];
+      if (d < parts.length - 1) {
+        await loadChildren(lib, n);
+        list = n.children;
+      }
+    }
+    return trail;
+  }
+
   /** Open the tree down to the node of a document and select it. */
   export async function reveal({ lib, bookId, path }) {
     if (!libraries.some((l) => l.id === lib)) return false;
     open[lib] = true;
     if (!nodes[lib]) await load(lib);
-    const trail = findNode(nodes[lib] ?? [], { bookId, path });
+    const trail = isFolder(lib) ? await findFolderNode(lib, path) : findNode(nodes[lib] ?? [], { bookId, path });
     if (!trail) return false;
     const ex = (expanded[lib] ??= {});
     let key = "";
@@ -115,19 +314,19 @@
       y: e.clientY,
       items: [
         { label: open[l.id] ? "收起" : "展开", action: () => toggle(l) },
+        ...(l.kind === "notes" ? [{ label: "新建笔记…", action: () => newNote(l.id, null, null) }] : []),
         "separator",
         { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
-        ...(l.kind === "cbeta" ? [{ label: "更换目录树…", action: () => onrebind(l) }] : []),
-        { label: "从同一数据包绑定其他知识库…", action: () => onrebind(l) },
+        ...(l.kind === "folder" ? [] : [{ label: "从同一数据包绑定其他知识库…", action: () => onrebind(l) }]),
         "separator",
-        { label: "解除绑定", action: () => onunbind(l), disabled: building },
+        { label: l.kind === "notes" ? "删除知识库…" : "解除绑定", action: () => onunbind(l), disabled: building },
       ],
     };
   }
 
   function panelMenu(e) {
     e.preventDefault();
-    menu = { x: e.clientX, y: e.clientY, items: [{ label: "绑定知识库…", action: onbind }] };
+    menu = { x: e.clientX, y: e.clientY, items: addItems() };
   }
 </script>
 
@@ -141,7 +340,6 @@
         <button class="twisty" onclick={() => toggle(l)} tabindex="-1" aria-hidden="true">{open[l.id] ? "▾" : "▸"}</button>
         <button class="title" onclick={() => toggle(l)} tabindex="-1" title={`${l.title}\n${l.source}`}>{l.title}</button>
         {#if b}<span class="badge" class:warn={b.warn}>{b.text}</span>{/if}
-        <button class="more" title="更多操作" aria-label="{l.title} 的操作" onclick={(e) => libMenu(e, l)}>⋯</button>
       </div>
       {#if open[l.id]}
         {#if loading[l.id]}
@@ -155,7 +353,11 @@
             expanded={expanded[l.id] ?? {}}
             current={current?.lib === l.id ? current.key : null}
             ontoggle={(key) => toggleNode(l.id, key)}
-            onopen={(node) => onopen(l, node)} />
+            oncontext={l.kind === "notes" ? (node, key, e) => noteMenu(e, l, node, key) : null}
+            onopen={(node, key) => {
+              selected = { lib: l.id, key };
+              onopen(l, node);
+            }} />
         {/if}
       {/if}
     </div>
@@ -167,6 +369,10 @@
     </div>
   {/each}
 </div>
+
+{#if nameDlg}
+  <NameDialog {...nameDlg} onclose={() => (nameDlg = null)} />
+{/if}
 
 {#if menu}
   <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
@@ -186,8 +392,6 @@
   }
   .badge { font-size: 11px; color: var(--muted); white-space: nowrap; }
   .badge.warn { color: var(--hl); }
-  .more { border: none; background: none; padding: 0 6px; color: var(--muted); }
-  .more:hover { color: var(--accent); }
   .note { font-size: 13px; padding-left: 24px; }
   .error { color: var(--hl); }
   .empty { padding: 24px 12px; text-align: center; }

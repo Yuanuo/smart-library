@@ -317,6 +317,56 @@ impl TitleIndex {
         t
     }
 
+    /// The notes of an internal library (`path` is the note id).
+    pub fn notes(rows: &[crate::notes::NoteRow], root_name: &str) -> TitleIndex {
+        let mut t = TitleIndex::new();
+        let mut group_of: HashMap<Vec<String>, u32> = HashMap::new();
+        for r in rows {
+            let g = match group_of.get(&r.folders) {
+                Some(&g) => g,
+                None => {
+                    let parts: Vec<&str> = r.folders.iter().map(|s| s.as_str()).collect();
+                    let line = if r.folders.is_empty() { root_name.to_string() } else { r.folders.join(" / ") };
+                    let g = t.add_group(line, "", None, &parts);
+                    group_of.insert(r.folders.clone(), g);
+                    g
+                }
+            };
+            t.push(
+                TitleEntry { kind: TitleKind::Article, title: r.title.clone(), group: g, path: Some(r.id.to_string()), lb: None },
+                &r.title,
+                &[],
+            );
+        }
+        t
+    }
+
+    /// The files of a folder library, grouped by their folder.
+    pub fn folder(files: &[crate::folder::FolderFile], root_name: &str) -> TitleIndex {
+        let mut t = TitleIndex::new();
+        let mut group_of: HashMap<String, u32> = HashMap::new();
+        for f in files {
+            let dir = f.rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("").to_string();
+            let g = match group_of.get(&dir) {
+                Some(&g) => g,
+                None => {
+                    let line = if dir.is_empty() { root_name.to_string() } else { dir.replace('/', " / ") };
+                    let parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+                    let g = t.add_group(line, "", None, &parts);
+                    group_of.insert(dir, g);
+                    g
+                }
+            };
+            let title = f.name.rsplit_once('.').map(|(s, _)| s).filter(|s| !s.is_empty()).unwrap_or(&f.name);
+            t.push(
+                TitleEntry { kind: TitleKind::Article, title: title.to_string(), group: g, path: Some(f.rel.clone()), lb: None },
+                title,
+                &[&f.name],
+            );
+        }
+        t
+    }
+
     /// Every entry matching all `words`, with its rank, in tree order (the
     /// caller sorts). No words: every entry, all with the same rank.
     pub fn search(&self, words: &[String]) -> Vec<(Rank, usize)> {
