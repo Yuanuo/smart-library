@@ -43,6 +43,48 @@
   }
 
   let wsEl = $state();
+  let libPanel = $state();
+
+  // width of the tree panel: drag the splitter, kept in local storage
+  const SIDE_MIN = 180;
+  let sideWidth = $state(300);
+  try {
+    sideWidth = Math.max(SIDE_MIN, Number(localStorage.getItem("side.width")) || 300);
+  } catch {}
+  let dragging = $state(false);
+  function startDrag(e) {
+    e.preventDefault();
+    dragging = true;
+    const x0 = e.clientX;
+    const w0 = sideWidth;
+    const moveTo = (ev) => {
+      sideWidth = Math.round(Math.min(Math.max(SIDE_MIN, w0 + ev.clientX - x0), window.innerWidth * 0.7));
+    };
+    const stop = () => {
+      dragging = false;
+      window.removeEventListener("pointermove", moveTo);
+      window.removeEventListener("pointerup", stop);
+      try {
+        localStorage.setItem("side.width", String(sideWidth));
+      } catch {}
+    };
+    window.addEventListener("pointermove", moveTo);
+    window.addEventListener("pointerup", stop);
+  }
+  function splitterKey(e) {
+    const d = e.key === "ArrowLeft" ? -20 : e.key === "ArrowRight" ? 20 : 0;
+    if (!d) return;
+    e.preventDefault();
+    sideWidth = Math.max(SIDE_MIN, sideWidth + d);
+    try {
+      localStorage.setItem("side.width", String(sideWidth));
+    } catch {}
+  }
+
+  async function locate(doc) {
+    const ok = await libPanel?.reveal(doc);
+    if (!ok) notice = "目录树里没有找到这个文档。";
+  }
   let wsReady = false;
 
   const libraries = $derived(st?.libraries ?? []);
@@ -111,7 +153,7 @@
   $effect(() => {
     if (wsEl && st && !wsReady) {
       wsReady = true;
-      workspace.init(wsEl, { resultsProps: rs, libraries: st.libraries }).catch((e) => (error = String(e)));
+      workspace.init(wsEl, { resultsProps: rs, libraries: st.libraries, onlocate: locate }).catch((e) => (error = String(e)));
     }
   });
 
@@ -236,7 +278,7 @@
   {/if}
 
   <div class="body">
-    <nav class="side" aria-label="知识库目录">
+    <nav class="side" aria-label="知识库目录" style="width: {sideWidth}px">
       <div class="side-head">
         <span class="muted">知识库</span>
         <button class="link" onclick={() => (binding = { path: "" })} title="绑定知识库">＋ 绑定</button>
@@ -244,6 +286,7 @@
       <div class="tree">
         {#if st}
           <LibraryPanel
+            bind:this={libPanel}
             {libraries}
             {progress}
             onopen={openNode}
@@ -256,6 +299,10 @@
         {/if}
       </div>
     </nav>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <div class="splitter" class:dragging role="separator" aria-orientation="vertical" aria-label="调整目录宽度"
+      aria-valuenow={sideWidth} tabindex="0" onpointerdown={startDrag} onkeydown={splitterKey}
+      ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
     <main class="content" bind:this={wsEl}></main>
   </div>
 </div>
@@ -284,9 +331,15 @@
   .msg.error { background: var(--hl-bg); color: var(--hl); }
   .body { flex: 1; display: flex; min-height: 0; }
   .side {
-    width: 300px; flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 8px;
-    border-right: 1px solid var(--line); background: var(--panel); min-height: 0;
+    flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 8px;
+    background: var(--panel); min-height: 0;
   }
+  .splitter {
+    flex: none; width: 5px; cursor: col-resize; background: var(--panel);
+    border-right: 1px solid var(--line); touch-action: none;
+  }
+  .splitter:hover, .splitter.dragging, .splitter:focus-visible { background: var(--accent-soft); outline: none; }
+  .body:has(.splitter.dragging) { user-select: none; cursor: col-resize; }
   .side-head { display: flex; justify-content: space-between; align-items: center; padding: 0 4px; font-size: 13px; }
   .tree { flex: 1; overflow: auto; font-size: 15px; }
   .content { flex: 1; min-width: 0; min-height: 0; position: relative; }

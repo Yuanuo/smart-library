@@ -5,7 +5,7 @@
   import * as api from "./api.js";
   import Reader from "./Reader.svelte";
 
-  let { p, onopen, onprogress, ontitle } = $props();
+  let { p, onopen, onprogress, ontitle, onlocate = null } = $props();
 
   let vol = $state(null);
   let error = $state("");
@@ -54,6 +54,7 @@
     bind:mode={p.mode}
     onvolume={(path) => onopen({ lib: p.lib, bookId: p.bookId, path })}
     onchapter={chapter}
+    {onlocate}
     onprogress={(lb) => onprogress(lb, p.mode)} />
 {:else}
   <p class="loading muted">载入中…</p>

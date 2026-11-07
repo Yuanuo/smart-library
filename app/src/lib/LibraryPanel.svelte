@@ -2,6 +2,7 @@
   // The tree panel: one root per bound knowledge library, its tree loaded
   // when first opened. Right-click a library for its actions, or the empty
   // panel to bind a library.
+  import { tick } from "svelte";
   import * as api from "./api.js";
   import Tree from "./Tree.svelte";
   import ContextMenu from "./ContextMenu.svelte";
@@ -13,6 +14,9 @@
   let loading = $state({});
   let errors = $state({});
   let menu = $state(null); // { x, y, items }
+  let expanded = $state({}); // lib id -> { node key -> true }
+  let current = $state(null); // { lib, key }: the node revealed last
+  let panel = $state();
 
   // a library bound again with another tree: reload it
   let trees = {};
@@ -20,6 +24,7 @@
     for (const l of libraries) {
       if (trees[l.id] && trees[l.id] !== l.tree) {
         delete nodes[l.id];
+        expanded[l.id] = {};
         if (open[l.id]) load(l.id);
       }
       trees[l.id] = l.tree;
@@ -36,6 +41,54 @@
     } finally {
       loading[id] = false;
     }
+  }
+
+  function toggleNode(lib, key) {
+    const ex = (expanded[lib] ??= {});
+    if (ex[key]) delete ex[key];
+    else ex[key] = true;
+  }
+
+  /** Index path of the node showing a document, or null. CBETA: the leaf of
+   * the book (for the parts of a big book, the last part starting at or
+   * before the volume); HTML: the article. */
+  function findNode(list, { bookId, path }) {
+    let exact = null; // an article
+    let best = null; // [trail, start]: a CBETA book
+    const walk = (ns, trail) => {
+      ns.forEach((n, i) => {
+        const t = [...trail, i];
+        if (path && n.path === path) exact ??= t;
+        else if (bookId && n.book_id === bookId) {
+          const start = n.start ?? "";
+          const fits = !path || !n.start || n.start <= path;
+          if (fits && (!best || start > best[1])) best = [t, start];
+        }
+        walk(n.children, t);
+      });
+    };
+    walk(list, []);
+    return exact ?? best?.[0] ?? null;
+  }
+
+  /** Open the tree down to the node of a document and select it. */
+  export async function reveal({ lib, bookId, path }) {
+    if (!libraries.some((l) => l.id === lib)) return false;
+    open[lib] = true;
+    if (!nodes[lib]) await load(lib);
+    const trail = findNode(nodes[lib] ?? [], { bookId, path });
+    if (!trail) return false;
+    const ex = (expanded[lib] ??= {});
+    let key = "";
+    for (const i of trail.slice(0, -1)) {
+      key += `/${i}`;
+      ex[key] = true;
+    }
+    key += `/${trail[trail.length - 1]}`;
+    current = { lib, key };
+    await tick();
+    panel?.querySelector(`[data-lib="${lib}"] [data-key="${key}"]`)?.scrollIntoView({ block: "center" });
+    return true;
   }
 
   function toggle(l) {
@@ -78,10 +131,10 @@
   }
 </script>
 
-<div class="panel" role="tree" aria-label="知识库" oncontextmenu={panelMenu}>
+<div class="panel" bind:this={panel} role="tree" aria-label="知识库" oncontextmenu={panelMenu}>
   {#each libraries as l (l.id)}
     {@const b = badge(l)}
-    <div class="lib">
+    <div class="lib" data-lib={l.id}>
       <div class="root" role="treeitem" aria-expanded={!!open[l.id]} aria-selected="false" tabindex="0"
         oncontextmenu={(e) => libMenu(e, l)}
         onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggle(l))}>
@@ -96,7 +149,13 @@
         {:else if errors[l.id]}
           <p class="error note">{errors[l.id]}</p>
         {:else if nodes[l.id]}
-          <Tree nodes={nodes[l.id]} depth={1} onopen={(node) => onopen(l, node)} />
+          <Tree
+            nodes={nodes[l.id]}
+            depth={1}
+            expanded={expanded[l.id] ?? {}}
+            current={current?.lib === l.id ? current.key : null}
+            ontoggle={(key) => toggleNode(l.id, key)}
+            onopen={(node) => onopen(l, node)} />
         {/if}
       {/if}
     </div>

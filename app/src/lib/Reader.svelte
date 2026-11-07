@@ -19,6 +19,7 @@
     onvolume,
     onchapter,
     onprogress = null,
+    onlocate = null,
   } = $props();
   let scroller = $state();
 
@@ -77,6 +78,52 @@
     }, 400);
   }
 
+  // hover tips for variant readings (`.app`), Sanskrit-Chinese pairs (`.tt`)
+  // and missing glyphs (`.g`), instead of the browser's one-line title:
+  // the reading in the text first, the other editions below, aligned
+  let tip = $state(null); // { rows: [[key, text]], split, x, top, bottom }
+  let tipEl = $state();
+  let tipLeft = $state(0);
+
+  function tipRows(el, text) {
+    const items = text.split("；").map((s) => s.trim()).filter(Boolean);
+    if (el.classList.contains("app")) {
+      const rows = items.map((s) => {
+        // several editions share a reading: `【宋】 【元】 【明】憋`
+        const m = s.match(/^((?:\s*【[^】]*】)+)\s*(.*)$/);
+        return m ? [m[1].replace(/\s+/g, ""), m[2]] : ["", s];
+      });
+      return { rows, split: rows.length > 1 ? 1 : 0 };
+    }
+    if (el.classList.contains("tt")) {
+      return { rows: items.map((s) => (s.includes(": ") ? s.split(": ", 2) : ["", s])), split: 0 };
+    }
+    return { rows: [["", text]], split: 0 };
+  }
+
+  function overDoc(e) {
+    const el = e.target.closest?.(".app[title], .app[data-tip], .tt[title], .tt[data-tip], .g[title], .g[data-tip]");
+    if (!el) return;
+    if (el.hasAttribute("title")) {
+      el.dataset.tip = el.getAttribute("title");
+      el.removeAttribute("title");
+    }
+    const text = el.dataset.tip;
+    if (!text) return;
+    const r = el.getBoundingClientRect();
+    tip = { ...tipRows(el, text), el, x: r.left + r.width / 2, top: r.top, bottom: r.bottom };
+    tipLeft = tip.x;
+    tick().then(() => {
+      if (!tipEl || !tip) return;
+      const w = tipEl.offsetWidth;
+      tipLeft = Math.min(Math.max(8 + w / 2, tip.x), window.innerWidth - 8 - w / 2);
+    });
+  }
+
+  function outDoc(e) {
+    if (tip && !tip.el.contains(e.relatedTarget)) tip = null;
+  }
+
   function chapterChange(e) {
     const c = vol.chapters[e.target.value];
     e.target.value = "";
@@ -113,9 +160,12 @@
           <label class="check"><input type="checkbox" bind:checked={showLb} /> 行号</label>
         {/if}
         {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
+        {#if onlocate}<button class="locate" onclick={onlocate} title="在目录树中定位">⌖</button>{/if}
       </div>
     </header>
-    <div class="scroll" bind:this={scroller} onscroll={onScroll}>
+    <!-- svelte-ignore a11y_mouse_events_have_key_events -->
+    <div class="scroll" bind:this={scroller} onscroll={(e) => ((tip = null), onScroll(e))}
+      onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para"}
         <article class="doc" class:show-lb={showLb}>{@html vol.html}</article>
       {:else}
@@ -132,7 +182,37 @@
   </div>
 {/if}
 
+{#if tip}
+  {@const above = tip.top > 160}
+  <div class="tip" class:below={!above} bind:this={tipEl} role="tooltip"
+    style="left: {tipLeft}px; {above ? `bottom: ${window.innerHeight - tip.top + 10}px` : `top: ${tip.bottom + 10}px`}; --arrow: {tip.x - tipLeft}px">
+    <table>
+      <tbody>
+        {#each tip.rows as [k, t], i}
+          {#if tip.split && i === tip.split}<tr class="sep"><td colspan="2"></td></tr>{/if}
+          <tr><td class="k">{k}{k && t ? "：" : ""}</td><td>{t}</td></tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
+{/if}
+
 <style>
+  .tip {
+    position: fixed; z-index: 2000; transform: translateX(-50%); max-width: min(32em, calc(100vw - 16px));
+    background: var(--ink); color: var(--paper); border-radius: 6px; padding: 8px 12px;
+    font-size: 15px; line-height: 1.6; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); pointer-events: none;
+  }
+  .tip::after {
+    content: ""; position: absolute; left: calc(50% + var(--arrow, 0px)); bottom: -6px; transform: translateX(-50%);
+    border: 6px solid transparent; border-bottom: none; border-top-color: var(--ink);
+  }
+  .tip.below::after { bottom: auto; top: -6px; border: 6px solid transparent; border-top: none; border-bottom-color: var(--ink); }
+  .tip table { border-collapse: collapse; }
+  .tip td { padding: 1px 0; vertical-align: top; }
+  .tip td.k { white-space: nowrap; padding-right: 2px; opacity: 0.85; }
+  .tip tr.sep td { padding: 0; height: 9px; border-bottom: 1px solid color-mix(in srgb, var(--paper) 35%, transparent); }
+  .tip tr.sep + tr td { padding-top: 6px; }
   .reader { display: flex; flex-direction: column; height: 100%; }
   header {
     display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap;
@@ -149,6 +229,7 @@
   .seg button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
   .seg button.on { background: var(--accent); color: var(--paper); border-color: var(--accent); }
   .check { display: flex; gap: 4px; align-items: center; }
+  .locate { padding: 2px 8px; font-size: 16px; line-height: 1.2; }
   .scroll { flex: 1; overflow: auto; background: var(--paper); }
 
   /* original lines */
@@ -190,8 +271,9 @@
   .doc :global(.hi.r-border) { border: 1px solid var(--muted); padding: 0 2px; }
   .doc :global(.hi.r-circle) { border: 1px solid var(--muted); border-radius: 50%; padding: 0 2px; }
   .doc :global(.g) { color: #8a3c6a; font-size: 0.85em; }
-  .doc :global(.app[title]:not([title=""])) { border-bottom: 1px dotted var(--accent-soft); }
-  .doc :global(.tt[title]:not([title=""])) { border-bottom: 1px dotted var(--muted); }
+  .doc :global(.app[title]:not([title=""])), .doc :global(.app[data-tip]:not([data-tip=""])) { border-bottom: 1px dotted var(--accent-soft); }
+  .doc :global(.tt[title]:not([title=""])), .doc :global(.tt[data-tip]:not([data-tip=""])) { border-bottom: 1px dotted var(--muted); }
+  .doc :global(.app[data-tip]:not([data-tip=""]):hover) { color: var(--accent); }
   .doc :global(.unclear) { color: var(--muted); }
   .doc :global(img.figure) { max-width: 100%; display: block; margin: 0.5em 0; background: white; }
   .doc :global(.note) { position: relative; cursor: pointer; }

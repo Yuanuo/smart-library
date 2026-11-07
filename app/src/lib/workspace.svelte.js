@@ -72,10 +72,28 @@ function readerRenderer() {
   let instance = null;
   let p = null;
   let panelApi = null;
+  // dockview takes a hidden tab's element out of the page, which resets its
+  // scroll position: remember it while visible, put it back when shown
+  let scrollTop = 0;
+  element.addEventListener(
+    "scroll",
+    (e) => {
+      if (element.isConnected && e.target.classList?.contains("scroll")) scrollTop = e.target.scrollTop;
+    },
+    true,
+  );
   return {
     element,
     init(params) {
       panelApi = params.api;
+      panelApi.onDidVisibilityChange(({ isVisible }) => {
+        if (!isVisible) return;
+        const top = scrollTop;
+        requestAnimationFrame(() => {
+          const s = element.querySelector(".scroll");
+          if (s && top && Math.abs(s.scrollTop - top) > 1) s.scrollTop = top;
+        });
+      });
       const prm = params.params || {};
       const tab = `${prm.lib}|${prm.path}`;
       const saved = progress[tab];
@@ -98,6 +116,7 @@ function readerRenderer() {
         props: {
           p,
           onopen: (req) => openVolume(req),
+          onlocate: () => hooks.onlocate?.({ lib: state.lib, bookId: state.bookId, path: state.path }),
           onprogress: (lb, mode) => recordProgress(tab, lb, mode),
           ontitle: (t) => panelApi?.setTitle(t),
         },
@@ -166,6 +185,14 @@ function tabMenu({ panel, group }) {
   }
   if (isReader) {
     items.push({ label: "在新窗口打开", action: () => popOut(panel) });
+    items.push("separator");
+    items.push({
+      label: "在目录树中定位",
+      action: () => {
+        const prm = panel.params || {};
+        hooks.onlocate?.({ lib: prm.lib, bookId: prm.bookId, path: prm.path });
+      },
+    });
   }
   return items;
 }
