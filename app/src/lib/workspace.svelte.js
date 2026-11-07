@@ -149,7 +149,7 @@ function readerRenderer() {
           onprogress: (lb, mode) => recordProgress(tab, lb, mode),
           ontitle: (t, tooltip) => {
             panelApi?.setTitle(t);
-            if (panelApi?.isActive) ws.current = { title: t, lib: state.lib };
+            if (panelApi?.isActive) ws.current = { title: t, lib: state.lib, path: state.path, bookId: state.bookId };
             tooltips[panelApi.id] = tooltip;
             applyTooltip(panelApi.id);
           },
@@ -322,7 +322,10 @@ export async function init(element, h) {
   });
   const refreshEmpty = () => (ws.empty = dv.panels.length === 0);
   dv.onDidActivePanelChange((panel) => {
-    ws.current = panel && panel.id !== "search" && panel.params?.lib ? { title: panel.title, lib: panel.params.lib } : null;
+    ws.current =
+      panel && panel.id !== "search" && panel.params?.lib
+        ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null }
+        : null;
   });
   dv.onDidAddPanel(refreshEmpty);
   dv.onDidRemovePanel(refreshEmpty);

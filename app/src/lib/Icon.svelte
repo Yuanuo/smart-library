@@ -24,6 +24,10 @@
     <path d="M21 3 3 10.5l7 2.5 2.5 7z" /><path d="M21 3 10 13" />
   {:else if name === "search"}
     <circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" />
+  {:else if name === "bookmark"}
+    <path d="M6.5 3.5h11v17l-5.5-4-5.5 4z" fill="currentColor" fill-opacity="0.2" />
+  {:else if name === "tag"}
+    <path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7a1 1 0 0 1 .7.3l7.6 7.6a1 1 0 0 1 0 1.4l-7.7 7.7a1 1 0 0 1-1.4 0l-7.6-7.6a1 1 0 0 1-.3-.7z" /><circle cx="8.3" cy="8.3" r="1.4" fill="currentColor" />
   {:else if name === "clock"}
     <circle cx="12" cy="12" r="8.5" /><path d="M12 7v5.5l3.5 2" />
   {:else if name === "locate"}

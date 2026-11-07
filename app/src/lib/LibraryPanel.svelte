@@ -12,7 +12,7 @@
   import * as workspace from "./workspace.svelte.js";
   import { ask } from "@tauri-apps/plugin-dialog";
 
-  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom } = $props();
+  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -192,6 +192,7 @@
   }
 
   const searchItems = (l, node) => [
+    ...(node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node) }, "separator"] : []),
     { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
     { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
   ];

@@ -9,6 +9,8 @@
   import Icon from "./lib/Icon.svelte";
   import RecentDialog from "./lib/RecentDialog.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
+  import TagDialog from "./lib/TagDialog.svelte";
+  import MarksDialog from "./lib/MarksDialog.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let st = $state(null);
@@ -83,10 +85,10 @@
         settingsBox = true;
         return;
       }
-      if (k === "g" || k === "h" || k === "e") {
+      if (k === "g" || k === "h" || k === "e" || k === "b") {
         e.preventDefault();
         shiftAlone = false;
-        if (!binding) (k === "g" ? openQuickSearch : k === "h" ? openSearch : openRecent)();
+        if (!binding) (k === "g" ? openQuickSearch : k === "h" ? openSearch : k === "e" ? openRecent : openMarks)();
         return;
       }
     }
@@ -137,9 +139,72 @@
     }
   }
 
-  /** Bookmarks, collections and tags (added below). */
-  function markAction(a) {
-    notice = "这个功能还没有接上。";
+  // ---- bookmarks, collections and tags
+  let tagDlg = $state(null); // props of the TagDialog
+  let marksBox = $state(false);
+
+  const docTitle = (v) => (v.label ? `${v.title} ${v.label}` : v.title);
+
+  async function markAction(a) {
+    const v = a.vol;
+    try {
+      if (a.type === "bookmark") {
+        await api.markAdd({
+          kind: "bookmark", lib: v.lib, path: v.path, bookId: v.book_id ?? null, lb: a.lb ?? null,
+          quote: a.excerpt ?? "", note: "", docTitle: docTitle(v), author: v.author ?? "", tags: "",
+        });
+        notice = `已添加书签：${docTitle(v)}${a.lb ? " · " + a.lb : ""}`;
+      } else if (a.type === "clip") {
+        tagDlg = {
+          heading: "添加收藏", subtitle: `${docTitle(v)}${a.lb ? " · " + a.lb : ""}`, quote: a.text, withNote: true, okLabel: "添加",
+          onok: async (tags, note) => {
+            await api.markAdd({
+              kind: "clip", lib: v.lib, path: v.path, bookId: v.book_id ?? null, lb: a.lb ?? null,
+              quote: a.text, note, docTitle: docTitle(v), author: v.author ?? "", tags,
+            });
+            notice = "已添加收藏。";
+          },
+        };
+      } else if (a.type === "tag") {
+        tagNode(v.lib, v.book_id ?? null, v.path, docTitle(v));
+      }
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** Tags of a whole book / article. */
+  async function tagNode(lib, bookId, path, title) {
+    const current = await api.nodeTagsGet(lib, bookId, path);
+    tagDlg = {
+      heading: "标签", subtitle: title, tags: current.join(", "),
+      onok: async (tags) => {
+        await api.nodeTagsSet(lib, bookId, path, title, tags);
+        notice = tags.trim() ? "标签已保存。" : "已清除标签。";
+      },
+    };
+  }
+
+  function tagFromTree(l, node) {
+    // CBETA: the whole book; the others: the article / file / folder / note
+    if (l.kind === "cbeta") {
+      if (!node.book_id) return;
+      tagNode(l.id, node.book_id, "", node.title).catch((e) => (error = String(e)));
+    } else {
+      tagNode(l.id, null, node.path ?? node.rel, node.title).catch((e) => (error = String(e)));
+    }
+  }
+
+  /** Open a mark: at its place, the quote highlighted. */
+  async function openMark(m) {
+    try {
+      const quote = m.kind === "clip" && m.quote && m.quote.length <= 80 ? m.quote : null;
+      await workspace.openVolume({
+        lib: m.lib, bookId: m.book_id, path: m.path || null, lb: m.lb, query: quote, phrase: !!quote,
+      });
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   let searchBox = $state(false); // full-text search popup
@@ -152,6 +217,12 @@
     } else openSearch(scope);
   }
   let searchInput = $state();
+  function openMarks() {
+    searchBox = false;
+    quick = false;
+    recentBox = false;
+    marksBox = true;
+  }
   let settingsBox = $state(false);
   let recentBox = $state(false); // reading history popup
   function openRecent() {
@@ -447,6 +518,7 @@
           <button class="icon" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加" aria-label="添加"><Icon name="plus" size={18} /></button>
           <button class="icon" onclick={openQuickSearch} title="标题快搜（双击 Shift 或 Ctrl+G）" aria-label="标题快搜"><Icon name="plane" size={18} /></button>
           <button class="icon" onclick={openSearch} title="全文搜索（Ctrl+H）" aria-label="全文搜索"><Icon name="search" size={18} /></button>
+          <button class="icon" onclick={openMarks} title="收藏与标签（Ctrl+B）" aria-label="收藏与标签"><Icon name="bookmark" size={18} /></button>
           <button class="icon" onclick={openRecent} title="最近打开（Ctrl+E）" aria-label="最近打开"><Icon name="clock" size={18} /></button>
         </span>
       </div>
@@ -461,7 +533,8 @@
             onrebind={(l) => (binding = { path: l.source })}
             onunbind={unbind}
             onindex={startIndex}
-            onsearchfrom={searchFrom} />
+            onsearchfrom={searchFrom}
+            ontag={tagFromTree} />
         {:else}
           <p class="muted">载入中…</p>
         {/if}
@@ -520,6 +593,14 @@
       <p class="muted">还没有消息。</p>
     {/each}
   </div>
+{/if}
+
+{#if tagDlg}
+  <TagDialog {...tagDlg} onclose={() => (tagDlg = null)} />
+{/if}
+
+{#if marksBox}
+  <MarksDialog doc={workspace.ws.current} onopen={openMark} onclose={() => (marksBox = false)} />
 {/if}
 
 {#if settingsBox}

@@ -15,6 +15,7 @@ pub mod cite;
 pub mod folder;
 pub mod history;
 pub mod library;
+pub mod marks;
 pub mod markdown;
 pub mod markup;
 pub mod nav;

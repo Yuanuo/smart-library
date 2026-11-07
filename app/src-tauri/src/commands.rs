@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use smart_library_core::bookcase::Bookcase;
 use smart_library_core::folder::{self, FolderFilter, FolderLibrary};
 use smart_library_core::history::History;
+use smart_library_core::marks::{parse_tags, MarkFilter, MarkNew, Marks};
 use smart_library_core::library::{classify_trees, HtmlTree, TreeGroup};
 use smart_library_core::nav::NavNode;
 use smart_library_core::notes::{self, NotesStore};
@@ -70,6 +71,7 @@ pub struct AppState {
     titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
     building: Mutex<HashSet<String>>,
     history: History,
+    marks: Marks,
 }
 
 impl AppState {
@@ -89,6 +91,7 @@ impl AppState {
             titles: RwLock::new(HashMap::new()),
             building: Mutex::new(HashSet::new()),
             history: History::open(&data_dir_for_history).unwrap_or_else(|_| History::memory().unwrap()),
+            marks: Marks::open(&data_dir_for_history.with_file_name("marks.db")).unwrap_or_else(|_| Marks::memory().unwrap()),
         }
     }
 
@@ -1830,6 +1833,137 @@ pub async fn cite_text(
         return Ok(s);
     }
     Ok(format!("—— 《{}》 · {}{}", title, l.title, lb.map(|b| format!(" · {}", b)).unwrap_or_default()))
+}
+
+// ------------------------------------------------------------ marks
+
+#[derive(Serialize)]
+pub struct MarkDto {
+    id: i64,
+    kind: String,
+    lib: String,
+    /// the library's title now, else the one saved with the mark
+    lib_title: String,
+    /// the library is still bound (the mark can be opened)
+    available: bool,
+    path: String,
+    book_id: Option<String>,
+    lb: Option<String>,
+    quote: String,
+    note: String,
+    doc_title: String,
+    author: String,
+    created: i64,
+    tags: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct TagCountDto {
+    tag: String,
+    count: i64,
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn mark_add(
+    kind: String,
+    lib: String,
+    path: String,
+    book_id: Option<String>,
+    lb: Option<String>,
+    quote: String,
+    note: String,
+    doc_title: String,
+    author: String,
+    tags: String,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    let lib_title = state.library(&lib)?.title;
+    state.marks.add(
+        &MarkNew { kind, lib, path, book_id, lb, quote, note, doc_title, lib_title, author },
+        &parse_tags(&tags),
+    )
+}
+
+#[tauri::command]
+pub async fn mark_update(id: i64, note: Option<String>, tags: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    state.marks.update(id, note.as_deref(), tags.map(|t| parse_tags(&t)).as_deref())
+}
+
+#[tauri::command]
+pub async fn mark_delete(id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    state.marks.delete(id)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn mark_list(
+    tag: Option<String>,
+    text: Option<String>,
+    lib: Option<String>,
+    path: Option<String>,
+    book_id: Option<String>,
+    kinds: Option<Vec<String>>,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<MarkDto>, String> {
+    let libs = state.libraries.read().unwrap().clone();
+    let rows = state.marks.list(
+        &MarkFilter {
+            tag: tag.filter(|t| !t.is_empty()),
+            text: text.unwrap_or_default(),
+            lib: lib.filter(|l| !l.is_empty()),
+            path,
+            book_id,
+            kinds: kinds.unwrap_or_default(),
+        },
+        limit.unwrap_or(500).clamp(1, 5000),
+    )?;
+    Ok(rows
+        .into_iter()
+        .map(|m| {
+            let l = libs.iter().find(|l| l.id == m.lib);
+            MarkDto {
+                available: l.is_some(),
+                lib_title: l.map(|l| l.title.clone()).unwrap_or(m.lib_title),
+                id: m.id,
+                kind: m.kind,
+                lib: m.lib,
+                path: m.path,
+                book_id: m.book_id,
+                lb: m.lb,
+                quote: m.quote,
+                note: m.note,
+                doc_title: m.doc_title,
+                author: m.author,
+                created: m.created,
+                tags: m.tags,
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn mark_tags(state: State<'_, AppState>) -> Result<Vec<TagCountDto>, String> {
+    Ok(state.marks.tags()?.into_iter().map(|(tag, count)| TagCountDto { tag, count }).collect())
+}
+
+#[tauri::command]
+pub async fn node_tags_get(lib: String, book_id: Option<String>, path: String, state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.marks.node_tags(&lib, book_id.as_deref(), &path)
+}
+
+#[tauri::command]
+pub async fn node_tags_set(
+    lib: String,
+    book_id: Option<String>,
+    path: String,
+    doc_title: String,
+    tags: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let lib_title = state.library(&lib)?.title;
+    state.marks.set_node_tags(&lib, book_id.as_deref(), &path, &doc_title, &lib_title, &parse_tags(&tags))
 }
 
 // ------------------------------------------------------------ history

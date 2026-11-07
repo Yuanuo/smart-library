@@ -267,6 +267,14 @@
     }
   }
 
+  /** The text of the line / paragraph that starts at a marker. */
+  function lineText(lb) {
+    if (!lb || !scroller) return "";
+    const el = scroller.querySelector(`[data-lb="${CSS.escape(lb)}"]`);
+    const block = el?.closest("p, .line, li, td, .div") ?? el?.parentElement;
+    return (block?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+  }
+
   function readerMenu(e) {
     if (e.target.closest?.(".tip")) return;
     const s = window.getSelection();
@@ -275,7 +283,7 @@
     e.preventDefault();
     closeTip();
     const lb = inside ? lbAt(s.getRangeAt(0).startContainer) : lbAt(e.target);
-    const act = (type) => () => onaction?.({ type, text, lb, vol });
+    const act = (type) => () => onaction?.({ type, text, lb, vol, excerpt: text ? clip(text, 40) : lineText(lb) });
     const q = clip(text);
     const items = [];
     if (text) {
@@ -348,6 +356,7 @@
           {/if}
         {/if}
         {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
+        {#if onaction}<button class="locate" onclick={() => onaction({ type: "tag", vol })} title="为本卷（本篇）加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
         {#if onlocate}<button class="locate" onclick={onlocate} title="在目录树中定位" aria-label="在目录树中定位"><Icon name="locate" size={20} /></button>{/if}
       </div>
     </header>
