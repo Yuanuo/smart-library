@@ -24,6 +24,8 @@
     <path d="M21 3 3 10.5l7 2.5 2.5 7z" /><path d="M21 3 10 13" />
   {:else if name === "search"}
     <circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" />
+  {:else if name === "clock"}
+    <circle cx="12" cy="12" r="8.5" /><path d="M12 7v5.5l3.5 2" />
   {:else if name === "locate"}
     <circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="1.5" fill="currentColor" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
   {/if}

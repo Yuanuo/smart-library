@@ -13,6 +13,7 @@
 use serde::{Deserialize, Serialize};
 use smart_library_core::bookcase::Bookcase;
 use smart_library_core::folder::{self, FolderFilter, FolderLibrary};
+use smart_library_core::history::History;
 use smart_library_core::library::{classify_trees, HtmlTree, TreeGroup};
 use smart_library_core::nav::NavNode;
 use smart_library_core::notes::{self, NotesStore};
@@ -68,11 +69,13 @@ pub struct AppState {
     /// title quick search, per library (built on first use)
     titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
     building: Mutex<HashSet<String>>,
+    history: History,
 }
 
 impl AppState {
     pub fn new(config_dir: PathBuf, data_dir: PathBuf) -> Self {
         let libraries = load_registry(&config_dir);
+        let data_dir_for_history = data_dir.join("history.db");
         AppState {
             workspace_file: data_dir.join("workspace.json"),
             config_dir,
@@ -85,6 +88,7 @@ impl AppState {
             indexes: RwLock::new(HashMap::new()),
             titles: RwLock::new(HashMap::new()),
             building: Mutex::new(HashSet::new()),
+            history: History::open(&data_dir_for_history).unwrap_or_else(|_| History::memory().unwrap()),
         }
     }
 
@@ -534,6 +538,7 @@ pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<St
     state.html.write().unwrap().remove(&id);
     state.folders.write().unwrap().remove(&id);
     state.notes.write().unwrap().remove(&id);
+    let _ = state.history.remove_lib(&id);
     state.titles.write().unwrap().remove(&id);
     state.save_registry()?;
     let dir = state.data_dir.join("repos").join(&id);
@@ -1731,6 +1736,66 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
         let _ = app.emit("index-done", done);
     });
     Ok(())
+}
+
+// ------------------------------------------------------------ history
+
+#[derive(Serialize)]
+pub struct RecentDto {
+    lib: String,
+    lib_title: String,
+    path: String,
+    book_id: Option<String>,
+    title: String,
+    lb: Option<String>,
+    mode: Option<String>,
+    /// unix seconds
+    opened: i64,
+    visits: i64,
+}
+
+#[tauri::command]
+pub async fn recent_touch(lib: String, path: String, book_id: Option<String>, title: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.history.touch(&lib, &path, book_id.as_deref(), &title)
+}
+
+#[tauri::command]
+pub async fn recent_progress(lib: String, path: String, lb: String, mode: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    state.history.set_progress(&lib, &path, &lb, mode.as_deref())
+}
+
+#[tauri::command]
+pub async fn recent_list(filter: Option<String>, limit: Option<usize>, state: State<'_, AppState>) -> Result<Vec<RecentDto>, String> {
+    let libs = state.libraries.read().unwrap().clone();
+    let rows = state.history.list(filter.as_deref().unwrap_or(""), limit.unwrap_or(300).clamp(1, 2000))?;
+    // documents of libraries that are no longer bound are not listed
+    Ok(rows
+        .into_iter()
+        .filter_map(|e| {
+            let l = libs.iter().find(|l| l.id == e.lib)?;
+            Some(RecentDto {
+                lib_title: l.title.clone(),
+                lib: e.lib,
+                path: e.path,
+                book_id: e.book_id,
+                title: e.title,
+                lb: e.lb,
+                mode: e.mode,
+                opened: e.opened,
+                visits: e.visits,
+            })
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn recent_remove(lib: String, path: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.history.remove(&lib, &path)
+}
+
+#[tauri::command]
+pub async fn recent_clear(state: State<'_, AppState>) -> Result<(), String> {
+    state.history.clear()
 }
 
 // ------------------------------------------------------------ workspace

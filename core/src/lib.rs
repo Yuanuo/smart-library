@@ -13,6 +13,7 @@ pub mod bookinfo;
 pub mod catalog;
 pub mod cite;
 pub mod folder;
+pub mod history;
 pub mod library;
 pub mod markdown;
 pub mod markup;

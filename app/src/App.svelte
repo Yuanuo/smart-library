@@ -7,6 +7,7 @@
   import BindDialog from "./lib/BindDialog.svelte";
   import QuickSearch from "./lib/QuickSearch.svelte";
   import Icon from "./lib/Icon.svelte";
+  import RecentDialog from "./lib/RecentDialog.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let st = $state(null);
@@ -76,10 +77,10 @@
     // Ctrl/Cmd+G: title quick search; Ctrl/Cmd+H: full-text search
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
       const k = e.key.toLowerCase();
-      if (k === "g" || k === "h") {
+      if (k === "g" || k === "h" || k === "e") {
         e.preventDefault();
         shiftAlone = false;
-        if (!binding) (k === "g" ? openQuickSearch : openSearch)();
+        if (!binding) (k === "g" ? openQuickSearch : k === "h" ? openSearch : openRecent)();
         return;
       }
     }
@@ -103,8 +104,23 @@
 
   let searchBox = $state(false); // full-text search popup
   let searchInput = $state();
+  let recentBox = $state(false); // reading history popup
+  function openRecent() {
+    searchBox = false;
+    quick = false;
+    recentBox = true;
+  }
+  async function openRecentItem(it) {
+    try {
+      workspace.seedProgress(it.lib, it.path, it.lb, it.mode);
+      await workspace.openVolume({ lib: it.lib, bookId: it.book_id, path: it.path });
+    } catch (e) {
+      error = String(e);
+    }
+  }
   function openQuickSearch() {
     searchBox = false;
+    recentBox = false;
     quick = true;
   }
   function openSearch() {
@@ -370,6 +386,7 @@
           <button class="icon" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加" aria-label="添加"><Icon name="plus" size={18} /></button>
           <button class="icon" onclick={openQuickSearch} title="标题快搜（双击 Shift 或 Ctrl+G）" aria-label="标题快搜"><Icon name="plane" size={18} /></button>
           <button class="icon" onclick={openSearch} title="全文搜索（Ctrl+H）" aria-label="全文搜索"><Icon name="search" size={18} /></button>
+          <button class="icon" onclick={openRecent} title="最近打开（Ctrl+E）" aria-label="最近打开"><Icon name="clock" size={18} /></button>
         </span>
       </div>
       <div class="tree">
@@ -436,6 +453,10 @@
       <p class="muted">还没有消息。</p>
     {/each}
   </div>
+{/if}
+
+{#if recentBox}
+  <RecentDialog onopen={openRecentItem} onclose={() => (recentBox = false)} />
 {/if}
 
 {#if quick}

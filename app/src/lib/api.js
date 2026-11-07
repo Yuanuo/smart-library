@@ -13,6 +13,11 @@ export const createNotesLibrary = (title) => invoke("create_notes_library", { ti
 export const createNote = (lib, parent, title) => invoke("create_note", { lib, parent, title });
 export const noteTargets = (query) => invoke("note_targets", { query });
 export const createNoteAt = (defaultLib, position, title) => invoke("create_note_at", { defaultLib, position, title });
+export const recentTouch = (lib, path, bookId, title) => invoke("recent_touch", { lib, path, bookId, title });
+export const recentProgress = (lib, path, lb, mode) => invoke("recent_progress", { lib, path, lb, mode });
+export const recentList = (filter = "", limit = 300) => invoke("recent_list", { filter, limit });
+export const recentRemove = (lib, path) => invoke("recent_remove", { lib, path });
+export const recentClear = () => invoke("recent_clear");
 export const renameNote = (lib, id, title) => invoke("rename_note", { lib, id, title });
 export const saveNote = (lib, id, content) => invoke("save_note", { lib, id, content });
 export const deleteNote = (lib, id) => invoke("delete_note", { lib, id });

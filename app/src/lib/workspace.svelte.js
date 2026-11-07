@@ -59,10 +59,25 @@ async function save() {
   }
 }
 
+const historyTimers = {};
+
 function recordProgress(tab, lb, mode) {
   progress[tab] = { lb, mode, t: Date.now() };
   if (mode) defaultMode = mode;
   scheduleSave();
+  // the history keeps the position of every document ever opened
+  clearTimeout(historyTimers[tab]);
+  historyTimers[tab] = setTimeout(() => {
+    const i = tab.indexOf("|");
+    api.recentProgress(tab.slice(0, i), tab.slice(i + 1), lb, mode || null).catch(() => {});
+  }, 1500);
+}
+
+/** Remember where a document was left (from the history), so that opening it
+ * goes back there quietly. */
+export function seedProgress(lib, path, lb, mode) {
+  const tab = `${lib}|${path}`;
+  if (lb) progress[tab] = { lb, mode: mode || defaultMode, t: Date.now() };
 }
 
 // ------------------------------------------------------------ panels
@@ -351,6 +366,7 @@ export async function init(element, h) {
  */
 export async function openVolume({ lib, bookId = null, path = null, lb = null, query = null, phrase = false }) {
   const id = await api.resolveNode(lib, bookId, path);
+  api.recentTouch(id.lib, id.path, id.book_id, id.title).catch(() => {});
   if (popouts[id.tab]) {
     const w = await WebviewWindow.getByLabel(popouts[id.tab].label);
     if (w) {
