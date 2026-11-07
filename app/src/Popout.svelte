@@ -25,6 +25,7 @@
     mode: start.mode || "para",
   });
   let title = $state(start.title || start.path);
+  let tip = $state("");
   let docking = false;
 
   onMount(() => {
@@ -56,7 +57,7 @@
 
 <div class="popout">
   <div class="bar">
-    <span class="title">{title}</span>
+    <span class="title" title={tip}>{title}</span>
     <button onclick={dock} title="把这一卷放回主窗口的标签页">停靠回主窗口</button>
   </div>
   <div class="body">
@@ -67,8 +68,9 @@
         lastLb = lb;
         emit("popout-progress", { tab: start.tab, lb, mode });
       }}
-      ontitle={(t) => {
+      ontitle={(t, tooltip) => {
         title = t;
+        tip = tooltip;
         win.setTitle(`${t} — Smart Library`).catch(() => {});
       }} />
   </div>

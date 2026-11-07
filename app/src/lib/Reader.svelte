@@ -240,10 +240,6 @@
 {#if vol}
   <div class="reader">
     <header>
-      <div class="title">
-        <h1>{vol.title} <span class="juan">{vol.label}</span></h1>
-        <div class="meta muted">{[vol.book_id, vol.author, vol.path].filter(Boolean).join(" · ")}</div>
-      </div>
       <div class="nav">
         <select aria-label={vol.kind === "html" ? "同一目录的文章" : "卷"} class="vols" value={vol.path} onchange={(e) => onvolume(e.target.value)}>
           {#each vol.volumes as v}
@@ -332,13 +328,11 @@
   .tip tr.sep td { padding: 0; height: 9px; border-bottom: 1px solid color-mix(in srgb, var(--paper) 35%, transparent); }
   .tip tr.sep + tr td { padding-top: 6px; }
   .reader { display: flex; flex-direction: column; height: 100%; }
+  /* title, author and path are in the tab's tooltip */
   header {
-    display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap;
-    padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--paper);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 8px 24px; border-bottom: 1px solid var(--line); background: var(--paper);
   }
-  h1 { margin: 0; font-size: 22px; font-weight: 600; }
-  .juan { font-size: 16px; color: var(--accent); margin-left: 6px; }
-  .meta { font-size: 13px; margin-top: 4px; }
   .nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
   .vols { max-width: 16em; }
   .seg { display: inline-flex; }

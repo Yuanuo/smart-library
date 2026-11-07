@@ -28,6 +28,7 @@ let hostEl = null; // the element holding the dockview
 let hooks = {};
 let progress = {}; // tab -> { lb, mode, t }
 let popouts = {}; // tab -> { label, lib, bookId, path, title }
+let tooltips = {}; // tab -> tooltip of its tab (title, author, path)
 let restoring = false;
 let saveTimer = null;
 let defaultMode = "para";
@@ -118,7 +119,11 @@ function readerRenderer() {
           onopen: (req) => openVolume(req),
           onlocate: () => hooks.onlocate?.({ lib: state.lib, bookId: state.bookId, path: state.path }),
           onprogress: (lb, mode) => recordProgress(tab, lb, mode),
-          ontitle: (t) => panelApi?.setTitle(t),
+          ontitle: (t, tooltip) => {
+            panelApi?.setTitle(t);
+            tooltips[panelApi.id] = tooltip;
+            applyTooltip(panelApi.id);
+          },
         },
       });
     },
@@ -134,9 +139,17 @@ function readerRenderer() {
       }
     },
     dispose() {
+      if (panelApi) delete tooltips[panelApi.id];
       if (instance) unmount(instance);
     },
   };
+}
+
+/** The tooltip of a reading tab (the tab element may be made again when
+ * the tab moves, so it is set again after layout changes). */
+function applyTooltip(id) {
+  const el = dv?.getPanel(id)?.view?.tab?.element;
+  if (el && tooltips[id] && el.title !== tooltips[id]) el.title = tooltips[id];
 }
 
 function resultsRenderer() {
@@ -274,7 +287,10 @@ export async function init(element, h) {
     createWatermarkComponent: watermark,
     getTabContextMenuItems: tabMenu,
   });
-  dv.onDidLayoutChange(scheduleSave);
+  dv.onDidLayoutChange(() => {
+    scheduleSave();
+    for (const id of Object.keys(tooltips)) applyTooltip(id);
+  });
   const refreshEmpty = () => (ws.empty = dv.panels.length === 0);
   dv.onDidAddPanel(refreshEmpty);
   dv.onDidRemovePanel(refreshEmpty);

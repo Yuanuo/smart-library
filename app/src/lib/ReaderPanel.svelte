@@ -20,7 +20,10 @@
       .then((v) => {
         vol = v;
         error = "";
-        ontitle?.(v.label ? `${v.title} ${v.label}` : v.title);
+        // the tab shows the title; its tooltip also the id, author and path
+        const t = v.label ? `${v.title} ${v.label}` : v.title;
+        const who = [v.book_id, v.author].filter(Boolean).join(" · ");
+        ontitle?.(t, [t, who, v.path].filter(Boolean).join("\n"));
       })
       .catch((e) => (error = String(e)));
   });
