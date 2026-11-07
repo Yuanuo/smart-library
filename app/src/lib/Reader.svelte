@@ -1,9 +1,31 @@
+<script module>
+  // the note mode is shared by every reader of the window (and kept)
+  const NOTE_MODES = [
+    ["none", "无", "不显示编注，只读正文"],
+    ["orig", "原编注", "在编注点直接嵌入原编注（大正藏等底本的校注）"],
+    ["cb", "CB编注", "在编注点直接嵌入 CBETA 编注"],
+    ["num", "数字标", "在编注点显示序号，鼠标移上去看 CBETA 编注"],
+    ["color", "着色", "被改变的文字着色，鼠标移上去看 CBETA 编注和各版本读法"],
+    ["color-orig", "着色+原编注", "被改变的文字着色，鼠标移上去看原编注、CBETA 编注和各版本读法"],
+  ];
+  const shared = $state({
+    noteMode: (() => {
+      try {
+        const m = localStorage.getItem("reader.noteMode");
+        return NOTE_MODES.some(([k]) => k === m) ? m : "color";
+      } catch {
+        return "color";
+      }
+    })(),
+  });
+</script>
+
 <script>
   // One volume in two views:
   //  * 段落 (default): the structured HTML of the volume (design-spec A.6):
   //    divisions, headings, verses, lists, tables, 科判 diagrams, images,
-  //    inline notes, collation notes as numbered bubbles, variant readings
-  //    on hover; line numbers can be shown in the text;
+  //    inline notes; collation notes and variant readings shown by the note
+  //    mode (design-spec A.6); line numbers can be shown in the text;
   //  * 原书行: one original line per row, line number in the margin.
   // `target` is a line (lb) to scroll to (again whenever `nonce` changes);
   // `quiet` restores a position without the flash. While the reader scrolls,
@@ -37,6 +59,23 @@
   };
   let showLb = $state(load("reader.showLb", "0") === "1");
   $effect(() => save("reader.showLb", showLb ? "1" : "0"));
+  $effect(() => save("reader.noteMode", shared.noteMode));
+  const noteMode = $derived(shared.noteMode);
+  const coloring = $derived(noteMode === "color" || noteMode === "color-orig");
+
+  // note points without a changed reading (no `.app.v` with their id): in
+  // the coloring modes they get a small mark, or they could not be seen
+  $effect(() => {
+    const _v = vol;
+    const _m = mode;
+    tick().then(() => {
+      if (!scroller) return;
+      const changed = new Set([...scroller.querySelectorAll(".app.v[data-n]")].map((a) => a.dataset.n));
+      for (const n of scroller.querySelectorAll(".note")) {
+        n.classList.toggle("lone", !n.dataset.n || !changed.has(n.dataset.n));
+      }
+    });
+  });
 
   let restoring = false;
   $effect(() => {
@@ -78,40 +117,70 @@
     }, 400);
   }
 
-  // hover tips for variant readings (`.app`), Sanskrit-Chinese pairs (`.tt`)
-  // and missing glyphs (`.g`), instead of the browser's one-line title:
-  // the reading in the text first, the other editions below, aligned
-  let tip = $state(null); // { rows: [[key, text]], split, x, top, bottom }
+  // hover tips instead of the browser's one-line title: notes and variant
+  // readings (by the note mode), Sanskrit-Chinese pairs (`.tt`) and missing
+  // glyphs (`.g`). A tip is groups of aligned rows [key, text], separated by
+  // a line: the notes, then the reading in the text, then the other editions
+  let tip = $state(null); // { groups: [[[key, text]]], el, x, top, bottom }
   let tipEl = $state();
   let tipLeft = $state(0);
 
-  function tipRows(el, text) {
-    const items = text.split("；").map((s) => s.trim()).filter(Boolean);
-    if (el.classList.contains("app")) {
-      const rows = items.map((s) => {
-        // several editions share a reading: `【宋】 【元】 【明】憋`
-        const m = s.match(/^((?:\s*【[^】]*】)+)\s*(.*)$/);
-        return m ? [m[1].replace(/\s+/g, ""), m[2]] : ["", s];
-      });
-      return { rows, split: rows.length > 1 ? 1 : 0 };
-    }
-    if (el.classList.contains("tt")) {
-      return { rows: items.map((s) => (s.includes(": ") ? s.split(": ", 2) : ["", s])), split: 0 };
-    }
-    return { rows: [["", text]], split: 0 };
-  }
-
-  function overDoc(e) {
-    const el = e.target.closest?.(".app[title], .app[data-tip], .tt[title], .tt[data-tip], .g[title], .g[data-tip]");
-    if (!el) return;
+  // the title moves to `data-tip`, so that the browser does not show it too
+  function tipText(el) {
     if (el.hasAttribute("title")) {
       el.dataset.tip = el.getAttribute("title");
       el.removeAttribute("title");
     }
-    const text = el.dataset.tip;
-    if (!text) return;
+    return el.dataset.tip || "";
+  }
+
+  function readings(text) {
+    return text
+      .split("；")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => {
+        // several editions share a reading: `【宋】 【元】 【明】憋`
+        const m = s.match(/^((?:\s*【[^】]*】)+)\s*(.*)$/);
+        return m ? [m[1].replace(/\s+/g, ""), m[2]] : ["", s];
+      });
+  }
+
+  function noteRows(note) {
+    if (!note) return [];
+    const orig = note.querySelector(".nb-orig")?.textContent;
+    const cb = note.querySelector(".nb-cb")?.textContent;
+    const rows = [];
+    if (noteMode === "color-orig" && orig) rows.push(["原编注", orig]);
+    if (cb || orig) rows.push(["CBETA", cb || orig]);
+    return noteMode === "num" ? rows.slice(-1).map(([, t]) => ["", t]) : rows;
+  }
+
+  function tipFor(el) {
+    if (el.classList.contains("note")) return [noteRows(el)];
+    if (el.classList.contains("app")) {
+      const n = el.dataset.n;
+      const note = n ? scroller.querySelector(`.note[data-n="${CSS.escape(n)}"]`) : null;
+      const rs = readings(tipText(el));
+      return [noteRows(note), rs.slice(0, 1), rs.slice(1)];
+    }
+    const text = tipText(el);
+    if (el.classList.contains("tt")) {
+      return [readings(text).map(([k, t]) => (k ? [k, t] : t.includes(": ") ? t.split(": ", 2) : ["", t]))];
+    }
+    return [[["", text]]];
+  }
+
+  function overDoc(e) {
+    let sel = ".tt[title], .tt[data-tip], .g[title], .g[data-tip]";
+    if (noteMode === "num") sel += ", .note";
+    if (coloring) sel += ", .app.v, .note.lone";
+    const el = e.target.closest?.(sel);
+    if (!el || el === tip?.el) return;
+    const groups = tipFor(el).filter((g) => g.length);
+    if (!groups.length) return;
     const r = el.getBoundingClientRect();
-    tip = { ...tipRows(el, text), el, x: r.left + r.width / 2, top: r.top, bottom: r.bottom };
+    tip = { groups, el, x: r.left + r.width / 2, top: r.top, bottom: r.bottom };
     tipLeft = tip.x;
     tick().then(() => {
       if (!tipEl || !tip) return;
@@ -158,6 +227,13 @@
         </div>
         {#if mode === "para"}
           <label class="check"><input type="checkbox" bind:checked={showLb} /> 行号</label>
+          {#if vol.kind !== "html"}
+            <div class="seg notes" role="group" aria-label="编注显示方式">
+              {#each NOTE_MODES as [k, label, help]}
+                <button class:on={noteMode === k} title={help} onclick={() => ((shared.noteMode = k), (tip = null))}>{label}</button>
+              {/each}
+            </div>
+          {/if}
         {/if}
         {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
         {#if onlocate}<button class="locate" onclick={onlocate} title="在目录树中定位">⌖</button>{/if}
@@ -167,7 +243,7 @@
     <div class="scroll" bind:this={scroller} onscroll={(e) => ((tip = null), onScroll(e))}
       onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para"}
-        <article class="doc" class:show-lb={showLb}>{@html vol.html}</article>
+        <article class="doc notes-{noteMode}" class:show-lb={showLb}>{@html vol.html}</article>
       {:else}
         <div class="lines">
           {#each vol.lines as line}
@@ -188,9 +264,11 @@
     style="left: {tipLeft}px; {above ? `bottom: ${window.innerHeight - tip.top + 10}px` : `top: ${tip.bottom + 10}px`}; --arrow: {tip.x - tipLeft}px">
     <table>
       <tbody>
-        {#each tip.rows as [k, t], i}
-          {#if tip.split && i === tip.split}<tr class="sep"><td colspan="2"></td></tr>{/if}
-          <tr><td class="k">{k}{k && t ? "：" : ""}</td><td>{t}</td></tr>
+        {#each tip.groups as rows, g}
+          {#if g > 0}<tr class="sep"><td colspan="2"></td></tr>{/if}
+          {#each rows as [k, t]}
+            <tr><td class="k">{k}{k && t ? "：" : ""}</td><td>{t}</td></tr>
+          {/each}
         {/each}
       </tbody>
     </table>
@@ -271,20 +349,24 @@
   .doc :global(.hi.r-border) { border: 1px solid var(--muted); padding: 0 2px; }
   .doc :global(.hi.r-circle) { border: 1px solid var(--muted); border-radius: 50%; padding: 0 2px; }
   .doc :global(.g) { color: #8a3c6a; font-size: 0.85em; }
-  .doc :global(.app[title]:not([title=""])), .doc :global(.app[data-tip]:not([data-tip=""])) { border-bottom: 1px dotted var(--accent-soft); }
   .doc :global(.tt[title]:not([title=""])), .doc :global(.tt[data-tip]:not([data-tip=""])) { border-bottom: 1px dotted var(--muted); }
-  .doc :global(.app[data-tip]:not([data-tip=""]):hover) { color: var(--accent); }
   .doc :global(.unclear) { color: var(--muted); }
   .doc :global(img.figure) { max-width: 100%; display: block; margin: 0.5em 0; background: white; }
-  .doc :global(.note) { position: relative; cursor: pointer; }
-  .doc :global(.note sup) { color: var(--accent); font-size: 0.6em; padding: 0 1px; }
-  .doc :global(.note .note-body) {
-    display: none; position: absolute; left: 0; top: 1.6em; z-index: 5; width: max-content; max-width: 24em;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
-    font-size: 14px; line-height: 1.6; letter-spacing: 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    white-space: normal;
+  /* notes by mode: a note point holds .nb-orig and/or .nb-cb */
+  .doc :global(.note sup), .doc :global(.note .nb-orig), .doc :global(.note .nb-cb) { display: none; }
+  .doc.notes-num :global(.note) { cursor: help; }
+  .doc.notes-num :global(.note sup) { display: inline; color: var(--accent); font-size: 0.6em; padding: 0 1px; }
+  .doc.notes-orig :global(.note .nb-orig),
+  .doc.notes-cb :global(.note .nb-cb),
+  .doc.notes-cb :global(.note:not(:has(.nb-cb)) .nb-orig) {
+    display: inline; font-size: 0.68em; line-height: 1.4; letter-spacing: 0; color: var(--muted);
+    background: var(--panel); border-radius: 3px; padding: 0 3px; margin: 0 2px;
   }
-  .doc :global(.note:hover .note-body), .doc :global(.note:focus .note-body) { display: block; }
+  .doc.notes-color :global(.app.v), .doc.notes-color-orig :global(.app.v) { color: var(--note); cursor: help; }
+  .doc.notes-color :global(.app.v:hover), .doc.notes-color-orig :global(.app.v:hover) { background: var(--accent-soft); border-radius: 2px; }
+  .doc.notes-color :global(.note.lone)::before, .doc.notes-color-orig :global(.note.lone)::before {
+    content: "✱"; font-size: 0.55em; vertical-align: super; color: var(--note); opacity: 0.6; cursor: help;
+  }
   /* the jump marker must not open a line of its own between two paragraphs */
   .doc :global(.lb.flash) { position: relative; }
   .doc :global(.lb.flash)::before {

@@ -444,6 +444,11 @@ fn html_tag(el: &Elem) -> (&'static str, String) {
     }
 }
 
+/// A collation note at the foot of the page (not an inline note).
+fn is_foot_note(e: &Elem) -> bool {
+    e.name == "note" && e.attr("place") != Some("inline") && e.attr("place") != Some("interlinear")
+}
+
 impl<'a> Extractor<'a> {
     fn emit(&mut self, s: &str) {
         if !s.is_empty() {
@@ -455,35 +460,75 @@ impl<'a> Extractor<'a> {
     }
 
     fn children(&mut self, el: &Elem) {
+        let mut skip_to = 0;
         for (i, n) in el.children.iter().enumerate() {
+            if i < skip_to {
+                continue;
+            }
             match n {
                 Node::Text(t) => {
                     let s: String = t.chars().filter(|c| !matches!(c, '\r' | '\n' | '\t')).collect();
                     self.emit(&s);
                 }
                 Node::Elem(e) => {
-                    // a Taisho note followed by CBETA's revision of the same note
-                    // (same `n`): show only the revision
-                    if self.html.is_some() && e.name == "note" && e.attr("place") != Some("inline") {
-                        let next = el.children[i + 1..].iter().find_map(|n| match n {
-                            Node::Elem(x) => Some(x),
-                            Node::Text(t) if t.trim().is_empty() => None,
-                            Node::Text(_) => Some(e), // text in between: stop looking
-                        });
-                        if let Some(x) = next {
-                            if !std::ptr::eq(x, e)
-                                && x.name == "note"
-                                && x.attr("n").is_some()
-                                && x.attr("n") == e.attr("n")
-                                && x.attr("place") != Some("inline")
-                            {
-                                continue;
+                    // the notes of one note point: the Taisho note, CBETA's
+                    // revision … (same `n`, next to each other) give one marker
+                    if self.html.is_some() && is_foot_note(e) && e.attr("n").is_some() {
+                        let mut group = vec![e];
+                        let mut j = i + 1;
+                        while let Some(next) = el.children.get(j) {
+                            match next {
+                                Node::Text(t) if t.trim().is_empty() => {}
+                                Node::Elem(x) if is_foot_note(x) && x.attr("n") == e.attr("n") => {
+                                    group.push(x);
+                                    skip_to = j + 1;
+                                }
+                                _ => break,
                             }
+                            j += 1;
                         }
+                        self.note_group(&group);
+                        continue;
                     }
                     self.walk(e)
                 }
             }
+        }
+    }
+
+    /// One marker for the notes of a note point (HTML only): the original
+    /// note (`type="orig"`, Taisho) and CBETA's note (`mod`, or `add` for a
+    /// note of CBETA's own), both kept so that the reader can choose what to
+    /// show. Other types (`rest` …) only when neither is there.
+    fn note_group(&mut self, notes: &[&Elem]) {
+        let text_of = |this: &Self, t: &str| -> Option<String> {
+            notes.iter().find(|e| e.attr("type") == Some(t)).map(|e| {
+                let mut s = String::new();
+                this.display_text(e, &mut s);
+                s.trim().to_string()
+            })
+        };
+        let orig = text_of(self, "orig").filter(|s| !s.is_empty());
+        let mut cb = text_of(self, "mod").or_else(|| text_of(self, "add")).filter(|s| !s.is_empty());
+        if orig.is_none() && cb.is_none() {
+            for e in notes {
+                let kind = e.attr("type").unwrap_or("");
+                if !kind.is_empty() && !kind.starts_with("cf") {
+                    let mut s = String::new();
+                    self.display_text(e, &mut s);
+                    if !s.trim().is_empty() {
+                        cb = Some(s.trim().to_string());
+                        break;
+                    }
+                }
+            }
+        }
+        if orig.is_none() && cb.is_none() {
+            return;
+        }
+        let n = notes[0].attr("n").unwrap_or("");
+        if let Some(h) = self.html.as_mut() {
+            h.note(n, orig.as_deref(), cb.as_deref());
         }
     }
 
@@ -567,20 +612,7 @@ impl<'a> Extractor<'a> {
                         h.close("span");
                     }
                 } else if self.html.is_some() {
-                    let kind = el.attr("type").unwrap_or("");
-                    if !kind.is_empty() && !kind.starts_with("cf") {
-                        let mut text = String::new();
-                        self.display_text(el, &mut text);
-                        let label = match kind {
-                            "orig" => "校",
-                            "mod" => "CBETA 校",
-                            "add" => "CBETA 註",
-                            _ => "註",
-                        };
-                        if !text.trim().is_empty() {
-                            self.html.as_mut().unwrap().note(label, text.trim());
-                        }
-                    }
+                    self.note_group(&[el]);
                 }
             }
             "app" => {
@@ -588,6 +620,7 @@ impl<'a> Extractor<'a> {
                     .elems()
                     .find(|e| e.is(Ns::Tei, "lem"))
                     .or_else(|| el.elems().find(|e| e.is(Ns::Tei, "rdg")));
+                let variants = el.elems().filter(|e| e.name == "rdg").count();
                 let title = if self.html.is_some() {
                     let mut t = String::new();
                     for r in el.elems().filter(|e| e.name == "lem" || e.name == "rdg") {
@@ -604,7 +637,9 @@ impl<'a> Extractor<'a> {
                     String::new()
                 };
                 if let Some(h) = self.html.as_mut() {
-                    h.open("span", &[("class", "app"), ("title", &title)]);
+                    // `data-n` links the reading to its note point
+                    let class = if variants > 0 { "app v" } else { "app" };
+                    h.open("span", &[("class", class), ("data-n", el.attr("n").unwrap_or("")), ("title", &title)]);
                 }
                 if let Some(lem) = pick {
                     self.children(lem);

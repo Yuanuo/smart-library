@@ -10,6 +10,7 @@
   --hl: #c0392b;
   --hl-bg: #fde3c8;
   --focus: #fff1a8;
+  --note: #2f8f5b;
   font-family: "Noto Serif TC", "Source Han Serif TC", "PMingLiU", "MingLiU", "SimSun", serif;
   color: var(--ink);
   background: var(--bg);
@@ -28,6 +29,7 @@
     --hl: #ff8a70;
     --hl-bg: #5a3322;
     --focus: #5a5020;
+    --note: #6cc58f;
   }
 }
 

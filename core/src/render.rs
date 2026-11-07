@@ -232,20 +232,26 @@ impl HtmlOut {
     }
 
     /// A collation note shown as a numbered marker with a hidden bubble.
-    pub fn note(&mut self, label: &str, text: &str) {
+    /// A note point: a numbered marker holding the original note and
+    /// CBETA's note; the reader shows them by the chosen note mode. `n` is
+    /// the note id shared with the variant reading (`app data-n`).
+    pub fn note(&mut self, n: &str, orig: Option<&str>, cb: Option<&str>) {
         self.notes += 1;
-        let n = self.notes.to_string();
-        self.open("span", &[("class", "note"), ("tabindex", "0"), ("data-note", &n)]);
+        let no = self.notes.to_string();
+        self.open("span", &[("class", "note"), ("tabindex", "0"), ("data-note", &no), ("data-n", n)]);
         self.buf.push_str("<sup>");
-        self.buf.push_str(&n);
-        self.buf.push_str("</sup><span class=\"note-body\">");
-        if !label.is_empty() {
-            self.buf.push_str("<b>");
-            escape(label, &mut self.buf);
-            self.buf.push_str("</b> ");
+        self.buf.push_str(&no);
+        self.buf.push_str("</sup>");
+        for (class, text) in [("nb-orig", orig), ("nb-cb", cb)] {
+            if let Some(t) = text {
+                self.buf.push_str("<span class=\"");
+                self.buf.push_str(class);
+                self.buf.push_str("\">");
+                escape(t, &mut self.buf);
+                self.buf.push_str("</span>");
+            }
         }
-        escape(text, &mut self.buf);
-        self.buf.push_str("</span></span>");
+        self.buf.push_str("</span>");
     }
 }
 
@@ -299,14 +305,17 @@ mod tests {
     fn shows_notes_variants_glyphs_and_diagrams() {
         let xml = wrap(concat!(
             r#"<p><lb n="0001a01" ed="T"/>生<note n="1" type="orig" place="foot text">〔死〕－【三】</note>"#,
-            r#"<note n="1" type="mod">〔－〕【CB】，死【大】</note><app><lem wit="【CB】">無</lem><rdg wit="【大】">死</rdg></app>"#,
+            r#"<note n="1" type="mod">〔－〕【CB】，死【大】</note><app n="1"><lem wit="【CB】">無</lem><rdg wit="【大】">死</rdg></app>"#,
             r##"<g ref="#CB01197"/></p><p cb:type="pre"><lb n="0001a02" ed="T"/>┌初<lb n="0001a03" ed="T"/>└二</p>"##,
             r#"<lg><l>佛昔修習<caesura/>於諸境界</l></lg>"#,
         ));
         let r = render_volume(&xml, &RenderOptions::default()).unwrap();
         assert_eq!(r.notes, 1, "orig + mod with the same n -> one marker");
-        assert!(r.html.contains("CBETA 校"));
-        assert!(r.html.contains("title=\"【CB】無；【大】死\""));
+        assert!(r.html.contains(concat!(
+            "<span class=\"note\" tabindex=\"0\" data-note=\"1\" data-n=\"1\"><sup>1</sup>",
+            "<span class=\"nb-orig\">〔死〕－【三】</span><span class=\"nb-cb\">〔－〕【CB】，死【大】</span></span>"
+        )));
+        assert!(r.html.contains("<span class=\"app v\" data-n=\"1\" title=\"【CB】無；【大】死\">"));
         assert!(r.html.contains("[臊-品+巳]</span>"));
         assert!(r.html.contains("┌初<br><span class=\"lb\" data-lb=\"0001a03\"></span>└二"));
         assert!(r.html.contains("<span class=\"caesura\">　</span>"));
