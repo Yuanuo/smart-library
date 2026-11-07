@@ -103,6 +103,14 @@
   }
 
   let searchBox = $state(false); // full-text search popup
+  let searchScope = $state(null); // { lib, label, within }: search from a node of the tree
+  let quickScope = $state(null);
+  function searchFrom(kind, scope) {
+    if (kind === "title") {
+      quickScope = scope;
+      openQuickSearch(scope);
+    } else openSearch(scope);
+  }
   let searchInput = $state();
   let recentBox = $state(false); // reading history popup
   function openRecent() {
@@ -118,12 +126,14 @@
       error = String(e);
     }
   }
-  function openQuickSearch() {
+  function openQuickSearch(scope = null) {
     searchBox = false;
     recentBox = false;
+    quickScope = scope && scope.lib ? scope : null; // a click passes the event
     quick = true;
   }
-  function openSearch() {
+  function openSearch(scope = null) {
+    searchScope = scope && scope.lib ? scope : null;
     quick = false;
     searchBox = true;
     tick().then(() => {
@@ -203,6 +213,8 @@
   // props of the search results tab (mounted by the workspace)
   const rs = $state({
     result: null,
+    within: null, // a tree node the search is limited to
+    rangeLabel: "",
     scope: "",
     drill: "",
     onfacet: (root, name) => {
@@ -217,12 +229,16 @@
     onclearscope: () => {
       rs.scope = "";
       rs.drill = "";
+      rs.within = null;
+      rs.rangeLabel = "";
       runSearch(1, rs.result?.lib);
     },
     onlib: (id) => {
       // facets differ between libraries: start again unscoped
       rs.scope = "";
       rs.drill = "";
+      rs.within = null;
+      rs.rangeLabel = "";
       runSearch(1, id);
     },
     onhit: (h, lb) =>
@@ -353,6 +369,7 @@
         lib,
         scope: rs.scope || null,
         drill: rs.drill || null,
+        within: rs.within,
         page,
         limit: 20,
       });
@@ -372,7 +389,9 @@
     searchBox = false;
     rs.scope = "";
     rs.drill = "";
-    runSearch(1, null);
+    rs.within = searchScope?.within ?? null;
+    rs.rangeLabel = searchScope?.label ?? "";
+    runSearch(1, searchScope?.lib ?? null);
   }
 </script>
 
@@ -399,7 +418,8 @@
             onbind={() => (binding = { path: "" })}
             onrebind={(l) => (binding = { path: l.source })}
             onunbind={unbind}
-            onindex={startIndex} />
+            onindex={startIndex}
+            onsearchfrom={searchFrom} />
         {:else}
           <p class="muted">载入中…</p>
         {/if}
@@ -421,6 +441,10 @@
 {#if searchBox}
   <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && (searchBox = false)}>
     <form class="searchbox" onsubmit={submit} onkeydown={(e) => e.key === "Escape" && (searchBox = false)}>
+      {#if searchScope}
+        <span class="chip" title="从目录树的这个节点搜索">范围：<b>{searchScope.label}</b>
+          <button type="button" class="link" onclick={() => (searchScope = null)} aria-label="取消范围">×</button></span>
+      {/if}
       <input type="search" placeholder="全文搜索：全部知识库（空格分隔关键词）" bind:value={query} bind:this={searchInput} aria-label="全文搜索" />
       <label class="check"><input type="checkbox" bind:checked={phrase} /> 精确短语</label>
       <button class="primary" disabled={searching || !searchable || !query.trim()} title={searchable ? "" : "请先为知识库建立索引"}>
@@ -460,7 +484,7 @@
 {/if}
 
 {#if quick}
-  <QuickSearch {libraries} onopen={openQuick} onclose={() => (quick = false)} />
+  <QuickSearch {libraries} scope={quickScope} onopen={openQuick} onclose={() => (quick = false)} />
 {/if}
 
 {#if binding}
@@ -487,6 +511,8 @@
     display: flex; gap: 10px; align-items: center; width: min(720px, calc(100vw - 32px)); padding: 12px 16px;
     background: var(--paper); border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
   }
+  .chip { white-space: nowrap; font-size: 13px; color: var(--muted); }
+  .chip b { color: var(--accent); }
   .searchbox input[type="search"] { flex: 1; min-width: 160px; font-size: 16px; }
   .check { display: flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 14px; }
   .toast {

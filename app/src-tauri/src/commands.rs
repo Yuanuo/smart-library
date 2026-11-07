@@ -18,7 +18,7 @@ use smart_library_core::library::{classify_trees, HtmlTree, TreeGroup};
 use smart_library_core::nav::NavNode;
 use smart_library_core::notes::{self, NotesStore};
 use smart_library_core::render::RenderOptions;
-use smart_library_core::search::{facet_label, locate, snippets, MatchMode, SearchIndex, SearchRequest};
+use smart_library_core::search::{facet_label, locate, snippets, MatchMode, SearchIndex, SearchRequest, Within};
 use smart_library_core::source::{DirSource, Source, ZipSource};
 use smart_library_core::cite::{parse_citations, parse_command};
 use smart_library_core::titles::{query_words, TitleIndex};
@@ -1294,6 +1294,41 @@ pub async fn resolve_node(
 
 // ------------------------------------------------------------ search
 
+/// A node of the tree as a search range: its library and what is below it.
+/// CBETA and HTML libraries list the books / articles (the front end has the
+/// whole tree); folder and note libraries are loaded lazily, so only `rel`
+/// (folder path / note id) comes and the files or notes are found here.
+#[derive(Deserialize, Clone)]
+pub struct WithinDto {
+    lib: String,
+    #[serde(default)]
+    books: Vec<String>,
+    #[serde(default)]
+    paths: Vec<String>,
+    rel: Option<String>,
+}
+
+fn resolve_within(state: &AppState, w: &WithinDto) -> Result<Within, String> {
+    let l = state.library(&w.lib)?;
+    let mut within = Within { books: w.books.clone(), paths: w.paths.clone() };
+    if let Some(rel) = w.rel.as_deref().filter(|r| !r.is_empty()) {
+        if l.kind == "folder" {
+            let prefix = format!("{}/", rel);
+            within.paths = state
+                .folder(&l)?
+                .files()
+                .into_iter()
+                .filter(|f| f.rel == rel || f.rel.starts_with(&prefix))
+                .map(|f| f.rel)
+                .collect();
+        } else if l.kind == "notes" {
+            let id: i64 = rel.parse().map_err(|_| "笔记编号不对")?;
+            within.paths = state.notes(&l)?.descendants(id)?.iter().map(|i| i.to_string()).collect();
+        }
+    }
+    Ok(within)
+}
+
 #[derive(Serialize)]
 pub struct SnippetDto {
     lb: String,
@@ -1361,6 +1396,7 @@ pub async fn search(
     drill: Option<String>,
     page: Option<usize>,
     limit: Option<usize>,
+    within: Option<WithinDto>,
     state: State<'_, AppState>,
 ) -> Result<SearchDto, String> {
     let start = std::time::Instant::now();
@@ -1368,7 +1404,16 @@ pub async fn search(
     req.mode = if phrase { MatchMode::Phrase } else { MatchMode::Loose };
     req.limit = limit.unwrap_or(20).clamp(1, 100);
 
-    let libs = state.libraries.read().unwrap().clone();
+    let mut libs = state.libraries.read().unwrap().clone();
+    // searching from a node: that library only
+    let lib = match &within {
+        Some(w) => {
+            libs.retain(|l| l.id == w.lib);
+            req.within = Some(resolve_within(&state, w)?);
+            Some(w.lib.clone())
+        }
+        None => lib,
+    };
     let mut counts = Vec::new();
     for l in &libs {
         if let Some(idx) = state.index(&l.id) {
@@ -1507,6 +1552,7 @@ pub async fn quick_search(
     lib: Option<String>,
     limit: Option<usize>,
     quote: Option<String>,
+    within: Option<WithinDto>,
     state: State<'_, AppState>,
 ) -> Result<QuickDto, String> {
     let start = std::time::Instant::now();
@@ -1516,10 +1562,26 @@ pub async fn quick_search(
     let words = query_words(&query);
     let libs = state.libraries.read().unwrap().clone();
     let indexes = titles_of(&state, &libs);
+    let within = match &within {
+        Some(w) => Some((w.lib.clone(), resolve_within(&state, w)?)),
+        None => None,
+    };
     let mut counts = Vec::new();
     let mut all = Vec::new(); // (rank, library order, entry)
     for (n, (l, t)) in indexes.iter().enumerate() {
-        let m = if command { Vec::new() } else { t.search(&words) };
+        let mut m = if command { Vec::new() } else { t.search(&words) };
+        if let Some((wl, w)) = &within {
+            if &l.id != wl {
+                m.clear();
+            } else {
+                let books: HashSet<&str> = w.books.iter().map(|s| s.as_str()).collect();
+                let paths: HashSet<&str> = w.paths.iter().map(|s| s.as_str()).collect();
+                m.retain(|(_, i)| {
+                    let e = &t.entries[*i];
+                    t.book_id(e).is_some_and(|b| books.contains(b)) || e.path.as_deref().is_some_and(|p| paths.contains(p))
+                });
+            }
+        }
         counts.push(LibCountDto {
             id: l.id.clone(),
             title: l.title.clone(),

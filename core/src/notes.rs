@@ -243,6 +243,19 @@ impl NotesStore {
         Ok(cur)
     }
 
+    /// `id` and every note below it.
+    pub fn descendants(&self, id: i64) -> Result<Vec<i64>, String> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c
+            .prepare(
+                "WITH RECURSIVE sub(id) AS (SELECT id FROM notes WHERE id = ?1
+                 UNION ALL SELECT n.id FROM notes n JOIN sub ON n.parent_id = sub.id) SELECT id FROM sub",
+            )
+            .map_err(err)?;
+        let rows = st.query_map(params![id], |r| r.get(0)).map_err(err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(err)
+    }
+
     /// Ids from the top down to `id` (itself last).
     pub fn chain(&self, id: i64) -> Result<Vec<i64>, String> {
         let mut out = vec![id];

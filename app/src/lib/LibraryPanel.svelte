@@ -12,7 +12,7 @@
   import * as workspace from "./workspace.svelte.js";
   import { ask } from "@tauri-apps/plugin-dialog";
 
-  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex } = $props();
+  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom } = $props();
 
   let nameDlg = $state(null); // { title, label, value, okLabel, onok }
   let noteDlg = $state(null); // { position, defaultLib }
@@ -159,6 +159,38 @@
     }
   }
 
+  /** A node as a search range: the books / articles below it, or (lazy
+   * libraries) its `rel` for the backend to expand. */
+  function withinOf(l, node) {
+    const books = new Set();
+    const paths = new Set();
+    const walk = (n) => {
+      if (n.book_id) books.add(n.book_id);
+      else if (n.path && l.kind === "html") paths.add(n.path);
+      n.children.forEach(walk);
+    };
+    walk(node);
+    return {
+      lib: l.id,
+      books: [...books],
+      paths: [...paths],
+      rel: l.kind === "folder" || l.kind === "notes" ? node.rel : null,
+    };
+  }
+
+  const searchItems = (l, node) => [
+    { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
+    { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
+  ];
+
+  /** Context menu of a node: search from here; notes can also be edited. */
+  function nodeMenu(e, l, node, key) {
+    if (l.kind === "notes") return noteMenu(e, l, node, key);
+    e.preventDefault();
+    e.stopPropagation();
+    menu = { x: e.clientX, y: e.clientY, items: searchItems(l, node) };
+  }
+
   function noteMenu(e, l, node, key) {
     e.preventDefault();
     e.stopPropagation();
@@ -166,6 +198,8 @@
       x: e.clientX,
       y: e.clientY,
       items: [
+        ...searchItems(l, node),
+        "separator",
         { label: "新建子笔记…", action: () => newNote(l.id, node, key) },
         { label: "重命名…", action: () => renameNote(l.id, node, key) },
         "separator",
@@ -346,6 +380,8 @@
       items: [
         { label: open[l.id] ? "收起" : "展开", action: () => toggle(l) },
         ...(l.kind === "notes" ? [{ label: "新建笔记…", action: () => newNote(l.id, null, null) }] : []),
+        { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: l.title, within: null }) },
+        { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
         "separator",
         { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
         ...(l.kind === "folder" ? [] : [{ label: "从同一数据包绑定其他知识库…", action: () => onrebind(l) }]),
@@ -387,7 +423,7 @@
             expanded={expanded[l.id] ?? {}}
             current={current?.lib === l.id ? current.key : null}
             ontoggle={(key) => toggleNode(l.id, key)}
-            oncontext={l.kind === "notes" ? (node, key, e) => noteMenu(e, l, node, key) : null}
+            oncontext={(node, key, e) => nodeMenu(e, l, node, key)}
             onopen={(node, key) => {
               selected = { lib: l.id, key };
               onopen(l, node);

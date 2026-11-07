@@ -22,7 +22,7 @@ use crate::volume::VolumeText;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use tantivy::collector::{Count, FacetCollector, TopDocs};
-use tantivy::query::{BooleanQuery, Occur, PhraseQuery, Query, TermQuery};
+use tantivy::query::{BooleanQuery, Occur, PhraseQuery, Query, TermQuery, TermSetQuery};
 use tantivy::schema::{
     Facet, FacetOptions, Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED,
     STRING,
@@ -236,12 +236,31 @@ impl SearchIndex {
     /// Only the number of hit documents (to show counts per library).
     pub fn count(&self, req: &SearchRequest) -> Result<usize, String> {
         let query = build_query(&self.f, &req.query, req.mode)?;
+        let query = self.restrict(query, req);
         self.reader.searcher().search(&query, &Count).map_err(|e| e.to_string())
+    }
+
+    /// The query limited to `req.within`.
+    fn restrict(&self, query: Box<dyn Query>, req: &SearchRequest) -> Box<dyn Query> {
+        let Some(w) = &req.within else { return query };
+        let mut any: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+        if !w.books.is_empty() {
+            let terms = w.books.iter().map(|b| Term::from_field_text(self.f.book, b));
+            any.push((Occur::Should, Box::new(TermSetQuery::new(terms))));
+        }
+        if !w.paths.is_empty() {
+            let terms = w.paths.iter().map(|p| Term::from_field_text(self.f.path, p));
+            any.push((Occur::Should, Box::new(TermSetQuery::new(terms))));
+        }
+        // nothing in the set: nothing matches
+        let allowed: Box<dyn Query> = if any.is_empty() { Box::new(tantivy::query::EmptyQuery) } else { Box::new(BooleanQuery::new(any)) };
+        Box::new(BooleanQuery::new(vec![(Occur::Must, query), (Occur::Must, allowed)]))
     }
 
     pub fn search(&self, req: &SearchRequest) -> Result<SearchResult, String> {
         let _ = &self.index;
         let query = build_query(&self.f, &req.query, req.mode)?;
+        let query = self.restrict(query, req);
         let query: Box<dyn Query> = match &req.scope {
             Some(scope) => {
                 // `bulei/阿含部類` or `/bulei/阿含部類` (shells such as Git Bash
@@ -402,6 +421,15 @@ pub struct SearchRequest {
     pub scope: Option<String>,
     /// extra facet roots to count, e.g. `/bulei/阿含部類` for its sub-categories
     pub facet_drill: Vec<String>,
+    /// only these books and / or documents (a node of the tree and what is below it)
+    pub within: Option<Within>,
+}
+
+/// A set of books (CBETA book ids) and documents (paths) to search in.
+#[derive(Debug, Clone, Default)]
+pub struct Within {
+    pub books: Vec<String>,
+    pub paths: Vec<String>,
 }
 
 impl SearchRequest {
@@ -413,6 +441,7 @@ impl SearchRequest {
             limit: 10,
             scope: None,
             facet_drill: Vec::new(),
+            within: None,
         }
     }
 }
@@ -761,6 +790,31 @@ mod tests {
         req.mode = MatchMode::Phrase;
         assert_eq!(books(&idx.search(&req).unwrap()), vec!["T0001_1"]);
         req.query = "比丘他念".to_string();
+        assert_eq!(idx.search(&req).unwrap().total_volumes, 0);
+    }
+
+    #[test]
+    fn searches_within_books_and_paths() {
+        let d = tempdir::Dir::new();
+        let docs = vec![
+            ("T0001", "p1", "如是我聞"),
+            ("T0002", "p2", "如是我聞"),
+            ("zz", "a/x.html", "如是我聞"),
+        ]
+        .into_iter()
+        .map(|(book, path, text)| {
+            Ok(IndexDoc { path: path.into(), book: book.into(), juan: 1, title: book.into(), text: text.into(), facets: vec![] })
+        });
+        build_index(d.path(), serde_json::json!({}), 3, docs, |_, _| {}).unwrap();
+        let idx = SearchIndex::open(d.path()).unwrap();
+        let mut req = SearchRequest::new("如是我聞");
+        assert_eq!(idx.search(&req).unwrap().total_volumes, 3);
+        req.within = Some(Within { books: vec!["T0002".into()], paths: vec![] });
+        assert_eq!(idx.search(&req).unwrap().total_volumes, 1);
+        req.within = Some(Within { books: vec!["T0001".into()], paths: vec!["a/x.html".into()] });
+        assert_eq!(idx.search(&req).unwrap().total_volumes, 2);
+        assert_eq!(idx.count(&req).unwrap(), 2);
+        req.within = Some(Within::default());
         assert_eq!(idx.search(&req).unwrap().total_volumes, 0);
     }
 

@@ -22,7 +22,8 @@
   import { onMount, tick } from "svelte";
   import * as api from "./api.js";
 
-  let { libraries, onopen, onclose } = $props();
+  // `scope`: { lib, label, within } when started from a node of the tree
+  let { libraries, onopen, onclose, scope = null } = $props();
 
   const KIND = { book: "经", chapter: "目", juan: "卷", article: "文", cite: "引", cite_missing: "引" };
   const KIND_TITLE = {
@@ -37,7 +38,7 @@
   let query = $state(lastQuery);
   let quote = $state(lastQuote); // quote of a pasted citation, highlighted when opened
   // svelte-ignore state_referenced_locally
-  let lib = $state(libraries.some((l) => l.id === lastLib) ? lastLib : null);
+  let lib = $state(scope ? scope.lib : libraries.some((l) => l.id === lastLib) ? lastLib : null);
   let result = $state(null);
   let error = $state("");
   let loading = $state(false);
@@ -47,7 +48,7 @@
   let seq = 0;
 
   const isCommand = $derived(query.trim().startsWith("#"));
-  const tabs = $derived([{ id: null, title: "全部" }, ...libraries.map((l) => ({ id: l.id, title: l.title }))]);
+  const tabs = $derived(scope ? [] : [{ id: null, title: "全部" }, ...libraries.map((l) => ({ id: l.id, title: l.title }))]);
   const libTitle = $derived(Object.fromEntries(libraries.map((l) => [l.id, l.title])));
   const counts = $derived(Object.fromEntries((result?.libraries ?? []).map((c) => [c.id, c.count])));
   const allCount = $derived((result?.libraries ?? []).reduce((n, c) => n + c.count, 0));
@@ -61,12 +62,14 @@
   async function run() {
     const my = ++seq;
     if (!query.trim().startsWith("#")) quote = null;
-    lastQuery = query;
-    lastLib = lib;
-    lastQuote = quote;
+    if (!scope) {
+      lastQuery = query;
+      lastLib = lib;
+      lastQuote = quote;
+    }
     loading = true;
     try {
-      const r = await api.quickSearch(query, lib, 200, quote);
+      const r = await api.quickSearch(query, lib, 200, quote, scope?.within ?? null);
       if (my !== seq) return;
       result = r;
       error = "";
@@ -142,6 +145,7 @@
       case "Tab": {
         // next / previous knowledge library
         e.preventDefault();
+        if (!tabs.length) break;
         const i = tabs.findIndex((t) => t.id === lib);
         const next = tabs[(i + (e.shiftKey ? tabs.length - 1 : 1)) % tabs.length];
         setLib(next.id);
@@ -155,6 +159,7 @@
 <div class="backdrop" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
   <div class="dialog" role="dialog" aria-label="标题快搜" aria-modal="true">
     <div class="tabs" role="tablist" aria-label="知识库">
+      {#if scope}<span class="scopechip" title="从目录树的这个节点搜索">范围：<b>{scope.label}</b></span>{/if}
       {#each tabs as t (t.id)}
         <button role="tab" class:active={t.id === lib} aria-selected={t.id === lib} tabindex="-1"
           onclick={() => setLib(t.id)}>
@@ -226,6 +231,8 @@
     font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent;
   }
   .tabs button:hover { color: var(--ink); }
+  .scopechip { padding: 6px 4px; color: var(--muted); }
+  .scopechip b { color: var(--accent); }
   .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
   .count { font-size: 11px; color: var(--muted); margin-left: 3px; font-weight: 400; }
   .help {

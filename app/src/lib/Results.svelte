@@ -3,14 +3,14 @@
   // A snippet opens the volume at its line.
   // Results are grouped by library (design-spec 8.2): the chips show the
   // hit count of every library; facets and hits are those of one library.
-  let { result, scope, drill, onfacet, ondrill, onclearscope, onhit, onpage, onlib } = $props();
+  let { result, scope, rangeLabel = "", drill, onfacet, ondrill, onclearscope, onhit, onpage, onlib } = $props();
 </script>
 
 <div class="results">
   <aside class="facets">
-    {#if scope}
+    {#if scope || rangeLabel}
       <div class="scope">
-        范围：<b>{scope}</b>
+        范围：<b>{[rangeLabel, scope].filter(Boolean).join(" › ")}</b>
         <button class="link" onclick={onclearscope}>清除</button>
       </div>
     {/if}
