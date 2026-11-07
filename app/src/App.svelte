@@ -108,6 +108,40 @@
     }
   }
 
+  let quickQuery = $state(null); // text to start the quick search with
+
+  /** Actions of the reader's context menu that the main window carries out. */
+  function readerAction(a) {
+    const v = a.vol;
+    if (a.type === "search" || a.type === "phrase" || a.type === "book") {
+      query = a.text;
+      phrase = a.type === "phrase";
+      rs.scope = "";
+      rs.drill = "";
+      if (a.type === "book") {
+        rs.within = { lib: v.lib, books: v.book_id ? [v.book_id] : [], paths: v.book_id ? [] : [v.path], rel: null };
+        rs.rangeLabel = v.title;
+      } else {
+        rs.within = null;
+        rs.rangeLabel = "";
+      }
+      runSearch(1, v.lib && a.type === "book" ? v.lib : null);
+    } else if (a.type === "quick") {
+      quickScope = null;
+      quickQuery = a.text;
+      searchBox = false;
+      recentBox = false;
+      quick = true;
+    } else {
+      markAction(a);
+    }
+  }
+
+  /** Bookmarks, collections and tags (added below). */
+  function markAction(a) {
+    notice = "这个功能还没有接上。";
+  }
+
   let searchBox = $state(false); // full-text search popup
   let searchScope = $state(null); // { lib, label, within }: search from a node of the tree
   let quickScope = $state(null);
@@ -137,6 +171,7 @@
     searchBox = false;
     recentBox = false;
     quickScope = scope && scope.lib ? scope : null; // a click passes the event
+    quickQuery = null;
     quick = true;
   }
   function openSearch(scope = null) {
@@ -286,7 +321,7 @@
   $effect(() => {
     if (wsEl && st && !wsReady) {
       wsReady = true;
-      workspace.init(wsEl, { resultsProps: rs, libraries: st.libraries, onlocate: locate }).catch((e) => (error = String(e)));
+      workspace.init(wsEl, { resultsProps: rs, libraries: st.libraries, onlocate: locate, onaction: readerAction }).catch((e) => (error = String(e)));
     }
   });
 
@@ -496,7 +531,7 @@
 {/if}
 
 {#if quick}
-  <QuickSearch {libraries} scope={quickScope} onopen={openQuick} onclose={() => (quick = false)} />
+  <QuickSearch {libraries} scope={quickScope} initialQuery={quickQuery} onopen={openQuick} onclose={() => (quick = false)} />
 {/if}
 
 {#if binding}

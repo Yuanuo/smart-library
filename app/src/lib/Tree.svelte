@@ -6,7 +6,8 @@
   import Tree from "./Tree.svelte";
   import Icon from "./Icon.svelte";
 
-  let { nodes, onopen, ontoggle, oncontext = null, expanded, depth = 0, prefix = "", current = null } = $props();
+  let { nodes, onopen, ontoggle, oncontext = null, expanded, depth = 0, prefix = "", current = null, seen = null } = $props();
+  const wasOpened = (n) => !!seen && ((n.book_id && seen.books.has(n.book_id)) || (n.path && seen.paths.has(n.path)));
 </script>
 
 <ul class:root={depth === 0}>
@@ -24,11 +25,11 @@
         {:else}
           <span class="twisty"></span>
         {/if}
-        <span class="kind" class:file={!hasChildren} class:dim={!node.book_id && !node.path && node.href}>
+        <span class="kind" class:file={!hasChildren} class:seen={wasOpened(node)} class:dim={!node.book_id && !node.path && node.href}>
           <Icon name={hasChildren ? (open ? "folder-open" : "folder") : "file"} size={17} />
         </span>
         {#if node.book_id || node.path}
-          <button class="leaf" onclick={() => onopen(node, key)} title={node.title}>{node.title}</button>
+          <button class="leaf" class:seen={wasOpened(node)} onclick={() => onopen(node, key)} title={node.title}>{node.title}</button>
         {:else if node.href}
           <span class="leaf unsupported" title="内容尚未接入：{node.href}">{node.title}</span>
         {:else}
@@ -36,7 +37,7 @@
         {/if}
       </div>
       {#if hasChildren && open}
-        <Tree nodes={node.children} {onopen} {ontoggle} {oncontext} {expanded} depth={depth + 1} prefix={key} {current} />
+        <Tree nodes={node.children} {onopen} {ontoggle} {oncontext} {expanded} depth={depth + 1} prefix={key} {current} {seen} />
       {/if}
     </li>
   {/each}
@@ -51,9 +52,10 @@
   .kind { display: inline-flex; flex: none; color: #4f9de8; }
   .kind.file { color: #6aa7e8; }
   .kind.dim { opacity: 0.45; }
-  .row.current .kind { color: #2fb36a; }
+  .kind.seen { color: var(--note); }
+  .leaf.seen { color: var(--note); }
   .row.current { background: var(--accent-soft); }
-  .row.current .leaf, .row.current .folder { color: var(--accent); }
+  .row.current .leaf, .row.current .folder { color: var(--accent); font-weight: 700; }
   .twisty {
     width: 22px; height: 22px; flex: none; border: none; background: none; padding: 0;
     color: var(--muted); display: inline-flex; align-items: center; justify-content: center;

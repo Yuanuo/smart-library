@@ -32,6 +32,8 @@
   // `onprogress(lb)` reports the first line at the top of the view.
   import { tick } from "svelte";
   import Icon from "./Icon.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import * as api from "./api.js";
 
   let {
     vol,
@@ -44,6 +46,8 @@
     onprogress = null,
     onlocate = null,
     extra = null,
+    // actions that need the main window (search, marks): `onaction({ type, text, lb, vol })`
+    onaction = null,
   } = $props();
   let scroller = $state();
 
@@ -232,6 +236,78 @@
     };
   });
 
+  // ---- context menu: the selected text can be copied, searched or kept
+  let menu = $state(null);
+
+  const clip = (s, n = 14) => (s.length > n ? s.slice(0, n) + "…" : s);
+
+  /** The line (lb) of a point: the last marker before it in the document. */
+  function lbAt(node) {
+    if (!scroller || !node) return null;
+    let last = null;
+    for (const el of scroller.querySelectorAll("[data-lb]")) {
+      const pos = el.compareDocumentPosition(node);
+      // the marker comes before `node` (or contains it)
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING || pos & Node.DOCUMENT_POSITION_CONTAINED_BY) last = el;
+      else break;
+    }
+    return last?.dataset.lb ?? scroller.querySelector("[data-lb]")?.dataset.lb ?? null;
+  }
+
+  async function copyText(text, withCite, lb) {
+    try {
+      let out = text;
+      if (withCite) {
+        const c = await api.citeText(vol.lib, vol.path, vol.book_id, lb, vol.title);
+        out = `${text}\n${c}`;
+      }
+      await navigator.clipboard.writeText(out);
+    } catch (e) {
+      console.warn("copy", e);
+    }
+  }
+
+  function readerMenu(e) {
+    if (e.target.closest?.(".tip")) return;
+    const s = window.getSelection();
+    const inside = s && !s.isCollapsed && scroller?.contains(s.anchorNode) && scroller?.contains(s.focusNode);
+    const text = inside ? s.toString().trim() : "";
+    e.preventDefault();
+    closeTip();
+    const lb = inside ? lbAt(s.getRangeAt(0).startContainer) : lbAt(e.target);
+    const act = (type) => () => onaction?.({ type, text, lb, vol });
+    const q = clip(text);
+    const items = [];
+    if (text) {
+      items.push(
+        { label: "复制文字", action: () => copyText(text, false, lb) },
+        { label: "复制文字（&引用出处）", action: () => copyText(text, true, lb) },
+        "separator",
+      );
+      if (onaction) {
+        items.push(
+          { label: `全文检索：${q}`, action: act("search") },
+          { label: `全文检索（精确检索）：${q}`, action: act("phrase") },
+          { label: `快捷检索（经名、作译者等）：${q}`, action: act("quick") },
+        );
+      }
+      items.push({ label: `页内查找：${q}`, action: () => window.find(text, false, false, true) });
+      if (onaction) items.push({ label: `全文检索（检索本书）：${q}`, action: act("book") });
+      items.push(
+        "separator",
+        { label: "查拼音（待支持）", action: () => {}, disabled: true },
+        { label: "查词条（待支持）", action: () => {}, disabled: true },
+        { label: "查词义（待支持）", action: () => {}, disabled: true },
+        "separator",
+      );
+    }
+    if (onaction) {
+      items.push({ label: "添加书签", action: act("bookmark") });
+      items.push({ label: text ? "添加收藏…" : "添加收藏…（先选中文字）", action: act("clip"), disabled: !text });
+    }
+    if (items.length) menu = { x: e.clientX, y: e.clientY, items };
+  }
+
   function chapterChange(e) {
     const c = vol.chapters[e.target.value];
     e.target.value = "";
@@ -276,7 +352,7 @@
       </div>
     </header>
     <!-- svelte-ignore a11y_mouse_events_have_key_events -->
-    <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))}
+    <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))} oncontextmenu={readerMenu}
       onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para"}
         <article class="doc notes-{noteMode}" class:show-lb={showLb}>{@html vol.html}</article>
@@ -311,6 +387,10 @@
       </tbody>
     </table>
   </div>
+{/if}
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
 {/if}
 
 <style>

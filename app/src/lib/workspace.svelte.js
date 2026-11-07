@@ -33,7 +33,7 @@ let restoring = false;
 let saveTimer = null;
 let defaultMode = "para";
 
-export const ws = $state({ empty: true, current: null }); // current: { title, lib } of the active reading tab
+export const ws = $state({ empty: true, current: null, opened: 0 }); // current: { title, lib } of the active reading tab
 
 function labelFor(tab) {
   return "reader-" + tab.replace(/[^A-Za-z0-9]/g, "_");
@@ -145,6 +145,7 @@ function readerRenderer() {
           p,
           onopen: (req) => openVolume(req),
           onlocate: () => hooks.onlocate?.({ lib: state.lib, bookId: state.bookId, path: state.path }),
+          onaction: (a) => hooks.onaction?.(a),
           onprogress: (lb, mode) => recordProgress(tab, lb, mode),
           ontitle: (t, tooltip) => {
             panelApi?.setTitle(t);
@@ -366,7 +367,7 @@ export async function init(element, h) {
  */
 export async function openVolume({ lib, bookId = null, path = null, lb = null, query = null, phrase = false }) {
   const id = await api.resolveNode(lib, bookId, path);
-  api.recentTouch(id.lib, id.path, id.book_id, id.title).catch(() => {});
+  api.recentTouch(id.lib, id.path, id.book_id, id.title).then(() => ws.opened++).catch(() => {});
   if (popouts[id.tab]) {
     const w = await WebviewWindow.getByLabel(popouts[id.tab].label);
     if (w) {

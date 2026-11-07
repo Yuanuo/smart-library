@@ -1800,6 +1800,38 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
     Ok(())
 }
 
+// ------------------------------------------------------------ citation
+
+/// The place of a passage as a citation, to copy with the text: CBETA's own
+/// format `(CBETA 2025.Q1, T15, no. 614, p. 269c29)`, else
+/// `—— 《title》 · library · ¶3`.
+#[tauri::command]
+pub async fn cite_text(
+    lib: String,
+    path: String,
+    book_id: Option<String>,
+    lb: Option<String>,
+    title: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let l = state.library(&lib)?;
+    if l.kind == "cbeta" {
+        let bc = state.bookcase_of(&l)?;
+        let vol = path.split('/').nth(2).unwrap_or("");
+        let id = book_id.unwrap_or_default();
+        let split = id.find(|c: char| c.is_ascii_digit()).unwrap_or(id.len());
+        let number = id[split..].trim_start_matches('0');
+        let mut s = format!("(CBETA {}, {}, no. {}", bc.data_version(), vol, if number.is_empty() { "0" } else { number });
+        if let Some(lb) = lb.filter(|l| l.len() > 4 && l.is_char_boundary(4)) {
+            let (page, rest) = lb.split_at(4);
+            s.push_str(&format!(", p. {}{}", page.trim_start_matches('0'), rest));
+        }
+        s.push(')');
+        return Ok(s);
+    }
+    Ok(format!("—— 《{}》 · {}{}", title, l.title, lb.map(|b| format!(" · {}", b)).unwrap_or_default()))
+}
+
 // ------------------------------------------------------------ history
 
 #[derive(Serialize)]
@@ -1848,6 +1880,22 @@ pub async fn recent_list(filter: Option<String>, limit: Option<usize>, state: St
             })
         })
         .collect())
+}
+
+/// What was ever opened in a library, to mark it in the tree.
+#[derive(Serialize)]
+pub struct OpenedDto {
+    books: Vec<String>,
+    paths: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn opened_set(lib: String, state: State<'_, AppState>) -> Result<OpenedDto, String> {
+    let rows = state.history.opened(&lib)?;
+    let mut books: Vec<String> = rows.iter().filter_map(|(_, b)| b.clone()).collect();
+    books.sort();
+    books.dedup();
+    Ok(OpenedDto { books, paths: rows.into_iter().map(|(p, _)| p).collect() })
 }
 
 #[tauri::command]

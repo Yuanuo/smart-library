@@ -118,6 +118,14 @@ impl History {
         Ok(rows)
     }
 
+    /// What was ever opened in a library: `(path, book id)` pairs.
+    pub fn opened(&self, lib: &str) -> Result<Vec<(String, Option<String>)>, String> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT path, book_id FROM history WHERE lib = ?1").map_err(err)?;
+        let rows = st.query_map(params![lib], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(err)
+    }
+
     pub fn remove(&self, lib: &str, path: &str) -> Result<(), String> {
         let c = self.conn.lock().unwrap();
         c.execute("DELETE FROM history WHERE lib = ?1 AND path = ?2", params![lib, path]).map_err(err)?;
@@ -158,6 +166,7 @@ mod tests {
         assert_eq!(l[0].visits, 2);
         assert_eq!(l[0].lb.as_deref(), Some("0003a05"));
         assert_eq!(h.list("童年", 10).unwrap().len(), 1);
+        assert_eq!(h.opened("cbeta").unwrap(), vec![("XML/T/T01/T01n0001_001.xml".to_string(), Some("T0001".to_string()))]);
         h.remove_lib("zb").unwrap();
         assert_eq!(h.list("", 10).unwrap().len(), 1);
         h.clear().unwrap();

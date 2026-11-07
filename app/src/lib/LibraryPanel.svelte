@@ -14,6 +14,19 @@
 
   let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom } = $props();
 
+  // what was ever opened, per library: shown in green (not "finished", only "opened")
+  let seen = $state({}); // lib id -> { books: Set, paths: Set }
+  async function loadSeen(id) {
+    try {
+      const o = await api.openedSet(id);
+      seen[id] = { books: new Set(o.books), paths: new Set(o.paths) };
+    } catch {}
+  }
+  $effect(() => {
+    const _n = workspace.ws.opened;
+    for (const id of Object.keys(nodes)) loadSeen(id);
+  });
+
   let nameDlg = $state(null); // { title, label, value, okLabel, onok }
   let noteDlg = $state(null); // { position, defaultLib }
   let selected = $state(null); // { lib, key }: the last note opened from the tree
@@ -253,6 +266,7 @@
     errors[id] = "";
     try {
       nodes[id] = await api.tree(id);
+      loadSeen(id);
     } catch (e) {
       errors[id] = String(e);
     } finally {
@@ -422,6 +436,7 @@
             depth={1}
             expanded={expanded[l.id] ?? {}}
             current={current?.lib === l.id ? current.key : null}
+            seen={seen[l.id] ?? null}
             ontoggle={(key) => toggleNode(l.id, key)}
             oncontext={(node, key, e) => nodeMenu(e, l, node, key)}
             onopen={(node, key) => {

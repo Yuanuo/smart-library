@@ -23,7 +23,7 @@
   import * as api from "./api.js";
 
   // `scope`: { lib, label, within } when started from a node of the tree
-  let { libraries, onopen, onclose, scope = null } = $props();
+  let { libraries, onopen, onclose, scope = null, initialQuery = null } = $props();
 
   const KIND = { book: "经", chapter: "目", juan: "卷", article: "文", cite: "引", cite_missing: "引" };
   const KIND_TITLE = {
@@ -35,7 +35,8 @@
     cite_missing: "CBETA 引用",
   };
 
-  let query = $state(lastQuery);
+  // svelte-ignore state_referenced_locally
+  let query = $state(initialQuery ?? lastQuery);
   let quote = $state(lastQuote); // quote of a pasted citation, highlighted when opened
   // svelte-ignore state_referenced_locally
   let lib = $state(scope ? scope.lib : libraries.some((l) => l.id === lastLib) ? lastLib : null);
