@@ -2118,6 +2118,8 @@ pub struct AppInfo {
     /// YY.MM.DD
     version: String,
     data_dir: String,
+    /// the address the `sl` protocol is reached by (pictures of notes)
+    asset_prefix: String,
 }
 
 /// Cargo's version is semver (`26.11.8`); the program shows it as a date.
@@ -2137,6 +2139,7 @@ pub async fn app_info(state: State<'_, AppState>) -> Result<AppInfo, String> {
         name: "Smart Library".into(),
         version: display_version(),
         data_dir: state.data_dir.display().to_string(),
+        asset_prefix: ASSET_PREFIX.to_string(),
     })
 }
 

@@ -84,7 +84,7 @@ fn pct(s: &str) -> String {
 fn definition(line: &str) -> Option<(String, String)> {
     let t = line.trim_start().strip_prefix("[^")?;
     let (id, rest) = t.split_once("]:")?;
-    (!id.is_empty() && !id.contains(['[', ']', ' '])).then(|| (id.to_string(), rest.trim().to_string()))
+    (!id.is_empty() && !id.contains(['[', ']', ' '])).then(|| (id.to_string(), restore(&unbackslash(rest.trim()))))
 }
 
 /// `[^id]` of an already escaped line -> a footnote anchor (when it is defined).
@@ -138,9 +138,39 @@ fn images(s: &str) -> String {
     out
 }
 
+/// Backslash escapes (`\*`, `\[`, `\&`, `\_` … as editors write them): the
+/// backslash goes; `*`, `[` and `]` are kept apart (`\u{1}`–`\u{3}`) so that
+/// they are not read as marks, see [`restore`].
+fn unbackslash(s: &str) -> String {
+    let mut out = String::new();
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            if let Some(&n) = it.peek() {
+                if n.is_ascii_punctuation() {
+                    it.next();
+                    out.push(match n {
+                        '*' => '\u{1}',
+                        '[' => '\u{2}',
+                        ']' => '\u{3}',
+                        o => o,
+                    });
+                    continue;
+                }
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn restore(s: &str) -> String {
+    s.replace('\u{1}', "*").replace('\u{2}', "[").replace('\u{3}', "]")
+}
+
 /// One line of text: images, footnotes, links, bold and italic.
 fn line(s: &str, defs: &Defs) -> String {
-    inline(&links(&refs(&images(&esc(s)), defs)))
+    restore(&inline(&links(&refs(&images(&esc(&unbackslash(s))), defs))))
 }
 
 pub fn to_html(md: &str) -> String {
@@ -158,6 +188,11 @@ pub fn to_html(md: &str) -> String {
             continue;
         }
         let line = raw.trim_end();
+        // a backslash at the end is a hard break of the visual editor
+        let line = match line.strip_suffix('\\') {
+            Some(l) if !l.ends_with('\\') => l.trim_end(),
+            _ => line,
+        };
         if line.trim_start().starts_with("```") {
             code = !code;
             continue;
@@ -230,6 +265,16 @@ mod tests {
         assert!(h.contains("<ul><li>一</li><li>二</li></ul>"));
         assert!(h.contains("<ol><li>甲</li></ol>"));
         assert!(h.contains("<blockquote>引用</blockquote>") && h.contains("<p>code</p>"));
+    }
+
+    #[test]
+    fn reads_what_the_visual_editor_writes() {
+        // `\&` in an address, escaped marks, a hard break as a backslash
+        let h = to_html("> [出处](smartlib://open?lib=a\\&book=b)\\\n下一行 \\*不是粗体\\* \\[方括号\\]\n\n* 项\n\n[^1]: 注 \\*x\\*\n文[^1]");
+        assert!(h.contains("<a data-src=\"smartlib://open?lib=a&amp;book=b\">出处</a>"), "{h}");
+        assert!(h.contains("<p>下一行 *不是粗体* [方括号]</p>"), "{h}");
+        assert!(h.contains("<li>项</li>"), "{h}");
+        assert!(h.contains("data-note=\"%E6%B3%A8%20%2Ax%2A\""), "{h}");
     }
 
     #[test]

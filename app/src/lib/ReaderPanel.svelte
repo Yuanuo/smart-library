@@ -49,6 +49,23 @@
     localNonce = p.nonce ?? 0;
   });
 
+  // the editor: visual (Milkdown) or the Markdown source; `ver` makes it again
+  // loaded when first needed: the editor library is big
+  const loadEditor = () => import("./NoteEditor.svelte");
+  let visual = $state(true);
+  try {
+    visual = localStorage.getItem("note.editor") !== "source";
+  } catch {}
+  let ver = $state(0);
+  function setVisual(v) {
+    visual = v;
+    ver += 1;
+    try {
+      localStorage.setItem("note.editor", v ? "visual" : "source");
+    } catch {}
+  }
+  const keepPicture = async (file) => api.noteAttach(p.lib, await file.arrayBuffer(), file.type);
+
   function startEdit(v = vol) {
     draft = v.raw ?? "";
     editing = true;
@@ -63,7 +80,10 @@
     const a = p.append;
     if (!a) return;
     untrack(() => {
-      if (editing) draft = draft.replace(/\s+$/, "") + "\n\n" + a.text.trim() + "\n";
+      if (editing) {
+        draft = draft.replace(/\s+$/, "") + "\n\n" + a.text.trim() + "\n";
+        ver += 1; // the visual editor reads the text again
+      }
     });
     p.append = null;
   });
@@ -123,7 +143,7 @@
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
       saveEdit();
-    } else if (e.key === "Escape") cancelEdit();
+    } else if (e.key === "Escape" && !visual) cancelEdit(); // not in the visual editor: Escape closes its menus
   }
 
   function chapter(c) {
@@ -140,17 +160,36 @@
 {#if error}
   <p class="error">{error}</p>
 {:else if vol && editing}
-  <div class="editor">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="editor" onkeydown={editorKey}>
     <div class="bar">
       <strong>{vol.title}</strong>
-      <span class="muted">Markdown · Ctrl+S 保存</span>
+      <div class="seg" role="group" aria-label="编辑方式">
+        <button class:on={visual} onclick={() => !visual && setVisual(true)} title="所见即所得">排版</button>
+        <button class:on={!visual} onclick={() => visual && setVisual(false)} title="直接编辑 Markdown 源码">源码</button>
+      </div>
+      <span class="muted">Ctrl+S 保存</span>
       <span class="grow"></span>
       <button onclick={cancelEdit}>取消</button>
       <button class="primary" disabled={saving} onclick={saveEdit}>保存</button>
     </div>
-    <!-- svelte-ignore a11y_autofocus -->
-    <textarea bind:value={draft} bind:this={editorEl} onkeydown={editorKey} onpaste={editorPaste} ondrop={editorDrop} ondragover={(e) => e.preventDefault()} autofocus spellcheck="false"
-      placeholder="# 标题&#10;正文……（支持 # 标题、- 列表、**粗体**、*斜体*；可以直接粘贴或拖入图片）"></textarea>
+    <div class="body">
+      {#key ver}
+        {#if visual}
+          {#await loadEditor()}
+            <p class="muted loading">载入编辑器…</p>
+          {:then m}
+            <m.default value={draft} lib={p.lib} onchange={(md) => (draft = md)} onpicture={keepPicture} />
+          {:catch e}
+            <p class="error">{String(e)}</p>
+          {/await}
+        {:else}
+          <!-- svelte-ignore a11y_autofocus -->
+          <textarea bind:value={draft} bind:this={editorEl} onpaste={editorPaste} ondrop={editorDrop} ondragover={(e) => e.preventDefault()} autofocus spellcheck="false"
+            placeholder="# 标题&#10;正文……（支持 # 标题、- 列表、**粗体**、*斜体*；可以直接粘贴或拖入图片）"></textarea>
+        {/if}
+      {/key}
+    </div>
   </div>
 {:else if vol}
   {#snippet editButton()}
@@ -178,6 +217,12 @@
   .editor { display: flex; flex-direction: column; height: 100%; }
   .bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
   .grow { flex: 1; }
+  .body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .seg { display: flex; }
+  .seg button { border-radius: 0; margin-left: -1px; padding: 2px 12px; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+  .seg button:last-child { border-radius: 0 6px 6px 0; }
+  .seg button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
   textarea {
     flex: 1; border: none; resize: none; padding: 14px 18px; outline: none;
     font: 15px/1.7 ui-monospace, Consolas, "Microsoft YaHei", monospace; background: var(--paper); color: inherit;
