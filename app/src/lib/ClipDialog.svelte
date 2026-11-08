@@ -34,7 +34,7 @@
     timer = setTimeout(async () => {
       try {
         const all = await api.noteTargets(query);
-        hints = (mode === "append" ? all.filter((h) => h.id) : all).slice(0, 8);
+        hints = (mode === "append" ? all.filter((h) => h.id && !h.board) : all).slice(0, 8);
         hi = -1;
       } catch {
         hints = [];

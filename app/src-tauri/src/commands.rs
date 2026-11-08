@@ -622,9 +622,8 @@ pub async fn add_folder(
 
 // ------------------------------------------------------------ internal libraries
 
-/// Create an internal (read-write) library.
-#[tauri::command]
-pub async fn create_notes_library(title: String, state: State<'_, AppState>) -> Result<StatusDto, String> {
+/// Add an internal (read-write) library; `Err` if the name is taken or empty.
+fn add_notes_library(state: &AppState, title: &str) -> Result<Library, String> {
     let title = title.trim().to_string();
     if title.is_empty() {
         return Err("请填写知识库名称".into());
@@ -644,6 +643,13 @@ pub async fn create_notes_library(title: String, state: State<'_, AppState>) -> 
         return Err(e);
     }
     state.save_registry()?;
+    Ok(lib)
+}
+
+/// Create an internal (read-write) library.
+#[tauri::command]
+pub async fn create_notes_library(title: String, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    add_notes_library(&state, &title)?;
     Ok(status_of(&state))
 }
 
@@ -657,6 +663,8 @@ pub struct NoteTargetDto {
     path: String,
     /// the note is a mind map
     mind: bool,
+    /// the note is a whiteboard
+    board: bool,
 }
 
 /// Internal-library places matching what the user types (every word must
@@ -676,7 +684,7 @@ pub async fn note_targets(query: String, state: State<'_, AppState>) -> Result<V
             words.iter().all(|w| p.contains(w.as_str()))
         };
         if hit(&l.title) {
-            out.push(NoteTargetDto { lib: l.id.clone(), id: String::new(), path: l.title.clone(), mind: false });
+            out.push(NoteTargetDto { lib: l.id.clone(), id: String::new(), path: l.title.clone(), mind: false, board: false });
         }
         for r in state.notes(&l)?.rows()? {
             let mut parts = vec![l.title.clone()];
@@ -684,7 +692,7 @@ pub async fn note_targets(query: String, state: State<'_, AppState>) -> Result<V
             parts.push(r.title.clone());
             let path = parts.join("/");
             if hit(&path) {
-                out.push(NoteTargetDto { lib: l.id.clone(), id: r.id.to_string(), path, mind: r.content_type == smart_library_core::mindmap::TYPE });
+                out.push(NoteTargetDto { lib: l.id.clone(), id: r.id.to_string(), path, mind: r.content_type == smart_library_core::mindmap::TYPE, board: r.content_type == smart_library_core::whiteboard::TYPE });
             }
             if out.len() >= 30 {
                 return Ok(out);
@@ -703,21 +711,24 @@ pub struct NewNoteDto {
 }
 
 /// Add a note at `position` (`library/folder/folder`, or just folders for
-/// `default_lib`); folders that do not exist yet are made.
+/// `default_lib`); folders that do not exist yet are made. `kind` is `md`,
+/// `mindmap` or `whiteboard`. Without a title the note is named `笔记 n`
+/// (`脑图 n`, `白板 n`) after the first number no sibling uses.
 #[tauri::command]
 pub async fn create_note_at(
     default_lib: Option<String>,
     position: String,
-    title: String,
+    title: Option<String>,
     kind: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<NewNoteDto, String> {
-    let libs: Vec<Library> = state.libraries.read().unwrap().iter().filter(|l| l.kind == "notes").cloned().collect();
+    let mut libs: Vec<Library> = state.libraries.read().unwrap().iter().filter(|l| l.kind == "notes").cloned().collect();
     if libs.is_empty() {
-        return Err("还没有自建知识库，请先在「＋」→「知识库…」里创建一个".into());
+        // the first note needs a place: make a library for it
+        libs.push(add_notes_library(&state, "我的笔记")?);
     }
     let mut parts: Vec<String> = position.split('/').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-    // the first part names a library, else the default one (or the first)
+    // the first part names a library, else the default one (or the first that is not the diary)
     let lib = match parts.first().and_then(|p| libs.iter().find(|l| l.title.to_lowercase() == p.to_lowercase())) {
         Some(l) => {
             parts.remove(0);
@@ -725,26 +736,63 @@ pub async fn create_note_at(
         }
         None => default_lib
             .and_then(|d| libs.iter().find(|l| l.id == d))
+            .or_else(|| libs.iter().find(|l| l.title != smart_library_core::diary::LIBRARY))
             .unwrap_or(&libs[0])
             .clone(),
     };
     state.titles.write().unwrap().remove(&lib.id);
     let store = state.notes(&lib)?;
-    let title = title.trim();
-    if title.is_empty() {
-        return Err("标题不能为空".into());
-    }
     let parent = store.ensure_path(&parts)?;
-    let id = if kind.as_deref() == Some("mindmap") {
-        store.create_typed(parent, title, &smart_library_core::mindmap::new_data(title), smart_library_core::mindmap::TYPE)?
-    } else {
-        store.create(parent, title, "")?
+    let kind = kind.as_deref().unwrap_or("md");
+    let title = match title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => t.to_string(),
+        None => store.free_title(parent, match kind { "mindmap" => "脑图", "whiteboard" => "白板", _ => "笔记" })?,
+    };
+    let id = match kind {
+        "mindmap" => store.create_typed(parent, &title, &smart_library_core::mindmap::new_data(&title), smart_library_core::mindmap::TYPE)?,
+        "whiteboard" => store.create_typed(parent, &title, &smart_library_core::whiteboard::new_data(), smart_library_core::whiteboard::TYPE)?,
+        _ => store.create(parent, &title, "")?,
     };
     Ok(NewNoteDto {
         lib: lib.id,
         chain: store.chain(id)?.iter().map(|i| i.to_string()).collect(),
         id: id.to_string(),
     })
+}
+
+#[derive(Serialize)]
+pub struct DiaryDto {
+    /// the library list (the diary library may have just been made)
+    status: StatusDto,
+    note: NewNoteDto,
+}
+
+/// The note of `date` (`YYYY-MM-DD`) in the diary library, made with its year
+/// and month (and the library itself) when it is missing.
+fn diary_note(state: &AppState, date: &str) -> Result<(Arc<NotesStore>, NewNoteDto), String> {
+    use smart_library_core::diary;
+    let titles = diary::path_of(date)?;
+    let existing = state.libraries.read().unwrap().iter().find(|l| l.kind == "notes" && l.title == diary::LIBRARY).cloned();
+    let lib = match existing {
+        Some(l) => l,
+        None => add_notes_library(state, diary::LIBRARY)?,
+    };
+    state.titles.write().unwrap().remove(&lib.id);
+    let store = state.notes(&lib)?;
+    let parent = store.ensure_path(&titles[..2])?;
+    let id = match store.find_child(parent, &titles[2])? {
+        Some(id) => id,
+        None => store.create(parent, &titles[2], "")?,
+    };
+    let dto = NewNoteDto { lib: lib.id, chain: store.chain(id)?.iter().map(|i| i.to_string()).collect(), id: id.to_string() };
+    Ok((store, dto))
+}
+
+/// Today's diary (`date` is the user's local date): made when missing.
+#[tauri::command]
+pub async fn diary_today(date: String, state: State<'_, AppState>) -> Result<DiaryDto, String> {
+    let (_, note) = diary_note(&state, &date)?;
+    Ok(DiaryDto { status: status_of(&state), note })
 }
 
 fn notes_of(state: &AppState, lib: &str) -> Result<Arc<NotesStore>, String> {
@@ -879,6 +927,8 @@ pub struct NodeDto {
     lazy: bool,
     /// an internal library's mind map
     mind: bool,
+    /// an internal library's whiteboard
+    board: bool,
     children: Vec<NodeDto>,
 }
 
@@ -893,6 +943,7 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
             rel: None,
             lazy: false,
             mind: false,
+            board: false,
             children: children.iter().map(|c| node_dto(bc, html, c)).collect(),
         },
         NavNode::Leaf { href, text, children, .. } => {
@@ -908,6 +959,7 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
                     rel: None,
                     lazy: false,
                     mind: false,
+            board: false,
                     children,
                 };
             }
@@ -925,6 +977,7 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
                 rel: None,
                 lazy: false,
                 mind: false,
+            board: false,
                 children,
             }
         }
@@ -943,6 +996,7 @@ fn note_nodes(n: &NotesStore, parent: Option<i64>) -> Result<Vec<NodeDto>, Strin
             rel: Some(r.id.to_string()),
             lazy: r.has_children,
             mind: r.mind,
+            board: r.board,
             children: Vec::new(),
         })
         .collect())
@@ -964,6 +1018,7 @@ fn folder_nodes(f: &FolderLibrary, rel: &str) -> Result<Vec<NodeDto>, String> {
             rel: Some(e.rel),
             lazy: e.is_dir,
             mind: false,
+            board: false,
             children: Vec::new(),
         })
         .collect())
@@ -1135,8 +1190,8 @@ pub async fn open_node(
         let path = path.ok_or("没有指定笔记")?;
         let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
         let note = store.get(id)?.ok_or("笔记不存在")?;
-        if note.content_type == smart_library_core::mindmap::TYPE {
-            // a mind map: the reader shows it with the map component
+        if note.content_type == smart_library_core::mindmap::TYPE || note.content_type == smart_library_core::whiteboard::TYPE {
+            // a mind map or a whiteboard: the reader shows it with its own component
             return Ok(ReaderDto {
                 lib: l.id.clone(),
                 kind: l.kind.clone(),
@@ -1153,7 +1208,7 @@ pub async fn open_node(
                 hits: 0,
                 first_hit_lb: None,
                 raw: Some(note.content),
-                content_type: "mindmap".into(),
+                content_type: if note.content_type == smart_library_core::mindmap::TYPE { "mindmap" } else { "whiteboard" }.into(),
             });
         }
         let plain = notes::article(&note.content, None);
@@ -2438,7 +2493,13 @@ impl Exporter<'_> {
         if let Some(id) = p.note {
             let store = self.state.notes(&self.lib)?;
             let n = store.get(id)?.ok_or("笔记不存在")?;
-            let file = if n.content_type == smart_library_core::mindmap::TYPE {
+            let file = if n.content_type == smart_library_core::whiteboard::TYPE {
+                // the Markdown file lists the texts; the scene itself is kept apart
+                let file = self.doc(&p.title, &smart_library_core::whiteboard::to_markdown(&n.content), "")?;
+                let data = self.w.add_data(&n.content, "wb.json")?;
+                m.insert("whiteboard".into(), json!(data));
+                file
+            } else if n.content_type == smart_library_core::mindmap::TYPE {
                 // the Markdown file is the outline; the map itself is kept apart
                 let file = self.doc(&p.title, &smart_library_core::mindmap::to_markdown(&n.content), "")?;
                 let data = self.w.add_data(&n.content, "mm.json")?;

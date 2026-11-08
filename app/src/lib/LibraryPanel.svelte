@@ -7,13 +7,13 @@
   import Tree from "./Tree.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import NameDialog from "./NameDialog.svelte";
-  import NoteDialog from "./NoteDialog.svelte";
   import Icon from "./Icon.svelte";
   import * as workspace from "./workspace.svelte.js";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { fullPath } from "./paths.js";
+  import { monthPath, localDate } from "./diary.js";
 
-  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, oncopy, onexport, onimport } = $props();
+  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -106,7 +106,6 @@
   }
 
   let nameDlg = $state(null); // { title, label, value, okLabel, onok }
-  let noteDlg = $state(null); // { position, defaultLib }
   let selected = $state(null); // { lib, key }: the last note opened from the tree
 
   const isNotes = (id) => libraries.find((l) => l.id === id)?.kind === "notes";
@@ -167,15 +166,20 @@
     return parts.join("/");
   }
 
-  function newNote(lib, parent, key) {
-    noteDlg = { position: pathOf(lib, key), defaultLib: lib };
-  }
-
-  /** Add the note, show it in the tree and open it. */
-  async function addNote(defaultLib, position, title, kind = "md") {
-    const r = await api.createNoteAt(defaultLib, position, title, kind === "mindmap" ? "mindmap" : null);
-    await showNew(r);
-    await workspace.openVolume({ lib: r.lib, path: r.id });
+  /** Add a note, a mind map or a whiteboard (`kind`) below the node at `key`
+   * (`null`: at the top of the library `lib`), with a name of its own
+   * (`笔记 1`, …) that can be changed any time, and open it. */
+  async function createNote(lib, key, kind = "md") {
+    try {
+      const r = await api.createNoteAt(lib, key ? pathOf(lib, key) : "", null, kind);
+      onlibs?.(); // a first note makes its library
+      await tick();
+      await showNew(r);
+      await workspace.openVolume({ lib: r.lib, path: r.id });
+    } catch (e) {
+      if (lib) errors[lib] = String(e);
+      else onerror?.(String(e));
+    }
   }
 
   /** Show a new note in the tree (`select`: and select it). */
@@ -200,11 +204,23 @@
     }
   }
 
-  function addNoteHere() {
+  /** From the add menu: below the selected note, else in the library of the last one. */
+  function addNoteHere(kind) {
     const sel = selected && isNotes(selected.lib) ? selected : null;
-    const lib = sel?.lib ?? libraries.find((l) => l.kind === "notes")?.id;
-    if (!lib) return;
-    newNote(lib, null, sel?.key ?? null);
+    createNote(sel?.lib ?? null, sel?.key ?? null, kind);
+  }
+
+  /** Today's diary: shown in the tree and opened. */
+  export async function openDiary() {
+    try {
+      const r = await api.diaryToday(localDate());
+      onlibs?.();
+      await tick();
+      await showNew(r.note);
+      await workspace.openVolume({ lib: r.note.lib, path: r.note.id });
+    } catch (e) {
+      onerror?.(String(e));
+    }
   }
 
   function renameNote(lib, node, key) {
@@ -353,7 +369,10 @@
       items: [
         ...searchItems(l, node, key),
         "separator",
-        { label: "新建子笔记…", action: () => newNote(l.id, node, key) },
+        { label: "新建笔记", action: () => createNote(l.id, key, "md") },
+        { label: "新建脑图", action: () => createNote(l.id, key, "mindmap") },
+        { label: "新建白板", action: () => createNote(l.id, key, "whiteboard") },
+        "separator",
         { label: "重命名…", action: () => renameNote(l.id, node, key) },
         "separator",
         { label: "上移", action: () => shiftNote(l.id, node, key, -1), disabled: !canShift(l.id, node, key, -1) },
@@ -370,11 +389,11 @@
   }
   function addItems() {
     return [
-      {
-        label: "笔记…",
-        action: addNoteHere,
-        disabled: !libraries.some((l) => l.kind === "notes"), // only internal libraries are writable
-      },
+      { label: "新建笔记", action: () => addNoteHere("md") },
+      { label: "新建脑图", action: () => addNoteHere("mindmap") },
+      { label: "新建白板", action: () => addNoteHere("whiteboard") },
+      { label: "今日日记（Ctrl+J）", action: openDiary },
+      "separator",
       { label: "知识库…", action: onbind },
       "separator",
       { label: "导入知识库（导出包）…", action: () => onimport(null) },
@@ -447,6 +466,13 @@
     const ex = (expanded[lib] ??= {});
     if (ex[key]) delete ex[key];
     else {
+      // opening the current month of the diary makes sure that today's entry is there
+      if (libraries.find((l) => l.id === lib)?.title === monthPath().split("/")[0] && pathOf(lib, key) === monthPath()) {
+        try {
+          const r = await api.diaryToday(localDate());
+          await refresh(lib, key);
+        } catch {}
+      }
       await loadChildren(lib, nodeAt(lib, key));
       ex[key] = true;
     }
@@ -539,7 +565,13 @@
       y: e.clientY,
       items: [
         { label: open[l.id] ? "收起" : "展开", action: () => toggle(l) },
-        ...(l.kind === "notes" ? [{ label: "新建笔记…", action: () => newNote(l.id, null, null) }] : []),
+        ...(l.kind === "notes"
+          ? [
+              { label: "新建笔记", action: () => createNote(l.id, null, "md") },
+              { label: "新建脑图", action: () => createNote(l.id, null, "mindmap") },
+              { label: "新建白板", action: () => createNote(l.id, null, "whiteboard") },
+            ]
+          : []),
         { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: l.title, within: null }) },
         { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
         ...(l.kind === "notes" ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
@@ -608,10 +640,6 @@
     </div>
   {/each}
 </div>
-
-{#if noteDlg}
-  <NoteDialog {...noteDlg} onok={(pos, title, kind) => addNote(noteDlg.defaultLib, pos, title, kind)} onclose={() => (noteDlg = null)} />
-{/if}
 
 {#if nameDlg}
   <NameDialog {...nameDlg} onclose={() => (nameDlg = null)} />

@@ -353,7 +353,7 @@
       items.push({ label: "添加书签", action: act("bookmark") });
       items.push({ label: text ? "添加收藏…" : "添加收藏…（先选中文字）", action: act("clip"), disabled: !text });
       if (text) {
-        items.push("separator", { label: "加入笔记…", action: act("note") });
+        items.push("separator", { label: "加入笔记…", action: act("note") }, { label: "发送到今日记", action: act("diary") });
         const last = getLast();
         if (last) items.push({ label: `追加到最近的笔记：${clip(last.title, 12)}`, action: act("note-last") });
       }

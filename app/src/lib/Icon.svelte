@@ -32,6 +32,8 @@
     <circle cx="12" cy="12" r="8.5" /><path d="M12 7v5.5l3.5 2" />
   {:else if name === "mindmap"}
     <circle cx="12" cy="12" r="2.6" fill="currentColor" fill-opacity="0.25" /><circle cx="4.5" cy="6" r="1.8" /><circle cx="4.5" cy="18" r="1.8" /><circle cx="19.5" cy="7" r="1.8" /><circle cx="19.5" cy="17" r="1.8" /><path d="M9.5 11 6 7M9.5 13 6 17M14.5 11l3.5-3M14.5 13l3.5 3" />
+  {:else if name === "whiteboard"}
+    <rect x="3.5" y="4.5" width="17" height="12" rx="1.5" /><path d="M8 20l2-3.5M16 20l-2-3.5M7 13l3-3 2.5 2 3.5-4" />
   {:else if name === "gear"}
     <path d="M12 3.5l1.4 2.2 2.5-.7.9 2.4 2.5.7-.4 2.6L21 12l-1.9 1.3.4 2.6-2.5.7-.9 2.4-2.5-.7L12 20.5l-1.4-2.2-2.5.7-.9-2.4-2.5-.7.4-2.6L3 12l1.9-1.3-.4-2.6 2.5-.7.9-2.4 2.5.7z" /><circle cx="12" cy="12" r="3" />
   {:else if name === "message"}

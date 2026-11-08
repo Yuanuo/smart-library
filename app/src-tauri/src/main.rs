@@ -93,6 +93,7 @@ fn main() {
             commands::recent_clear,
             commands::note_targets,
             commands::create_note_at,
+            commands::diary_today,
             commands::rename_note,
             commands::save_note,
             commands::note_append,

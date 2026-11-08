@@ -11,6 +11,7 @@
   import { setLast } from "./clipTarget.js";
   import Reader from "./Reader.svelte";
   import MindMapView from "./MindMapView.svelte";
+  import WhiteboardView from "./WhiteboardView.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import Icon from "./Icon.svelte";
 
@@ -21,7 +22,7 @@
   let localTarget = $state(null);
   let localNonce = $state(0);
 
-  const isNote = (v) => v?.kind === "notes" && v.content_type !== "mindmap";
+  const isNote = (v) => v?.kind === "notes" && v.content_type !== "mindmap" && v.content_type !== "whiteboard";
 
   // ---- (re)load when the query of the tab changes; the path never changes
   let draft = $state(""); // the note's Markdown
@@ -200,6 +201,7 @@
       items.push(
         "separator",
         { label: "加入笔记…", action: act("note") },
+        { label: "发送到今日记", action: act("diary") },
         { label: "添加书签", action: act("bookmark") },
         { label: "添加收藏…", action: act("clip") },
       );
@@ -223,6 +225,10 @@
 {:else if vol && vol.content_type === "mindmap"}
   {#key vol}
     <MindMapView {vol} lib={p.lib} path={p.path} onjump={onopen} />
+  {/key}
+{:else if vol && vol.content_type === "whiteboard"}
+  {#key vol}
+    <WhiteboardView {vol} lib={p.lib} path={p.path} />
   {/key}
 {:else if vol && isNote(vol)}
   <!-- svelte-ignore a11y_no_static_element_interactions -->

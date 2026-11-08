@@ -24,6 +24,8 @@ pub struct NoteRef {
     pub has_children: bool,
     /// a mind map (see `mindmap.rs`), else a Markdown note
     pub mind: bool,
+    /// a whiteboard (see `whiteboard.rs`)
+    pub board: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -101,7 +103,14 @@ impl NotesStore {
             .map_err(err)?;
         let rows = st
             .query_map(params![parent], |r| {
-                Ok(NoteRef { id: r.get(0)?, title: r.get(1)?, has_children: r.get(2)?, mind: r.get::<_, String>(3)? == crate::mindmap::TYPE })
+                let kind: String = r.get(3)?;
+                Ok(NoteRef {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    has_children: r.get(2)?,
+                    mind: kind == crate::mindmap::TYPE,
+                    board: kind == crate::whiteboard::TYPE,
+                })
             })
             .map_err(err)?
             .collect::<Result<Vec<_>, _>>()
@@ -182,6 +191,9 @@ impl NotesStore {
         if note.content_type == crate::mindmap::TYPE {
             return Err("脑图不能追加文字，请用「加入脑图」".into());
         }
+        if note.content_type == crate::whiteboard::TYPE {
+            return Err("白板不能追加文字".into());
+        }
         let old = note.content.trim_end();
         let content = if old.is_empty() { format!("{}
 ", text.trim()) } else { format!("{}
@@ -235,6 +247,19 @@ impl NotesStore {
             c.execute("UPDATE notes SET position = ?1 WHERE id = ?2", params![pos as i64, i]).map_err(err)?;
         }
         Ok(())
+    }
+
+    /// A title for a new note below `parent`: `base 1`, `base 2`, … the first
+    /// one that no sibling has.
+    pub fn free_title(&self, parent: Option<i64>, base: &str) -> Result<String, String> {
+        let mut n = 1;
+        loop {
+            let t = format!("{} {}", base, n);
+            if self.find_child(parent, &t)?.is_none() {
+                return Ok(t);
+            }
+            n += 1;
+        }
     }
 
     /// The child of `parent` with this title (the first one).
@@ -362,7 +387,11 @@ pub fn docs(rows: &[NoteRow], library_title: &str) -> Vec<IndexDoc> {
     rows.iter()
         .map(|r| {
             let a = article(&r.content, None);
-            let text = if r.content_type == crate::mindmap::TYPE { crate::mindmap::text(&r.content) } else { a.text.text };
+            let text = match r.content_type.as_str() {
+                crate::mindmap::TYPE => crate::mindmap::text(&r.content),
+                crate::whiteboard::TYPE => crate::whiteboard::text(&r.content),
+                _ => a.text.text,
+            };
             let mut facets = Vec::new();
             let mut bulei = vec!["bulei".to_string()];
             bulei.extend(r.folders.iter().take(2).cloned());
@@ -453,5 +482,17 @@ mod tests {
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[1].book, "章");
         assert!(docs[1].text.contains("如是我闻"));
+    }
+
+    #[test]
+    fn free_titles_and_boards() {
+        let s = NotesStore::memory().unwrap();
+        assert_eq!(s.free_title(None, "笔记").unwrap(), "笔记 1");
+        s.create(None, "笔记 1", "").unwrap();
+        s.create(None, "笔记 3", "").unwrap();
+        assert_eq!(s.free_title(None, "笔记").unwrap(), "笔记 2");
+        let b = s.create_typed(None, "白板 1", &crate::whiteboard::new_data(), crate::whiteboard::TYPE).unwrap();
+        assert!(s.children(None).unwrap().iter().any(|n| n.board && n.id == b));
+        assert!(s.append(b, "x").is_err());
     }
 }

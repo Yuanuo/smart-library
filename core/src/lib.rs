@@ -18,6 +18,8 @@ pub mod folder;
 pub mod history;
 pub mod library;
 pub mod mindmap;
+pub mod whiteboard;
+pub mod diary;
 pub mod marks;
 pub mod markdown;
 pub mod markup;

@@ -604,3 +604,11 @@ app_data/
 - 阅读器的功能怎样带过来（`NoteEditor.svelte`）：搜索命中用 CSS 自定义高亮（`::highlight(sl-hit)`）标出并滚到第一处；行号 `¶n` 在编辑器里指第 n 个标题、段落或列表项，用来跳转和记录阅读位置（和 Rust 渲染器的段落号不完全一致，引文的多行 `>` 对不上，所以摘录来源链接优先用 `q` 的文字）；摘录的来源链接点一下就跳；选中文字的右键菜单有复制、四种检索、页内查找、加入笔记、书签、收藏。没有选中文字时是浏览器自己的菜单。
 - 笔记在别处被改（比如另一处摘录加入）：打开着的标签，摘录直接加进编辑器并保存；其他情况（改名、外部写入）标签重新读取。没有「只读」保护，误改靠编辑器的撤销（Ctrl+Z）。
 - 只读库（CBETA、HTML 文章、外部文件夹）仍用阅读器；外部文件不会被改。
+
+**新建入口、日记、白板（2026-11）**
+- 新建：去掉「新建笔记」对话框（`NoteDialog` 已删）。「＋」菜单、知识库右键、笔记节点右键都直接列出「新建笔记 / 新建脑图 / 新建白板」，点一下就建好并打开，名字自动取「笔记 n」「脑图 n」「白板 n」（n 取同级里没用过的最小数字，`NotesStore::free_title`），之后随时重命名。右键节点时建在该节点下面（菜单上不再写「子」，因为没有「同级」入口）；从「＋」建时放在目录树里选中的笔记下面，没有选中则放进第一个非日记的自建知识库；一个自建知识库都没有时自动建「我的笔记」。后端 `create_note_at(default_lib, position, title?, kind)`，`kind` 是 `md` / `mindmap` / `whiteboard`，`title` 可省。
+- 日记：自建知识库「我的日记」（`diary::LIBRARY`），第一次用到时自动建。日记就是普通 Markdown 笔记，位置按日期：`2026年` › `11月` › `2026-11-08`（`diary::path_of`）。日期由界面取本机本地日期传给后端（`diary_today(date)`），后端没有时钟。三种方式用到今天的日记：「＋」菜单「今日日记」或 Ctrl+J（`shortcuts.js` 的 `diary`；是窗口内快捷键，不是系统级全局快捷键）；展开目录树里当前月的节点时先确保今天这篇存在；阅读器和笔记编辑器选中文字的右键菜单「发送到今日记」，内容前加一行加粗的时间 `**HH:MM**`，再接摘录（和「加入笔记」同一种带来源链接的引文），今天的日记正在编辑时追加到编辑框里。
+- 白板：`content_type = whiteboard`，内容是 Excalidraw 的场景 JSON（`serializeAsJSON` 生成，图片作为 `files` 内嵌）。`WhiteboardView.svelte` 把 React 组件挂到普通元素里（`react`、`react-dom`、`@excalidraw/excalidraw` 0.18，第一次打开白板时才载入），只在图形真的变了时（元素 `id:version` 或图片集合变化；平移、选中不算）约 1 秒后自动保存，Ctrl+S 立即保存，关闭标签补存。字体不走 CDN：`vite.config.js` 的插件把包里的 `fonts` 目录开发时放在 `/excalidraw-assets/fonts/`，构建时复制到 `dist/`，`EXCALIDRAW_ASSET_PATH` 指向那里（离线可用，安装包大约增加 14 MB，需要时可以只留常用字体）。
+- 检索与导出：建索引时白板里所有文字元素按从上到下、从左到右连成文字（`whiteboard::text`）；导出包里和脑图一样两个文件，`docs/N.md` 是文字列表，`docs/N.wb.json` 是场景，manifest 节点用 `whiteboard` 字段指向它。白板不能追加 Markdown，也不出现在「加入笔记」的追加目标里。
+- 安装依赖时 `npm install` 会因为 `@mind-elixir/export-html` 的 peer 依赖写的是 mind-elixir 3.x 而报冲突（原有问题），要加 `--legacy-peer-deps`。
+

@@ -2,7 +2,8 @@
 //   Ctrl/Cmd+G or Shift twice  title quick search
 //   Ctrl/Cmd+H                 full-text search
 //   Ctrl/Cmd+E / B / ,         recent / collections and tags / settings
-// `fire(type)` is called with "quick", "search", "recent", "marks" or
+//   Ctrl/Cmd+J                 open today's diary
+// `fire(type)` is called with "quick", "search", "recent", "marks", "diary" or
 // "settings". Returns a function that removes the listeners.
 
 /** The text selected in a reader (not in an input), else "". */
@@ -18,7 +19,7 @@ export function readerSelection() {
 export function installShortcuts(fire) {
   let lastShift = 0;
   let shiftAlone = false;
-  const keys = { g: "quick", h: "search", e: "recent", b: "marks", ",": "settings" };
+  const keys = { g: "quick", h: "search", e: "recent", b: "marks", ",": "settings", j: "diary" };
 
   function down(e) {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {

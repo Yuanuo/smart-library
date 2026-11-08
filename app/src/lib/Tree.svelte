@@ -37,7 +37,7 @@
           <span class="gap"></span>
         {/if}
         <span class="kind" class:file={!hasChildren} class:seen={wasOpened(node)} class:dim={!node.book_id && !node.path && node.href}>
-          <Icon name={node.mind ? "mindmap" : hasChildren ? (open ? "folder-open" : "folder") : "file"} size={17} />
+          <Icon name={node.mind ? "mindmap" : node.board ? "whiteboard" : hasChildren ? (open ? "folder-open" : "folder") : "file"} size={17} />
         </span>
         {#if node.book_id || node.path}
           <button class="leaf" class:seen={wasOpened(node)} onclick={(e) => click(e, node, key, () => { onopen(node, key); if (hasChildren) ontoggle(key); })} title={node.title}>{node.title}</button>

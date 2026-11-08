@@ -8,6 +8,7 @@
 //!                      so special characters in titles cannot hurt)
 //! files/<path>         original files of a folder library (optional)
 //! docs/000002.mm.json  the data of a mind map (its .md file is the outline)
+//! docs/000003.wb.json  the scene of a whiteboard (its .md file lists the texts)
 //! ```
 //!
 //! The documents of read-only libraries (CBETA, HTML articles, folders) are
@@ -382,9 +383,10 @@ fn import_nodes(store: &NotesStore, pkg: &mut Package, parent: Option<i64>, node
             }
         }
         // a mind map comes with its data (the Markdown file is only its outline)
-        let id = match node["mindmap"].as_str() {
-            Some(f) => store.create_typed(parent, title, &pkg.read_text(f)?, crate::mindmap::TYPE)?,
-            None => store.create(parent, title, &content)?,
+        let id = match (node["mindmap"].as_str(), node["whiteboard"].as_str()) {
+            (Some(f), _) => store.create_typed(parent, title, &pkg.read_text(f)?, crate::mindmap::TYPE)?,
+            (_, Some(f)) => store.create_typed(parent, title, &pkg.read_text(f)?, crate::whiteboard::TYPE)?,
+            _ => store.create(parent, title, &content)?,
         };
         *n += 1;
         let children = node["children"].as_array().cloned().unwrap_or_default();

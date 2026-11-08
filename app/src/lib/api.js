@@ -12,7 +12,8 @@ export const folderChildren = (lib, rel) => invoke("folder_children", { lib, rel
 export const createNotesLibrary = (title) => invoke("create_notes_library", { title });
 export const createNote = (lib, parent, title) => invoke("create_note", { lib, parent, title });
 export const noteTargets = (query) => invoke("note_targets", { query });
-export const createNoteAt = (defaultLib, position, title, kind = null) => invoke("create_note_at", { defaultLib, position, title, kind });
+export const createNoteAt = (defaultLib, position, title = null, kind = null) => invoke("create_note_at", { defaultLib, position, title, kind });
+export const diaryToday = (date) => invoke("diary_today", { date });
 export const mindmapAddClip = (lib, id, topic, link, tag) => invoke("mindmap_add_clip", { lib, id, topic, link, tag });
 export const recentTouch = (lib, path, bookId, title) => invoke("recent_touch", { lib, path, bookId, title });
 export const recentProgress = (lib, path, lb, mode) => invoke("recent_progress", { lib, path, lb, mode });

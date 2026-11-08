@@ -13,6 +13,7 @@
   import MarksDialog from "./lib/MarksDialog.svelte";
   import AboutDialog from "./lib/AboutDialog.svelte";
   import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
+  import { localDate, localTime } from "./lib/diary.js";
   import { openPanelWindow } from "./lib/panels.js";
   import { fullPath } from "./lib/paths.js";
   import ClipDialog from "./lib/ClipDialog.svelte";
@@ -96,6 +97,7 @@
     else if (type === "recent") openRecent();
     else if (type === "marks") openMarks();
     else if (type === "settings") settingsBox = true;
+    else if (type === "diary") libPanel?.openDiary();
   }
 
   let quickQuery = $state(null); // text to start the quick search with
@@ -119,6 +121,8 @@
       runSearch(1, v.lib && a.type === "book" ? v.lib : null);
     } else if (a.type === "note") {
       clipDlg = { text: a.text, vol: v, lb: a.lb };
+    } else if (a.type === "diary") {
+      sendToDiary({ text: a.text, vol: v, lb: a.lb }).catch((e) => (error = String(e)));
     } else if (a.type === "note-last") {
       const t = getLast();
       if (!t) error = "还没有最近的笔记。";
@@ -182,6 +186,23 @@
   }
 
   // ---- clippings: selected text into a note
+  /** Add the selected text to today's diary (made when missing), after the time. */
+  async function sendToDiary(a) {
+    const r = await api.diaryToday(localDate());
+    st = r.status;
+    const md = `**${localTime()}**
+
+` + (await clipMarkdown({ text: a.text, vol: a.vol, lb: a.lb, comment: "" }));
+    const t = r.note;
+    if (!workspace.appendIfEditing(t.lib, t.id, md)) {
+      await api.noteAppend(t.lib, t.id, md);
+      workspace.refreshDocument(t.lib, t.id);
+    }
+    await libPanel?.showNew(t, false);
+    notice = `已发送到今日记：${localDate()}`;
+    api.prepareTitles().catch(() => {});
+  }
+
   let clipDlg = $state(null); // { text, vol, lb }
 
   /** Add a clipping (`a`: { text, vol, lb }) to a new or an existing note. */
@@ -665,7 +686,9 @@
             ontag={tagFromTree}
             oncopy={copyPath}
             onexport={(lib, sel, label, name) => (exportDlg = { lib, sel, label, name })}
-            onimport={importLibrary} />
+            onimport={importLibrary}
+            onlibs={async () => (st = await api.status())}
+            onerror={(e) => (error = e)} />
         {:else}
           <p class="muted">载入中…</p>
         {/if}
