@@ -1,6 +1,8 @@
 //! A small Markdown subset to the HTML whitelist of `article.rs`: headings,
 //! paragraphs, bullet and numbered lists, block quotes, fenced code,
-//! `**bold**`, `*italic*`. Anything else stays plain text. Not a full
+//! `**bold**`, `*italic*`, and a link to a place in a document,
+//! `[text](smartlib://open?lib=…&path=…&lb=…)` (how a clipping points back to
+//! its source). Anything else stays plain text. Not a full
 //! CommonMark implementation: notes are read through the paragraph view, so
 //! only the structure that view shows matters.
 
@@ -29,6 +31,36 @@ fn inline(s: &str) -> String {
         out
     }
     pair(&pair(s, "**", "b"), "*", "i").replace('\u{1}', "*")
+}
+
+/// `[text](smartlib://…)` of an already escaped line -> `<a data-src="…">text</a>`.
+/// Only that scheme is linked; `*` in the address is kept as `%2A` so that the
+/// bold / italic pass leaves it alone.
+fn links(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        if let Some(close) = after.find("](smartlib://") {
+            let text = &after[..close];
+            let url_at = close + 2;
+            if !text.contains('[') {
+                if let Some(end) = after[url_at..].find(')') {
+                    let url = &after[url_at..url_at + end];
+                    if !url.contains(['"', ' ', '<']) {
+                        out.push_str(&rest[..open]);
+                        out.push_str(&format!("<a data-src=\"{}\">{}</a>", url.replace('*', "%2A"), text));
+                        rest = &after[url_at + end + 1..];
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push_str(&rest[..=open]);
+        rest = &rest[open + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 pub fn to_html(md: &str) -> String {
@@ -78,8 +110,14 @@ pub fn to_html(md: &str) -> String {
             out.push_str(&format!("<li>{}</li>", inline(&esc(rest.trim()))));
         } else {
             close_list(&mut out, &mut list);
-            let body = t.strip_prefix('>').map(|r| r.trim()).unwrap_or(t);
-            out.push_str(&format!("<p>{}</p>", inline(&esc(body))));
+            if let Some(q) = t.strip_prefix('>') {
+                // a quoted line is a paragraph of its own; an empty one only separates
+                if !q.trim().is_empty() {
+                    out.push_str(&format!("<blockquote>{}</blockquote>", inline(&links(&esc(q.trim())))));
+                }
+            } else {
+                out.push_str(&format!("<p>{}</p>", inline(&links(&esc(t)))));
+            }
         }
     }
     close_list(&mut out, &mut list);
@@ -107,7 +145,18 @@ mod tests {
         assert!(h.contains("<p>正文 <b>粗</b> 和 <i>斜</i> 和 a&lt;b</p>"));
         assert!(h.contains("<ul><li>一</li><li>二</li></ul>"));
         assert!(h.contains("<ol><li>甲</li></ol>"));
-        assert!(h.contains("<p>引用</p>") && h.contains("<p>code</p>"));
+        assert!(h.contains("<blockquote>引用</blockquote>") && h.contains("<p>code</p>"));
+    }
+
+    #[test]
+    fn links_back_to_a_source() {
+        let h = to_html("> 引文
+>
+> —— [《经》 · 0001a05](smartlib://open?lib=cbeta&path=XML%2Fa.xml&q=a*b) 好");
+        assert!(h.contains("<blockquote>引文</blockquote>"), "{h}");
+        assert!(h.contains("<a data-src=\"smartlib://open?lib=cbeta&amp;path=XML%2Fa.xml&amp;q=a%2Ab\">《经》 · 0001a05</a> 好"), "{h}");
+        // other schemes are not linked
+        assert!(to_html("[x](http://a.b)").contains("[x](http://a.b)"));
     }
 
     #[test]

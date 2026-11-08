@@ -29,6 +29,8 @@ let hooks = {};
 let progress = {}; // tab -> { lb, mode, t }
 let popouts = {}; // tab -> { label, lib, bookId, path, title }
 let tooltips = {}; // tab -> tooltip of its tab (title, author, path)
+let states = {}; // tab -> the reactive state of its panel (for notes changed from outside)
+let appendSeq = 0;
 let infos = {}; // tab -> { title, lib, path, bookId, author } of its document
 let restoring = false;
 let saveTimer = null;
@@ -142,8 +144,12 @@ function readerRenderer() {
         quiet: prm.target == null && !prm.query,
         nonce: 0,
         mode: prm.mode || saved?.mode || defaultMode,
+        reload: 0, // +1: read the document again
+        editing: false, // a note is open in its editor
+        append: null, // { text }: a clipping for the editor
       });
       p = state;
+      states[panelApi.id] = state;
       instance = mount(ReaderPanel, {
         target: element,
         props: {
@@ -184,6 +190,7 @@ function readerRenderer() {
     },
     dispose() {
       if (panelApi) {
+        delete states[panelApi.id];
         delete tooltips[panelApi.id];
         delete infos[panelApi.id];
       }
@@ -427,6 +434,23 @@ export async function openVolume({ lib, bookId = null, path = null, lb = null, q
     title: id.title,
     params: { lib: id.lib, bookId: id.book_id, path: id.path, target: lb, query, phrase },
   });
+}
+
+/**
+ * Add text to a note that is being edited in a tab: it goes to the editor
+ * (saving the editor later must not lose it). False when it is not edited.
+ */
+export function appendIfEditing(lib, id, text) {
+  const st = states[`${lib}|${id}`];
+  if (!st?.editing) return false;
+  st.append = { text, n: ++appendSeq };
+  return true;
+}
+
+/** Read an open document again (a note changed outside its tab). */
+export function refreshDocument(lib, id) {
+  const st = states[`${lib}|${id}`];
+  if (st) st.reload += 1;
 }
 
 /** Close the tab of one document (a deleted note). */

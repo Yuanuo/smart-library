@@ -314,6 +314,14 @@ impl Walker {
                     }
                 }
             }
+            // a link back to a place of a document (a clipping's source)
+            "a" if el.attr("data-src").is_some_and(|s| s.starts_with("smartlib://")) => {
+                if let Some(h) = self.html.as_mut() {
+                    h.open("a", &[("class", "src"), ("data-src", el.attr("data-src").unwrap_or(""))]);
+                }
+                self.walk_children(el);
+                self.close("a");
+            }
             "sup" | "sub" => {
                 self.open(name, "");
                 self.walk_children(el);

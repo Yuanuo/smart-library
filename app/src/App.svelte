@@ -15,6 +15,9 @@
   import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
   import { openPanelWindow } from "./lib/panels.js";
   import { fullPath } from "./lib/paths.js";
+  import ClipDialog from "./lib/ClipDialog.svelte";
+  import { clipMarkdown } from "./lib/clip.js";
+  import { getLast, setLast } from "./lib/clipTarget.js";
   import { emit, listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -112,6 +115,14 @@
         rs.rangeLabel = "";
       }
       runSearch(1, v.lib && a.type === "book" ? v.lib : null);
+    } else if (a.type === "note") {
+      clipDlg = { text: a.text, vol: v, lb: a.lb };
+    } else if (a.type === "note-last") {
+      const t = getLast();
+      if (!t) error = "还没有最近的笔记。";
+      else doClip({ mode: "append", target: t, comment: "" }, { text: a.text, vol: v, lb: a.lb }).catch((e) => (error = String(e)));
+    } else if (a.type === "error") {
+      error = a.text;
     } else if (a.type === "quick") {
       quickScope = null;
       quickQuery = a.text;
@@ -139,6 +150,30 @@
       const tp = await libPanel?.treePath({ lib, bookId, path });
       copyPath(tp ?? [l?.title, title].filter(Boolean).join(" › "));
     } else copyPath(fullPath(l, path));
+  }
+
+  // ---- clippings: selected text into a note
+  let clipDlg = $state(null); // { text, vol, lb }
+
+  /** Add a clipping (`a`: { text, vol, lb }) to a new or an existing note. */
+  async function doClip(req, a) {
+    const md = await clipMarkdown({ text: a.text, vol: a.vol, lb: a.lb, comment: req.comment });
+    if (req.mode === "new") {
+      const r = await api.createNoteAt(null, req.where, req.title);
+      await api.saveNote(r.lib, r.id, md + "\n");
+      await libPanel?.showNew(r, false);
+      setLast({ lib: r.lib, id: r.id, title: req.title });
+      notice = `已加入新笔记：${req.title}`;
+    } else {
+      const t = req.target;
+      if (!workspace.appendIfEditing(t.lib, t.id, md)) {
+        await api.noteAppend(t.lib, t.id, md);
+        workspace.refreshDocument(t.lib, t.id);
+      }
+      setLast(t);
+      notice = `已追加到笔记：${t.title}`;
+    }
+    api.prepareTitles().catch(() => {});
   }
 
   // ---- bookmarks, collections and tags
@@ -652,6 +687,10 @@
       <p class="muted">还没有消息。</p>
     {/each}
   </div>
+{/if}
+
+{#if clipDlg}
+  <ClipDialog text={clipDlg.text} vol={clipDlg.vol} onok={(req) => doClip(req, clipDlg)} onclose={() => (clipDlg = null)} />
 {/if}
 
 {#if tagDlg}

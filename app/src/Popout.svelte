@@ -23,6 +23,9 @@
     target: start.lb,
     quiet: true,
     nonce: 0,
+    reload: 0,
+    editing: false,
+    append: null,
     mode: start.mode || "para",
   });
   let title = $state(start.title || start.path);

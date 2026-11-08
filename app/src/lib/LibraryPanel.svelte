@@ -91,6 +91,12 @@
   /** Add the note, show it in the tree and open it. */
   async function addNote(defaultLib, position, title) {
     const r = await api.createNoteAt(defaultLib, position, title);
+    await showNew(r);
+    await workspace.openVolume({ lib: r.lib, path: r.id });
+  }
+
+  /** Show a new note in the tree (`select`: and select it). */
+  export async function showNew(r, select = true) {
     // load the way down to the new note (every level on its chain)
     await refresh(r.lib, null);
     let key = "";
@@ -103,13 +109,12 @@
       list = nodeAt(r.lib, key).children;
     }
     const idx = list.findIndex((n) => n.rel === r.id);
-    if (idx >= 0) {
+    if (select && idx >= 0) {
       current = { lib: r.lib, key: `${key}/${idx}` };
       selected = current;
+      await tick();
+      panel?.querySelector(`[data-lib="${r.lib}"] [data-key="${current?.key}"]`)?.scrollIntoView({ block: "center" });
     }
-    await tick();
-    panel?.querySelector(`[data-lib="${r.lib}"] [data-key="${current?.key}"]`)?.scrollIntoView({ block: "center" });
-    await workspace.openVolume({ lib: r.lib, path: r.id });
   }
 
   function addNoteHere() {

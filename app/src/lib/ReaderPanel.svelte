@@ -2,7 +2,9 @@
   // The content of one reading tab: one document (a CBETA volume or an HTML
   // article; a tab is identified by `<library>|<path>`). `p` is a reactive object owned by the workspace, updated
   // when the same volume is opened again (new target / query).
+  import { untrack } from "svelte";
   import * as api from "./api.js";
+  import { setLast } from "./clipTarget.js";
   import Reader from "./Reader.svelte";
 
   let { p, onopen, onprogress, ontitle, onlocate = null, onaction = null } = $props();
@@ -23,6 +25,7 @@
   $effect(() => {
     const { lib, bookId, path, query, phrase } = p;
     const _r = reloads;
+    const _x = p.reload; // the note changed outside (a clipping was added)
     api
       .openNode(lib, bookId, path, query || null, !!phrase)
       .then((v) => {
@@ -49,12 +52,27 @@
   function startEdit(v = vol) {
     draft = v.raw ?? "";
     editing = true;
+    setLast({ lib: p.lib, id: v.path, title: v.title }); // the note clippings go to by default
   }
+
+  // the workspace asks whether this note is being edited, and passes a clipping to the editor
+  $effect(() => {
+    p.editing = editing;
+  });
+  $effect(() => {
+    const a = p.append;
+    if (!a) return;
+    untrack(() => {
+      if (editing) draft = draft.replace(/\s+$/, "") + "\n\n" + a.text.trim() + "\n";
+    });
+    p.append = null;
+  });
 
   async function saveEdit() {
     saving = true;
     try {
       await api.saveNote(p.lib, p.path, draft);
+      if (vol) setLast({ lib: p.lib, id: p.path, title: vol.title });
       editing = false;
       reloads += 1;
     } catch (e) {
@@ -116,6 +134,7 @@
     onchapter={chapter}
     {onlocate}
     {onaction}
+    onjump={onopen}
     onprogress={(lb) => onprogress(lb, p.mode)} />
 {:else}
   <p class="loading muted">载入中…</p>

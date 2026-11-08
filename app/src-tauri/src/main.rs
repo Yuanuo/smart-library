@@ -95,6 +95,7 @@ fn main() {
             commands::create_note_at,
             commands::rename_note,
             commands::save_note,
+            commands::note_append,
             commands::delete_note,
             commands::move_note,
             commands::bind_libraries,

@@ -763,6 +763,12 @@ pub async fn save_note(lib: String, id: String, content: String, state: State<'_
     notes_of(&state, &lib)?.update(note_id(&id)?, None, Some(&content))
 }
 
+/// Add text at the end of a note.
+#[tauri::command]
+pub async fn note_append(lib: String, id: String, text: String, state: State<'_, AppState>) -> Result<(), String> {
+    notes_of(&state, &lib)?.append(note_id(&id)?, &text)
+}
+
 /// Delete a note and everything below it; returns the number removed.
 #[tauri::command]
 pub async fn delete_note(lib: String, id: String, state: State<'_, AppState>) -> Result<usize, String> {

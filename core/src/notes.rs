@@ -168,6 +168,18 @@ impl NotesStore {
         Ok(())
     }
 
+    /// Add text at the end of a note, after a blank line.
+    pub fn append(&self, id: i64, text: &str) -> Result<(), String> {
+        let note = self.get(id)?.ok_or("笔记不存在")?;
+        let old = note.content.trim_end();
+        let content = if old.is_empty() { format!("{}
+", text.trim()) } else { format!("{}
+
+{}
+", old, text.trim()) };
+        self.update(id, None, Some(&content))
+    }
+
     /// Delete a note with everything below it; the number of notes removed.
     pub fn delete(&self, id: i64) -> Result<usize, String> {
         let c = self.conn.lock().unwrap();
@@ -375,6 +387,14 @@ mod tests {
         assert_eq!(top.iter().map(|n| n.title.as_str()).collect::<Vec<_>>(), ["甲", "乙"]);
         assert!(top[0].has_children && !top[1].has_children);
 
+        s.append(a2, "> 引文").unwrap();
+        s.append(a2, "> 又一段
+").unwrap();
+        assert_eq!(s.get(a2).unwrap().unwrap().content, "> 引文
+
+> 又一段
+");
+        assert!(s.append(9999, "x").is_err());
         s.update(a1, Some("甲·一"), Some("如是我闻，一时")).unwrap();
         assert_eq!(s.get(a1).unwrap().unwrap().title, "甲·一");
         assert_eq!(s.folders_of(a1).unwrap(), vec!["甲"]);

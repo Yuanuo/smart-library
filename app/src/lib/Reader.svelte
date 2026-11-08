@@ -34,6 +34,8 @@
   import Icon from "./Icon.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import * as api from "./api.js";
+  import { getLast } from "./clipTarget.js";
+  import { parseSource } from "./clip.js";
 
   let {
     vol,
@@ -48,6 +50,8 @@
     extra = null,
     // actions that need the main window (search, marks): `onaction({ type, text, lb, vol })`
     onaction = null,
+    // open a place of a document (the source link of a clipping): `{ lib, bookId, path, lb, query, phrase }`
+    onjump = null,
   } = $props();
   let scroller = $state();
 
@@ -348,8 +352,23 @@
     if (onaction) {
       items.push({ label: "添加书签", action: act("bookmark") });
       items.push({ label: text ? "添加收藏…" : "添加收藏…（先选中文字）", action: act("clip"), disabled: !text });
+      if (text) {
+        items.push("separator", { label: "加入笔记…", action: act("note") });
+        const last = getLast();
+        if (last) items.push({ label: `追加到最近的笔记：${clip(last.title, 12)}`, action: act("note-last") });
+      }
     }
     if (items.length) menu = { x: e.clientX, y: e.clientY, items };
+  }
+
+  /** A click on the source link of a clipping goes to the place it came from. */
+  function docClick(e) {
+    const a = e.target.closest?.("a.src");
+    if (!a) return;
+    e.preventDefault();
+    const to = parseSource(a.dataset.src);
+    if (!to || !onjump) return;
+    Promise.resolve(onjump(to)).catch((err) => onaction?.({ type: "error", text: String(err) }));
   }
 
   function chapterChange(e) {
@@ -402,7 +421,7 @@
       </div>
     </header>
     <!-- svelte-ignore a11y_mouse_events_have_key_events -->
-    <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))} oncontextmenu={readerMenu}
+    <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))} oncontextmenu={readerMenu} onclick={docClick}
       onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para"}
         <article class="doc notes-{noteMode}" class:show-lb={showLb}>{@html vol.html}</article>
@@ -501,6 +520,8 @@
   .doc :global(.byline) { margin: 0.2em 0 0.2em 6em; color: var(--muted); }
   .doc :global(.docnumber) { margin: 0; font-size: 0.75em; color: var(--muted); }
   .doc :global(p.p) { margin: 0.35em 0; }
+  .doc :global(p.quote) { margin: 0.2em 0; padding: 0.1em 0 0.1em 14px; border-left: 3px solid var(--accent-soft); color: var(--muted); }
+  .doc :global(a.src) { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
   .doc :global(p.r-text-right) { text-align: right; }
   .doc :global(p.t-pre) { white-space: pre; line-height: 1.5; overflow-x: auto; font-size: 0.9em; }
   .doc :global(p.t-dharani) { color: var(--ink); }
