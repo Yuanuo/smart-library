@@ -653,6 +653,27 @@ pub async fn create_notes_library(title: String, state: State<'_, AppState>) -> 
     Ok(status_of(&state))
 }
 
+/// Show a library under another name. Only the registry changes: a bound
+/// source (a data package, a folder) is not touched.
+#[tauri::command]
+pub async fn rename_library(id: String, title: String, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("请填写知识库名称".into());
+    }
+    {
+        let mut libs = state.libraries.write().unwrap();
+        if libs.iter().any(|l| l.id != id && l.title == title) {
+            return Err("已经有同名的知识库".into());
+        }
+        let l = libs.iter_mut().find(|l| l.id == id).ok_or("找不到这个知识库")?;
+        l.title = title;
+    }
+    state.titles.write().unwrap().remove(&id);
+    state.save_registry()?;
+    Ok(status_of(&state))
+}
+
 /// A place where a note can be added: a library's top or one of its notes.
 #[derive(Serialize)]
 pub struct NoteTargetDto {

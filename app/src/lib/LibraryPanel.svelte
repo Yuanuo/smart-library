@@ -89,10 +89,10 @@
       items: [
         { label: `已选 ${list.length} 项`, action: () => {}, disabled: true },
         "separator",
+        { label: "复制目录树路径", action: () => oncopy(list.map(({ key }) => titleChain(l, key).join(" › ")).join("\n")) },
+        "separator",
         { label: "从所选节点搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label, within: withinMany(l, list) }) },
         { label: "从所选节点搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinMany(l, list) }) },
-        "separator",
-        { label: "复制目录树路径", action: () => oncopy(list.map(({ key }) => titleChain(l, key).join(" › ")).join("\n")) },
         "separator",
         {
           label: "导出所选…",
@@ -335,52 +335,51 @@
     }
   }
 
-  const searchItems = (l, node, key) => [
-    ...(node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node) }, "separator"] : []),
-    { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
-    { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
-    "separator",
-    ...(l.kind === "notes" ? [] : [{ label: "复制原文件路径", action: () => oncopy(filePath(l, node)) }]),
-    { label: "复制目录树路径", action: () => oncopy(titleChain(l, key).join(" › ")) },
-    "separator",
-    ...(l.kind === "notes" ? [{ label: "导入到这里（作为子节点）…", action: () => onimport({ lib: l.id, parent: node.rel, key }) }] : []),
-    { label: "导出此节点…", action: () => onexport(l, { whole: false, keys: [key], rels: node.rel ? [node.rel] : [] }, node.title, node.title) },
-  ];
+  /** Menu sections (lists of items) joined by separators; empty ones are left out. */
+  const sections = (...groups) => groups.filter((g) => g.length).flatMap((g, i) => (i ? ["separator", ...g] : g));
 
-  /** Context menu of a node: search from here; notes can also be edited. */
-  function nodeMenu(e, l, node, key) {
-    if (multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return multiMenu(e, l);
-    }
-    if (l.kind === "notes") return noteMenu(e, l, node, key);
-    e.preventDefault();
-    e.stopPropagation();
-    menu = { x: e.clientX, y: e.clientY, items: searchItems(l, node, key) };
+  /** Items of a node's menu, grouped: new, edit, copy, search, tags, import / export. */
+  function nodeItems(l, node, key) {
+    const notes = l.kind === "notes";
+    const label = `${l.title} › ${node.title}`;
+    return sections(
+      notes
+        ? [
+            { label: "新建笔记", action: () => createNote(l.id, key, "md") },
+            { label: "新建脑图", action: () => createNote(l.id, key, "mindmap") },
+            { label: "新建白板", action: () => createNote(l.id, key, "whiteboard") },
+          ]
+        : [],
+      notes
+        ? [
+            { label: "重命名…（F2）", action: () => renameNote(l.id, node, key) },
+            { label: "上移", action: () => shiftNote(l.id, node, key, -1), disabled: !canShift(l.id, node, key, -1) },
+            { label: "下移", action: () => shiftNote(l.id, node, key, 1), disabled: !canShift(l.id, node, key, 1) },
+            { label: "删除…", action: () => deleteNote(l.id, node, key) },
+          ]
+        : [],
+      [
+        ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(filePath(l, node)) }]),
+        { label: "复制目录树路径", action: () => oncopy(titleChain(l, key).join(" › ")) },
+      ],
+      [
+        { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label, within: withinOf(l, node) }) },
+        { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinOf(l, node) }) },
+      ],
+      node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node) }] : [],
+      [
+        ...(notes ? [{ label: "导入到这里（作为子节点）…", action: () => onimport({ lib: l.id, parent: node.rel, key }) }] : []),
+        { label: "导出此节点…", action: () => onexport(l, { whole: false, keys: [key], rels: node.rel ? [node.rel] : [] }, node.title, node.title) },
+      ],
+    );
   }
 
-  function noteMenu(e, l, node, key) {
+  /** Context menu of a node. */
+  function nodeMenu(e, l, node, key) {
     e.preventDefault();
     e.stopPropagation();
-    menu = {
-      x: e.clientX,
-      y: e.clientY,
-      items: [
-        ...searchItems(l, node, key),
-        "separator",
-        { label: "新建笔记", action: () => createNote(l.id, key, "md") },
-        { label: "新建脑图", action: () => createNote(l.id, key, "mindmap") },
-        { label: "新建白板", action: () => createNote(l.id, key, "whiteboard") },
-        "separator",
-        { label: "重命名…", action: () => renameNote(l.id, node, key) },
-        "separator",
-        { label: "上移", action: () => shiftNote(l.id, node, key, -1), disabled: !canShift(l.id, node, key, -1) },
-        { label: "下移", action: () => shiftNote(l.id, node, key, 1), disabled: !canShift(l.id, node, key, 1) },
-        "separator",
-        { label: "删除…", action: () => deleteNote(l.id, node, key) },
-      ],
-    };
+    if (multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key)) return multiMenu(e, l);
+    openMenu({ x: e.clientX, y: e.clientY, items: nodeItems(l, node, key) }, { lib: l.id, key });
   }
 
   /** Menu of the add button: files (internal libraries only), libraries. */
@@ -394,8 +393,7 @@
       { label: "新建白板", action: () => addNoteHere("whiteboard") },
       { label: "今日日记（Ctrl+J）", action: openDiary },
       "separator",
-      { label: "知识库…", action: onbind },
-      "separator",
+      { label: "新建知识库…", action: onbind },
       { label: "导入知识库（导出包）…", action: () => onimport(null) },
     ];
   }
@@ -405,6 +403,16 @@
   let loading = $state({});
   let errors = $state({});
   let menu = $state(null); // { x, y, items }
+  let menuMark = $state(null); // { lib, key }: the node (key null: the library) whose menu is open
+  const openMenu = (m, mark = null) => ((menuMark = mark), (menu = m));
+
+  /** Index path key of the node showing the document of the active reading tab (if it is loaded). */
+  const activeKey = $derived.by(() => {
+    const c = workspace.ws.current;
+    if (!c || !nodes[c.lib]) return null;
+    const trail = findNode(nodes[c.lib], { bookId: c.bookId, path: c.path });
+    return trail ? { lib: c.lib, key: "/" + trail.join("/") } : null;
+  });
   let expanded = $state({}); // lib id -> { node key -> true }
   let current = $state(null); // { lib, key }: the node revealed last
   let panel = $state();
@@ -560,32 +568,71 @@
     e.preventDefault();
     e.stopPropagation();
     const building = l.building || !!progress[l.id];
+    const notes = l.kind === "notes";
+    menuMark = { lib: l.id, key: null };
     menu = {
       x: e.clientX,
       y: e.clientY,
-      items: [
-        { label: open[l.id] ? "收起" : "展开", action: () => toggle(l) },
-        ...(l.kind === "notes"
+      items: sections(
+        [{ label: open[l.id] ? "收起" : "展开", action: () => toggle(l) }],
+        notes
           ? [
               { label: "新建笔记", action: () => createNote(l.id, null, "md") },
               { label: "新建脑图", action: () => createNote(l.id, null, "mindmap") },
               { label: "新建白板", action: () => createNote(l.id, null, "whiteboard") },
             ]
-          : []),
-        { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: l.title, within: null }) },
-        { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
-        ...(l.kind === "notes" ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
-        { label: "复制目录树路径", action: () => oncopy(l.title) },
-        "separator",
-        ...(l.kind === "notes" ? [{ label: "导入到此知识库…", action: () => onimport({ lib: l.id, parent: null, key: null }) }] : []),
-        { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title, l.title) },
-        "separator",
-        { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
-        ...(l.kind === "folder" ? [] : [{ label: "从同一数据包绑定其他知识库…", action: () => onrebind(l) }]),
-        "separator",
-        { label: l.kind === "notes" ? "删除知识库…" : "解除绑定", action: () => onunbind(l), disabled: building },
-      ],
+          : [],
+        [{ label: "重命名…（F2）", action: () => renameLibrary(l) }],
+        [
+          ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
+          { label: "复制目录树路径", action: () => oncopy(l.title) },
+        ],
+        [
+          { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: l.title, within: null }) },
+          { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
+          { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
+        ],
+        [
+          ...(notes ? [{ label: "导入到此知识库…", action: () => onimport({ lib: l.id, parent: null, key: null }) }] : []),
+          { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title, l.title) },
+          ...(l.kind === "folder" ? [] : [{ label: "绑定知识库…", action: () => onrebind(l) }]),
+          { label: notes ? "删除知识库…" : "解除绑定", action: () => onunbind(l), disabled: building },
+        ],
+      ),
     };
+  }
+
+  /** Another name for a library; a bound one is only shown under it, its data stays as it is. */
+  function renameLibrary(l) {
+    nameDlg = {
+      title: "重命名知识库",
+      label: "名称",
+      value: l.title,
+      okLabel: "确定",
+      onok: guard(l.id, async (title) => {
+        await api.renameLibrary(l.id, title);
+        await onlibs?.();
+      }),
+    };
+  }
+
+  /** F2 renames what has the focus in the tree (a library, or a note), else the last note opened from the tree. */
+  function f2(e) {
+    if (e.key !== "F2" || e.ctrlKey || e.altKey || e.shiftKey || nameDlg) return;
+    const t = e.target;
+    if (t?.closest?.("input, textarea, select, [contenteditable], .ProseMirror, .excalidraw")) return;
+    const lib = libraries.find((x) => x.id === t?.closest?.("[data-lib]")?.dataset.lib);
+    const key = t?.closest?.("[data-key]")?.dataset.key;
+    if (lib && !key) {
+      e.preventDefault();
+      return renameLibrary(lib);
+    }
+    const at = lib && key ? { lib: lib.id, key } : selected && isNotes(selected.lib) ? selected : null;
+    const node = at ? nodeAt(at.lib, at.key) : null;
+    if (node && isNotes(at.lib)) {
+      e.preventDefault();
+      renameNote(at.lib, node, at.key);
+    }
   }
 
   function panelMenu(e) {
@@ -594,11 +641,13 @@
   }
 </script>
 
+<svelte:window onkeydown={f2} />
+
 <div class="panel" bind:this={panel} role="tree" aria-label="知识库" oncontextmenu={panelMenu}>
   {#each libraries as l (l.id)}
     {@const b = badge(l)}
     <div class="lib" data-lib={l.id}>
-      <div class="root" role="treeitem" aria-expanded={!!open[l.id]} aria-selected="false" tabindex="0"
+      <div class="root" class:marked={menuMark?.lib === l.id && menuMark.key === null} role="treeitem" aria-expanded={!!open[l.id]} aria-selected="false" tabindex="0"
         oncontextmenu={(e) => libMenu(e, l)}
         onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggle(l))}>
         <button class="twisty" onclick={() => toggle(l)} tabindex="-1" aria-hidden="true">
@@ -619,6 +668,8 @@
             depth={1}
             expanded={expanded[l.id] ?? {}}
             current={current?.lib === l.id ? current.key : null}
+            active={activeKey?.lib === l.id ? activeKey.key : null}
+            marked={menuMark?.lib === l.id ? menuMark.key : null}
             seen={seen[l.id] ?? null}
             picked={multi.lib === l.id ? multi.keys : null}
             onselect={(node, key, e) => pickNode(l, node, key, e)}
@@ -646,7 +697,7 @@
 {/if}
 
 {#if menu}
-  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
+  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => ((menu = null), (menuMark = null))} />
 {/if}
 
 <style>
@@ -656,6 +707,7 @@
     display: flex; align-items: center; gap: 2px; min-height: 30px; border-radius: 6px; padding-right: 2px;
   }
   .root:hover, .root:focus-visible { background: var(--accent-soft); outline: none; }
+  .root.marked { background: color-mix(in srgb, var(--accent) 14%, transparent); }
   .twisty {
     width: 22px; height: 22px; flex: none; border: none; background: none; padding: 0; color: var(--muted);
     display: inline-flex; align-items: center; justify-content: center; border-radius: 4px;

@@ -6,7 +6,7 @@
   import Tree from "./Tree.svelte";
   import Icon from "./Icon.svelte";
 
-  let { nodes, onopen, ontoggle, oncontext = null, expanded, depth = 0, prefix = "", current = null, seen = null, picked = null, onselect = null, onclear = null } = $props();
+  let { nodes, onopen, ontoggle, oncontext = null, expanded, depth = 0, prefix = "", current = null, active = null, marked = null, seen = null, picked = null, onselect = null, onclear = null } = $props();
   const wasOpened = (n) => !!seen && ((n.book_id && seen.books.has(n.book_id)) || (n.path && seen.paths.has(n.path)));
 
   /** Ctrl / Shift + click picks nodes (several can be picked); a plain click opens. */
@@ -27,7 +27,7 @@
     {@const hasChildren = node.children.length > 0 || !!node.lazy}
     {@const open = !!expanded[key]}
     <li>
-      <div class="row" class:current={current === key} class:picked={picked?.has(key)} data-key={key} style="padding-left: {depth * 14 + 4}px"
+      <div class="row" class:current={current === key} class:active={active === key} class:marked={marked === key} class:picked={picked?.has(key)} data-key={key} style="padding-left: {depth * 14 + 4}px"
         role="presentation" oncontextmenu={(e) => oncontext?.(node, key, e)}>
         {#if hasChildren}
           <button class="twisty" onclick={() => ontoggle(key)} aria-label={open ? "收起" : "展开"}>
@@ -48,7 +48,7 @@
         {/if}
       </div>
       {#if hasChildren && open}
-        <Tree nodes={node.children} {onopen} {ontoggle} {oncontext} {expanded} depth={depth + 1} prefix={key} {current} {seen} {picked} {onselect} {onclear} />
+        <Tree nodes={node.children} {onopen} {ontoggle} {oncontext} {expanded} depth={depth + 1} prefix={key} {current} {active} {marked} {seen} {picked} {onselect} {onclear} />
       {/if}
     </li>
   {/each}
@@ -66,6 +66,9 @@
   .kind.seen { color: var(--note); }
   .leaf.seen { color: var(--note); }
   .row.current { background: var(--accent-soft); }
+  .row.marked { background: color-mix(in srgb, var(--accent) 14%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: -1px; }
+  .row.active { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-soft); }
+  .row.active .leaf, .row.active .folder { color: var(--accent); font-weight: 700; }
   .row.picked { background: color-mix(in srgb, var(--accent) 24%, transparent); }
   .row.current .leaf, .row.current .folder { color: var(--accent); font-weight: 700; }
   .gap { width: 22px; height: 22px; flex: none; }
