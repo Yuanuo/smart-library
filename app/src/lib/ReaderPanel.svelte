@@ -224,17 +224,17 @@
   <p class="error">{error}</p>
 {:else if vol && vol.content_type === "mindmap"}
   {#key vol}
-    <MindMapView {vol} lib={p.lib} path={p.path} onjump={onopen} />
+    <MindMapView {vol} title={p.retitled ?? vol.title} lib={p.lib} path={p.path} onjump={onopen} />
   {/key}
 {:else if vol && vol.content_type === "whiteboard"}
   {#key vol}
-    <WhiteboardView {vol} lib={p.lib} path={p.path} />
+    <WhiteboardView {vol} title={p.retitled ?? vol.title} lib={p.lib} path={p.path} />
   {/key}
 {:else if vol && isNote(vol)}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="editor" onkeydown={noteKey}>
     <div class="bar">
-      <strong>{vol.title}</strong>
+      <strong>{p.retitled ?? vol.title}</strong>
       <span class="muted status">{status}</span>
       <span class="grow"></span>
       <div class="seg" role="group" aria-label="编辑方式">

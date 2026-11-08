@@ -6,7 +6,7 @@
   import { onMount, onDestroy, untrack } from "svelte";
   import * as api from "./api.js";
 
-  let { vol, lib, path } = $props();
+  let { vol, title = vol.title, lib, path } = $props();
 
   let el = $state();
   let error = $state("");
@@ -168,7 +168,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="board" onkeydown={key}>
   <div class="bar">
-    <strong>{vol.title}</strong>
+    <strong>{title}</strong>
     <span class="muted status">{status}</span>
     {#if error}<span class="error">{error}</span>{/if}
   </div>

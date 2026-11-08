@@ -8,7 +8,7 @@
   import { parseSource } from "./clip.js";
   import ContextMenu from "./ContextMenu.svelte";
 
-  let { vol, lib, path, onjump = null } = $props();
+  let { vol, title = vol.title, lib, path, onjump = null } = $props();
 
   let el = $state();
   let mind = null;
@@ -221,7 +221,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="mm" onkeydown={key}>
   <div class="bar">
-    <strong>{vol.title}</strong>
+    <strong>{title}</strong>
     <span class="muted">脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多</span>
     <span class="grow"></span>
     <span class="muted">{status}</span>

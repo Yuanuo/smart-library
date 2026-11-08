@@ -464,6 +464,8 @@ export function closeDocument(lib, path) {
 /** Show a new title on the tab of a document (a renamed note). */
 export function retitle(lib, path, title) {
   dv?.getPanel(`${lib}|${path}`)?.api.setTitle(title);
+  const st = states[`${lib}|${path}`];
+  if (st) st.retitled = title; // the title in the tab's own tool bar
 }
 
 /** Close every tab and pop-out window of a library (after unbinding it). */
