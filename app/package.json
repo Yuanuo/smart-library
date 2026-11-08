@@ -16,9 +16,15 @@
   },
   "dependencies": {
     "@milkdown/crepe": "^7.23.0",
+    "@mind-elixir/export-html": "^3.0.0",
+    "@mind-elixir/export-xmind": "^2.0.1",
+    "@mind-elixir/node-menu": "^5.0.1",
+    "@mind-elixir/node-menu-neo": "^1.0.4",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "dockview-core": "^8.8.3",
+    "file-saver": "^2.0.5",
+    "jszip": "^3.10.2",
     "mind-elixir": "^6.0.0"
   }
 }

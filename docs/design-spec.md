@@ -593,3 +593,8 @@ app_data/
 - 摘录：「加入笔记」对话框里选脑图，选中的文字成为根节点下的新节点：文字作为话题（最多 160 字），`hyperLink` 是来源地址，标签是来源说明（`mindmap_add_clip`，已打开的脑图标签随后重新读取）。给脑图追加 Markdown 文字（`note_append`）会报错。
 - 检索：建索引时脑图的所有话题连成文字进索引（`mindmap::text`）；脑图没有段落号，结果里不显示行。
 - 导出：脑图在包里有两个文件：`docs/N.md` 是缩进列表形式的大纲（别的软件也能读），`docs/N.mm.json` 是脑图数据，manifest 节点用 `mindmap` 字段指向它；导入时按它还原成脑图笔记。
+
+**脑图插件（2026-11）**
+- `@mind-elixir/node-menu`（5.x，与 mind-elixir 6 兼容）：选中节点右侧的样式面板（字号、粗体、文字和背景颜色、标签、图标、链接、备注）；`mind.locale = "zh_CN"` 后是中文（「Memo」仍是英文）。
+- `@mind-elixir/node-menu-neo` 没有装：它是按 mind-elixir 3.x 写的（监听旧事件 `selectNode`），在 6.x 里点节点没有任何面板。「插入图片」自己做：右键菜单「插入图片…」或在脑图里粘贴图片，图片存成笔记附件，节点的 `image.url` 是 `attach:<名>`，由 `imageProxy` 换成附件地址；导出包按 `attach:` 带上图片（`attach::refs` 在任何文本里找）。
+- `@mind-elixir/export-html`、`@mind-elixir/export-xmind`：用它们的 `data2Html`、`data2Xmind`（peer 依赖写的是 2.x/3.x，实测对 6.x 的数据可用）。脑图工具栏「导出 ▾」：网页（HTML，图片转成内嵌数据；生成的网页还要从 CDN 载入 MindElixirLite，所以打开它需要网络）、XMind、Markdown 大纲。文件由后端 `save_bytes` 写到保存对话框选的路径（WebView 自带的下载不可靠）。

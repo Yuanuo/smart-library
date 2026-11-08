@@ -96,6 +96,8 @@ fn main() {
             commands::rename_note,
             commands::save_note,
             commands::note_append,
+            commands::save_bytes,
+            commands::note_picture,
             commands::mindmap_add_clip,
             commands::note_attach,
             commands::export_library,

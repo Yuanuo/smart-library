@@ -72,13 +72,14 @@ pub fn path_of(dir: &Path, name: &str) -> Option<PathBuf> {
     is_name(name).then(|| dir.join(name))
 }
 
-/// The pictures a Markdown text refers to (`attach:<name>`), once each.
-pub fn refs(md: &str) -> Vec<String> {
+/// The pictures a text refers to (`attach:<name>`: in Markdown `![](attach:…)`,
+/// in a mind map the `url` of a node's image), once each.
+pub fn refs(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    let mut rest = md;
-    while let Some(at) = rest.find("(attach:") {
-        let after = &rest[at + 8..];
-        let end = after.find(')').unwrap_or(after.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("attach:") {
+        let after = &rest[at + 7..];
+        let end = after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '.')).unwrap_or(after.len());
         let name = &after[..end];
         if is_name(name) && !out.iter().any(|n| n == name) {
             out.push(name.to_string());
@@ -105,7 +106,8 @@ mod tests {
         assert!(path_of(&dir, "../x.png").is_none());
         assert!(store(&dir, &[1], "text/html").is_err());
         let md = format!("![](attach:{}) 和 ![x](attach:{}) 和 ![](attach:{})", a, c, a);
-        assert_eq!(refs(&md), vec![a, c]);
+        assert_eq!(refs(&md), vec![a.clone(), c.clone()]);
+        assert_eq!(refs(&format!("{{\"image\":{{\"url\":\"attach:{}\"}}}}", c)), vec![c]);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

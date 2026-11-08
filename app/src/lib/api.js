@@ -37,6 +37,10 @@ export const importPackage = (path, lib = null, parent = null) => invoke("import
 export const renameNote = (lib, id, title) => invoke("rename_note", { lib, id, title });
 /** Keep a picture (an ArrayBuffer) for the notes of a library; resolves to its name. */
 export const noteAttach = (lib, bytes, mime) => invoke("note_attach", bytes, { headers: { lib, mime } });
+/** Write bytes (a Uint8Array) to a file the user chose. */
+export const saveBytes = (path, bytes) => invoke("save_bytes", bytes, { headers: { path: encodeURIComponent(path) } });
+/** The bytes (an ArrayBuffer) of a picture of a library's notes. */
+export const notePicture = (lib, name) => invoke("note_picture", { lib, name });
 export const noteAppend = (lib, id, text) => invoke("note_append", { lib, id, text });
 export const saveNote = (lib, id, content) => invoke("save_note", { lib, id, content });
 export const deleteNote = (lib, id) => invoke("delete_note", { lib, id });

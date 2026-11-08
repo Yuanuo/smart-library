@@ -797,6 +797,28 @@ pub async fn note_attach(request: tauri::ipc::Request<'_>, state: State<'_, AppS
     smart_library_core::attach::store(&state.attachments_dir(&l.id), data, &header("mime"))
 }
 
+/// Write bytes to a file the user chose (the request body is the content,
+/// the header `path` the percent-encoded path).
+#[tauri::command]
+pub async fn save_bytes(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
+        return Err("没有内容".into());
+    };
+    let path = percent_decode(request.headers().get("path").and_then(|v| v.to_str().ok()).unwrap_or(""));
+    if path.is_empty() {
+        return Err("没有文件路径".into());
+    }
+    std::fs::write(&path, data).map_err(|e| format!("{}: {}", path, e))
+}
+
+/// The bytes of a picture kept for the notes of a library.
+#[tauri::command]
+pub async fn note_picture(lib: String, name: String, state: State<'_, AppState>) -> Result<tauri::ipc::Response, String> {
+    let l = state.library(&lib)?;
+    let file = smart_library_core::attach::path_of(&state.attachments_dir(&l.id), &name).ok_or("图片名不对")?;
+    Ok(tauri::ipc::Response::new(std::fs::read(file).map_err(|e| e.to_string())?))
+}
+
 /// Add a clipping to a mind map: a new child of its root (`link`: the place
 /// it comes from, `tag`: what it is from).
 #[tauri::command]
