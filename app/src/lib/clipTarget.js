@@ -14,6 +14,6 @@ export function getLast() {
 
 export function setLast(t) {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ lib: t.lib, id: String(t.id), title: t.title }));
+    localStorage.setItem(KEY, JSON.stringify({ lib: t.lib, id: String(t.id), title: t.title, mind: !!t.mind }));
   } catch {}
 }

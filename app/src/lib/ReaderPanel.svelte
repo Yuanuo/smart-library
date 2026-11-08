@@ -6,6 +6,7 @@
   import * as api from "./api.js";
   import { setLast } from "./clipTarget.js";
   import Reader from "./Reader.svelte";
+  import MindMapView from "./MindMapView.svelte";
 
   let { p, onopen, onprogress, ontitle, onlocate = null, onaction = null } = $props();
 
@@ -32,7 +33,7 @@
         vol = v;
         error = "";
         // a new, empty note opens in the editor
-        if (v.kind === "notes" && !v.raw && seen !== p.lib + "|" + v.path) startEdit(v);
+        if (v.kind === "notes" && v.content_type !== "mindmap" && !v.raw && seen !== p.lib + "|" + v.path) startEdit(v);
         seen = p.lib + "|" + v.path;
         // the tab shows the title; its tooltip also the id, author and path
         const t = v.label ? `${v.title} ${v.label}` : v.title;
@@ -159,6 +160,10 @@
 
 {#if error}
   <p class="error">{error}</p>
+{:else if vol && vol.content_type === "mindmap"}
+  {#key vol}
+    <MindMapView {vol} lib={p.lib} path={p.path} onjump={onopen} />
+  {/key}
 {:else if vol && editing}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="editor" onkeydown={editorKey}>

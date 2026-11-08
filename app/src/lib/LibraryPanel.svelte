@@ -172,8 +172,8 @@
   }
 
   /** Add the note, show it in the tree and open it. */
-  async function addNote(defaultLib, position, title) {
-    const r = await api.createNoteAt(defaultLib, position, title);
+  async function addNote(defaultLib, position, title, kind = "md") {
+    const r = await api.createNoteAt(defaultLib, position, title, kind === "mindmap" ? "mindmap" : null);
     await showNew(r);
     await workspace.openVolume({ lib: r.lib, path: r.id });
   }
@@ -610,7 +610,7 @@
 </div>
 
 {#if noteDlg}
-  <NoteDialog {...noteDlg} onok={(pos, title) => addNote(noteDlg.defaultLib, pos, title)} onclose={() => (noteDlg = null)} />
+  <NoteDialog {...noteDlg} onok={(pos, title, kind) => addNote(noteDlg.defaultLib, pos, title, kind)} onclose={() => (noteDlg = null)} />
 {/if}
 
 {#if nameDlg}

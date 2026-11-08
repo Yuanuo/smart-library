@@ -18,7 +18,7 @@
   import ClipDialog from "./lib/ClipDialog.svelte";
   import ExportDialog from "./lib/ExportDialog.svelte";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
-  import { clipMarkdown } from "./lib/clip.js";
+  import { clipMarkdown, clipNode } from "./lib/clip.js";
   import { getLast, setLast } from "./lib/clipTarget.js";
   import { emit, listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -186,6 +186,16 @@
 
   /** Add a clipping (`a`: { text, vol, lb }) to a new or an existing note. */
   async function doClip(req, a) {
+    if (req.mode === "append" && req.target.mind) {
+      // a mind map: the text becomes a node under its root, linked to the source
+      const t = req.target;
+      const n = await clipNode({ text: a.text, vol: a.vol, lb: a.lb });
+      await api.mindmapAddClip(t.lib, t.id, n.topic, n.link, n.tag);
+      workspace.refreshDocument(t.lib, t.id);
+      setLast(t);
+      notice = `已加入脑图：${t.title}`;
+      return;
+    }
     const md = await clipMarkdown({ text: a.text, vol: a.vol, lb: a.lb, comment: req.comment });
     if (req.mode === "new") {
       const r = await api.createNoteAt(null, req.where, req.title);

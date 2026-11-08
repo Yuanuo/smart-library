@@ -17,6 +17,7 @@ pub mod exchange;
 pub mod folder;
 pub mod history;
 pub mod library;
+pub mod mindmap;
 pub mod marks;
 pub mod markdown;
 pub mod markup;

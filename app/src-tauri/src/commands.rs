@@ -655,6 +655,8 @@ pub struct NoteTargetDto {
     id: String,
     /// `library / folder / note`, as typed in the add dialog
     path: String,
+    /// the note is a mind map
+    mind: bool,
 }
 
 /// Internal-library places matching what the user types (every word must
@@ -674,7 +676,7 @@ pub async fn note_targets(query: String, state: State<'_, AppState>) -> Result<V
             words.iter().all(|w| p.contains(w.as_str()))
         };
         if hit(&l.title) {
-            out.push(NoteTargetDto { lib: l.id.clone(), id: String::new(), path: l.title.clone() });
+            out.push(NoteTargetDto { lib: l.id.clone(), id: String::new(), path: l.title.clone(), mind: false });
         }
         for r in state.notes(&l)?.rows()? {
             let mut parts = vec![l.title.clone()];
@@ -682,7 +684,7 @@ pub async fn note_targets(query: String, state: State<'_, AppState>) -> Result<V
             parts.push(r.title.clone());
             let path = parts.join("/");
             if hit(&path) {
-                out.push(NoteTargetDto { lib: l.id.clone(), id: r.id.to_string(), path });
+                out.push(NoteTargetDto { lib: l.id.clone(), id: r.id.to_string(), path, mind: r.content_type == smart_library_core::mindmap::TYPE });
             }
             if out.len() >= 30 {
                 return Ok(out);
@@ -707,6 +709,7 @@ pub async fn create_note_at(
     default_lib: Option<String>,
     position: String,
     title: String,
+    kind: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<NewNoteDto, String> {
     let libs: Vec<Library> = state.libraries.read().unwrap().iter().filter(|l| l.kind == "notes").cloned().collect();
@@ -732,7 +735,11 @@ pub async fn create_note_at(
         return Err("标题不能为空".into());
     }
     let parent = store.ensure_path(&parts)?;
-    let id = store.create(parent, title, "")?;
+    let id = if kind.as_deref() == Some("mindmap") {
+        store.create_typed(parent, title, &smart_library_core::mindmap::new_data(title), smart_library_core::mindmap::TYPE)?
+    } else {
+        store.create(parent, title, "")?
+    };
     Ok(NewNoteDto {
         lib: lib.id,
         chain: store.chain(id)?.iter().map(|i| i.to_string()).collect(),
@@ -790,6 +797,20 @@ pub async fn note_attach(request: tauri::ipc::Request<'_>, state: State<'_, AppS
     smart_library_core::attach::store(&state.attachments_dir(&l.id), data, &header("mime"))
 }
 
+/// Add a clipping to a mind map: a new child of its root (`link`: the place
+/// it comes from, `tag`: what it is from).
+#[tauri::command]
+pub async fn mindmap_add_clip(lib: String, id: String, topic: String, link: String, tag: String, state: State<'_, AppState>) -> Result<(), String> {
+    let store = notes_of(&state, &lib)?;
+    let id = note_id(&id)?;
+    let note = store.get(id)?.ok_or("笔记不存在")?;
+    if note.content_type != smart_library_core::mindmap::TYPE {
+        return Err("这篇笔记不是脑图".into());
+    }
+    let data = smart_library_core::mindmap::add_clip(&note.content, &topic, &link, &tag)?;
+    store.update(id, None, Some(&data))
+}
+
 /// Add text at the end of a note.
 #[tauri::command]
 pub async fn note_append(lib: String, id: String, text: String, state: State<'_, AppState>) -> Result<(), String> {
@@ -834,6 +855,8 @@ pub struct NodeDto {
     rel: Option<String>,
     /// folder libraries: a folder whose children are not loaded yet
     lazy: bool,
+    /// an internal library's mind map
+    mind: bool,
     children: Vec<NodeDto>,
 }
 
@@ -847,6 +870,7 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
             href: None,
             rel: None,
             lazy: false,
+            mind: false,
             children: children.iter().map(|c| node_dto(bc, html, c)).collect(),
         },
         NavNode::Leaf { href, text, children, .. } => {
@@ -861,6 +885,7 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
                     href: Some(href.clone()),
                     rel: None,
                     lazy: false,
+                    mind: false,
                     children,
                 };
             }
@@ -877,6 +902,7 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
                 href: Some(href.clone()),
                 rel: None,
                 lazy: false,
+                mind: false,
                 children,
             }
         }
@@ -894,6 +920,7 @@ fn note_nodes(n: &NotesStore, parent: Option<i64>) -> Result<Vec<NodeDto>, Strin
             href: None,
             rel: Some(r.id.to_string()),
             lazy: r.has_children,
+            mind: r.mind,
             children: Vec::new(),
         })
         .collect())
@@ -914,6 +941,7 @@ fn folder_nodes(f: &FolderLibrary, rel: &str) -> Result<Vec<NodeDto>, String> {
             href: None,
             rel: Some(e.rel),
             lazy: e.is_dir,
+            mind: false,
             children: Vec::new(),
         })
         .collect())
@@ -1007,6 +1035,8 @@ pub struct ReaderDto {
     first_hit_lb: Option<String>,
     /// internal libraries: the Markdown source, for editing
     raw: Option<String>,
+    /// `mindmap` for a mind map note, else empty
+    content_type: String,
 }
 
 fn flatten_chapters(items: &[TocItem], depth: usize, out: &mut Vec<ChapterDto>) {
@@ -1083,6 +1113,27 @@ pub async fn open_node(
         let path = path.ok_or("没有指定笔记")?;
         let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
         let note = store.get(id)?.ok_or("笔记不存在")?;
+        if note.content_type == smart_library_core::mindmap::TYPE {
+            // a mind map: the reader shows it with the map component
+            return Ok(ReaderDto {
+                lib: l.id.clone(),
+                kind: l.kind.clone(),
+                book_id: None,
+                title: note.title.clone(),
+                author: store.folders_of(id)?.join(" / "),
+                path: path.clone(),
+                juan: 0,
+                label: String::new(),
+                volumes: Vec::new(),
+                chapters: Vec::new(),
+                lines: Vec::new(),
+                html: String::new(),
+                hits: 0,
+                first_hit_lb: None,
+                raw: Some(note.content),
+                content_type: "mindmap".into(),
+            });
+        }
         let plain = notes::article(&note.content, None);
         let (ranges, hits, first_hit_lb) = hits_of(&plain.text, query.as_deref(), phrase);
         let a = notes::article(&note.content, Some(&RenderOptions { highlights: ranges.clone(), asset_prefix }));
@@ -1116,6 +1167,7 @@ pub async fn open_node(
             hits,
             first_hit_lb,
             raw: Some(note.content),
+            content_type: String::new(),
         });
     }
     if l.kind == "folder" {
@@ -1162,6 +1214,7 @@ pub async fn open_node(
             hits,
             first_hit_lb,
             raw: None,
+            content_type: String::new(),
         });
     }
     let bc = state.bookcase_of(&l)?;
@@ -1212,6 +1265,7 @@ pub async fn open_node(
             hits,
             first_hit_lb,
             raw: None,
+            content_type: String::new(),
         });
     }
 
@@ -1257,6 +1311,7 @@ pub async fn open_node(
         hits,
         first_hit_lb,
         raw: None,
+        content_type: String::new(),
     })
 }
 
@@ -2361,7 +2416,15 @@ impl Exporter<'_> {
         if let Some(id) = p.note {
             let store = self.state.notes(&self.lib)?;
             let n = store.get(id)?.ok_or("笔记不存在")?;
-            let file = self.doc(&p.title, &n.content, "")?;
+            let file = if n.content_type == smart_library_core::mindmap::TYPE {
+                // the Markdown file is the outline; the map itself is kept apart
+                let file = self.doc(&p.title, &smart_library_core::mindmap::to_markdown(&n.content), "")?;
+                let data = self.w.add_data(&n.content, "mm.json")?;
+                m.insert("mindmap".into(), json!(data));
+                file
+            } else {
+                self.doc(&p.title, &n.content, "")?
+            };
             m.insert("file".into(), json!(file));
             // the pictures the note shows
             for name in smart_library_core::attach::refs(&n.content) {

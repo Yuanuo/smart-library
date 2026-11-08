@@ -33,6 +33,30 @@ export function parseSource(url) {
   }
 }
 
+/** Where a clipping comes from: the label of its source and the place in it. */
+async function describe(vol, lb) {
+  let where = lb || "";
+  try {
+    // CBETA: the citation (T15, no. 614, p. 269c29); others: the library and the line
+    const c = await api.citeText(vol.lib, vol.path, vol.book_id, lb, vol.title);
+    const m = c.match(/^\((.*)\)$/);
+    if (m) where = m[1];
+  } catch {}
+  const title = vol.label ? `${vol.title} ${vol.label}` : vol.title;
+  return { title, where, label: `《${title}》${vol.author ? " " + vol.author : ""}${where ? " · " + where : ""}` };
+}
+
+/** A clipping as a node of a mind map: its text, the link to the source, a tag. */
+export async function clipNode({ text, vol, lb }) {
+  const d = await describe(vol, lb);
+  const flat = text.replace(/\s+/g, " ").trim();
+  return {
+    topic: flat.length > 160 ? flat.slice(0, 160) + "…" : flat,
+    link: sourceUrl({ lib: vol.lib, book: vol.book_id, path: vol.path, lb, quote: text }),
+    tag: d.label,
+  };
+}
+
 /** The Markdown to add to a note. `vol` is the document read, `lb` the line the text starts at. */
 export async function clipMarkdown({ text, vol, lb, comment = "" }) {
   const quote = text

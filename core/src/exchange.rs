@@ -7,6 +7,7 @@
 //! docs/000001.md       one Markdown file per document (names are numbers,
 //!                      so special characters in titles cannot hurt)
 //! files/<path>         original files of a folder library (optional)
+//! docs/000002.mm.json  the data of a mind map (its .md file is the outline)
 //! ```
 //!
 //! The documents of read-only libraries (CBETA, HTML articles, folders) are
@@ -255,6 +256,15 @@ impl PackageWriter {
         self.zip.write_all(bytes).map_err(zerr)
     }
 
+    /// Add data that is not Markdown (`ext` like `mm.json`); returns its name.
+    pub fn add_data(&mut self, content: &str, ext: &str) -> Result<String, String> {
+        self.docs += 1;
+        let name = format!("docs/{:06}.{}", self.docs, ext);
+        self.zip.start_file(&name, Self::options()).map_err(zerr)?;
+        self.zip.write_all(content.as_bytes()).map_err(zerr)?;
+        Ok(name)
+    }
+
     pub fn finish(mut self, manifest: &Value) -> Result<(), String> {
         self.zip.start_file("manifest.json", Self::options()).map_err(zerr)?;
         let text = serde_json::to_string_pretty(manifest).map_err(zerr)?;
@@ -371,7 +381,11 @@ fn import_nodes(store: &NotesStore, pkg: &mut Package, parent: Option<i64>, node
                 content = rest.trim_start().to_string();
             }
         }
-        let id = store.create(parent, title, &content)?;
+        // a mind map comes with its data (the Markdown file is only its outline)
+        let id = match node["mindmap"].as_str() {
+            Some(f) => store.create_typed(parent, title, &pkg.read_text(f)?, crate::mindmap::TYPE)?,
+            None => store.create(parent, title, &content)?,
+        };
         *n += 1;
         let children = node["children"].as_array().cloned().unwrap_or_default();
         import_nodes(store, pkg, Some(id), &children, n)?;

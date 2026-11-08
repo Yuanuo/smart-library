@@ -45,7 +45,7 @@
   function pick(h) {
     skip = true;
     if (mode === "append") {
-      target = { lib: h.lib, id: h.id, title: h.path.split("/").pop() };
+      target = { lib: h.lib, id: h.id, title: h.path.split("/").pop(), mind: !!h.mind };
       find = h.path;
     } else where = h.path;
     hints = [];
@@ -113,14 +113,14 @@
             <ul class="hints" role="listbox">
               {#each hints as h, i}
                 <li role="option" aria-selected={i === hi}>
-                  <button type="button" class:on={i === hi} onmousedown={(e) => (e.preventDefault(), pick(h))}>{h.path}</button>
+                  <button type="button" class:on={i === hi} onmousedown={(e) => (e.preventDefault(), pick(h))}>{h.path}{h.mind ? "（脑图）" : ""}</button>
                 </li>
               {/each}
             </ul>
           {/if}
         </div>
       </label>
-      <p class="hint muted">{target ? `将追加到「${target.title}」的末尾。` : "从下拉列表里选一篇笔记。"}（正在编辑的笔记会追加到编辑框里。）</p>
+      <p class="hint muted">{target?.mind ? `将作为新节点加入脑图「${target.title}」，带来源链接。` : target ? `将追加到「${target.title}」的末尾。` : "从下拉列表里选一篇笔记。"}（正在编辑的笔记会追加到编辑框里。）</p>
     {:else}
       <label>位置
         <div class="where">

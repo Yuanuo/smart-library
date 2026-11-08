@@ -30,6 +30,8 @@
     <path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7a1 1 0 0 1 .7.3l7.6 7.6a1 1 0 0 1 0 1.4l-7.7 7.7a1 1 0 0 1-1.4 0l-7.6-7.6a1 1 0 0 1-.3-.7z" /><circle cx="8.3" cy="8.3" r="1.4" fill="currentColor" />
   {:else if name === "clock"}
     <circle cx="12" cy="12" r="8.5" /><path d="M12 7v5.5l3.5 2" />
+  {:else if name === "mindmap"}
+    <circle cx="12" cy="12" r="2.6" fill="currentColor" fill-opacity="0.25" /><circle cx="4.5" cy="6" r="1.8" /><circle cx="4.5" cy="18" r="1.8" /><circle cx="19.5" cy="7" r="1.8" /><circle cx="19.5" cy="17" r="1.8" /><path d="M9.5 11 6 7M9.5 13 6 17M14.5 11l3.5-3M14.5 13l3.5 3" />
   {:else if name === "gear"}
     <path d="M12 3.5l1.4 2.2 2.5-.7.9 2.4 2.5.7-.4 2.6L21 12l-1.9 1.3.4 2.6-2.5.7-.9 2.4-2.5-.7L12 20.5l-1.4-2.2-2.5.7-.9-2.4-2.5-.7.4-2.6L3 12l1.9-1.3-.4-2.6 2.5-.7.9-2.4 2.5.7z" /><circle cx="12" cy="12" r="3" />
   {:else if name === "message"}

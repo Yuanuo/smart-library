@@ -7,6 +7,7 @@
   let { position = "", defaultLib = null, onok, onclose } = $props();
   let where = $state(position);
   let title = $state("");
+  let kind = $state("md"); // md | mindmap
   let titleInput = $state();
   let whereInput = $state();
   let hints = $state([]);
@@ -65,7 +66,7 @@
     busy = true;
     error = "";
     try {
-      await onok(where, title.trim());
+      await onok(where, title.trim(), kind);
       onclose();
     } catch (err) {
       error = String(err);
@@ -95,6 +96,10 @@
     </label>
     <p class="hint muted">用 / 分隔层级。不存在的层级会在点「创建」时一起建好。</p>
     <label>标题<input type="text" bind:value={title} bind:this={titleInput} /></label>
+    <div class="kinds" role="group" aria-label="类型">
+      <label class="radio"><input type="radio" bind:group={kind} value="md" /> 文档笔记</label>
+      <label class="radio"><input type="radio" bind:group={kind} value="mindmap" /> 脑图</label>
+    </div>
     {#if error}<p class="error">{error}</p>{/if}
     <div class="actions">
       <button type="button" onclick={onclose}>取消</button>
@@ -127,6 +132,8 @@
   }
   .hints button:hover, .hints button.on { background: var(--accent-soft); }
   .hint { margin: 4px 0 0; font-size: 12px; }
+  .kinds { display: flex; gap: 18px; margin-top: 10px; }
+  .radio { flex-direction: row; align-items: center; gap: 6px; margin: 0; }
   .error { color: var(--hl); font-size: 13px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 </style>

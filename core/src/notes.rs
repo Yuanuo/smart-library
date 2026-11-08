@@ -22,6 +22,8 @@ pub struct NoteRef {
     pub id: i64,
     pub title: String,
     pub has_children: bool,
+    /// a mind map (see `mindmap.rs`), else a Markdown note
+    pub mind: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +43,7 @@ pub struct NoteRow {
     pub id: i64,
     pub title: String,
     pub content: String,
+    pub content_type: String,
     pub folders: Vec<String>,
 }
 
@@ -92,13 +95,13 @@ impl NotesStore {
         let c = self.conn.lock().unwrap();
         let mut st = c
             .prepare(
-                "SELECT id, title, EXISTS(SELECT 1 FROM notes k WHERE k.parent_id = n.id)
+                "SELECT id, title, EXISTS(SELECT 1 FROM notes k WHERE k.parent_id = n.id), content_type
                  FROM notes n WHERE parent_id IS ?1 ORDER BY position, id",
             )
             .map_err(err)?;
         let rows = st
             .query_map(params![parent], |r| {
-                Ok(NoteRef { id: r.get(0)?, title: r.get(1)?, has_children: r.get(2)? })
+                Ok(NoteRef { id: r.get(0)?, title: r.get(1)?, has_children: r.get(2)?, mind: r.get::<_, String>(3)? == crate::mindmap::TYPE })
             })
             .map_err(err)?
             .collect::<Result<Vec<_>, _>>()
@@ -129,6 +132,11 @@ impl NotesStore {
 
     /// Add a note as the last child of `parent`.
     pub fn create(&self, parent: Option<i64>, title: &str, content: &str) -> Result<i64, String> {
+        self.create_typed(parent, title, content, "md")
+    }
+
+    /// [`NotesStore::create`] with a content type (`md` or `mindmap`).
+    pub fn create_typed(&self, parent: Option<i64>, title: &str, content: &str, content_type: &str) -> Result<i64, String> {
         let title = title.trim();
         if title.is_empty() {
             return Err("标题不能为空".into());
@@ -147,8 +155,8 @@ impl NotesStore {
             .map_err(err)?;
         let t = now();
         c.execute(
-            "INSERT INTO notes (parent_id, title, content, position, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-            params![parent, title, content, pos, t],
+            "INSERT INTO notes (parent_id, title, content, content_type, position, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![parent, title, content, content_type, pos, t],
         )
         .map_err(err)?;
         Ok(c.last_insert_rowid())
@@ -171,6 +179,9 @@ impl NotesStore {
     /// Add text at the end of a note, after a blank line.
     pub fn append(&self, id: i64, text: &str) -> Result<(), String> {
         let note = self.get(id)?.ok_or("笔记不存在")?;
+        if note.content_type == crate::mindmap::TYPE {
+            return Err("脑图不能追加文字，请用「加入脑图」".into());
+        }
         let old = note.content.trim_end();
         let content = if old.is_empty() { format!("{}
 ", text.trim()) } else { format!("{}
@@ -297,23 +308,23 @@ impl NotesStore {
     pub fn rows(&self) -> Result<Vec<NoteRow>, String> {
         let c = self.conn.lock().unwrap();
         let mut st = c
-            .prepare("SELECT id, parent_id, title, content FROM notes ORDER BY position, id")
+            .prepare("SELECT id, parent_id, title, content, content_type FROM notes ORDER BY position, id")
             .map_err(err)?;
-        let all: Vec<(i64, Option<i64>, String, String)> = st
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        let all: Vec<(i64, Option<i64>, String, String, String)> = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
             .map_err(err)?
             .collect::<Result<_, _>>()
             .map_err(err)?;
-        let info: HashMap<i64, (Option<i64>, &str)> = all.iter().map(|(i, p, t, _)| (*i, (*p, t.as_str()))).collect();
+        let info: HashMap<i64, (Option<i64>, &str)> = all.iter().map(|(i, p, t, _, _)| (*i, (*p, t.as_str()))).collect();
         let mut children: HashMap<Option<i64>, Vec<usize>> = HashMap::new();
-        for (n, (_, p, _, _)) in all.iter().enumerate() {
+        for (n, (_, p, _, _, _)) in all.iter().enumerate() {
             children.entry(*p).or_default().push(n);
         }
         // depth-first, so that notes come out in tree order
         let mut out = Vec::with_capacity(all.len());
         let mut stack: Vec<usize> = children.get(&None).map(|v| v.iter().rev().copied().collect()).unwrap_or_default();
         while let Some(n) = stack.pop() {
-            let (id, _, title, content) = &all[n];
+            let (id, _, title, content, content_type) = &all[n];
             let mut folders = Vec::new();
             let mut cur = info[id].0;
             while let Some(p) = cur {
@@ -322,7 +333,7 @@ impl NotesStore {
                 cur = up;
             }
             folders.reverse();
-            out.push(NoteRow { id: *id, title: title.clone(), content: content.clone(), folders });
+            out.push(NoteRow { id: *id, title: title.clone(), content: content.clone(), content_type: content_type.clone(), folders });
             if let Some(k) = children.get(&Some(*id)) {
                 stack.extend(k.iter().rev());
             }
@@ -351,6 +362,7 @@ pub fn docs(rows: &[NoteRow], library_title: &str) -> Vec<IndexDoc> {
     rows.iter()
         .map(|r| {
             let a = article(&r.content, None);
+            let text = if r.content_type == crate::mindmap::TYPE { crate::mindmap::text(&r.content) } else { a.text.text };
             let mut facets = Vec::new();
             let mut bulei = vec!["bulei".to_string()];
             bulei.extend(r.folders.iter().take(2).cloned());
@@ -364,7 +376,7 @@ pub fn docs(rows: &[NoteRow], library_title: &str) -> Vec<IndexDoc> {
                 book,
                 juan: 0,
                 title: r.title.clone(),
-                text: a.text.text,
+                text,
                 facets,
             }
         })
