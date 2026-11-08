@@ -2,7 +2,7 @@
   // The content of one reading tab: one document (a CBETA volume or an HTML
   // article; a tab is identified by `<library>|<path>`). `p` is a reactive object owned by the workspace, updated
   // when the same volume is opened again (new target / query).
-  import { untrack } from "svelte";
+  import { untrack, tick } from "svelte";
   import * as api from "./api.js";
   import { setLast } from "./clipTarget.js";
   import Reader from "./Reader.svelte";
@@ -86,6 +86,39 @@
     editing = false;
   }
 
+  /** Pictures pasted or dropped into the editor are kept and shown as `![](attach:…)`. */
+  let editorEl = $state();
+  async function addPictures(files) {
+    for (const f of files) {
+      try {
+        const name = await api.noteAttach(p.lib, await f.arrayBuffer(), f.type);
+        const at = editorEl?.selectionStart ?? draft.length;
+        const end = editorEl?.selectionEnd ?? at;
+        const text = `![](attach:${name})\n`;
+        draft = draft.slice(0, at) + text + draft.slice(end);
+        await tick();
+        editorEl?.setSelectionRange(at + text.length, at + text.length);
+      } catch (e) {
+        error = String(e);
+      }
+    }
+  }
+  const pictures = (dt) => [...(dt?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+  function editorPaste(e) {
+    const files = pictures(e.clipboardData);
+    if (files.length) {
+      e.preventDefault();
+      addPictures(files);
+    }
+  }
+  function editorDrop(e) {
+    const files = pictures(e.dataTransfer);
+    if (files.length) {
+      e.preventDefault();
+      addPictures(files);
+    }
+  }
+
   function editorKey(e) {
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
@@ -116,8 +149,8 @@
       <button class="primary" disabled={saving} onclick={saveEdit}>保存</button>
     </div>
     <!-- svelte-ignore a11y_autofocus -->
-    <textarea bind:value={draft} onkeydown={editorKey} autofocus spellcheck="false"
-      placeholder="# 标题&#10;正文……（支持 # 标题、- 列表、**粗体**、*斜体*）"></textarea>
+    <textarea bind:value={draft} bind:this={editorEl} onkeydown={editorKey} onpaste={editorPaste} ondrop={editorDrop} ondragover={(e) => e.preventDefault()} autofocus spellcheck="false"
+      placeholder="# 标题&#10;正文……（支持 # 标题、- 列表、**粗体**、*斜体*；可以直接粘贴或拖入图片）"></textarea>
   </div>
 {:else if vol}
   {#snippet editButton()}

@@ -112,9 +112,35 @@ fn unesc(s: &str) -> String {
     s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 }
 
-/// One line of text: footnotes, links, bold and italic.
+/// `![alt](attach:name)` of an already escaped line -> `<img src="attach:name">`
+/// (only names made by `attach::store`).
+fn images(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(at) = rest.find("![") {
+        let after = &rest[at + 2..];
+        if let Some(close) = after.find("](attach:") {
+            let name_at = close + 9;
+            if let Some(end) = after[name_at..].find(')') {
+                let name = &after[name_at..name_at + end];
+                if crate::attach::is_name(name) && !after[..close].contains('[') {
+                    out.push_str(&rest[..at]);
+                    out.push_str(&format!("<img src=\"attach:{}\">", name));
+                    rest = &after[name_at + end + 1..];
+                    continue;
+                }
+            }
+        }
+        out.push_str(&rest[..at + 2]);
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// One line of text: images, footnotes, links, bold and italic.
 fn line(s: &str, defs: &Defs) -> String {
-    inline(&links(&refs(&esc(s), defs)))
+    inline(&links(&refs(&images(&esc(s)), defs)))
 }
 
 pub fn to_html(md: &str) -> String {
@@ -204,6 +230,14 @@ mod tests {
         assert!(h.contains("<ul><li>一</li><li>二</li></ul>"));
         assert!(h.contains("<ol><li>甲</li></ol>"));
         assert!(h.contains("<blockquote>引用</blockquote>") && h.contains("<p>code</p>"));
+    }
+
+    #[test]
+    fn pasted_pictures_become_images() {
+        let n = "0123456789abcdef0123456789abcdef.png";
+        let h = to_html(&format!("见图\n![截图](attach:{})\n![x](attach:../a.png)", n));
+        assert!(h.contains(&format!("<p><img src=\"attach:{}\"></p>", n)), "{h}");
+        assert!(h.contains("![x](attach:../a.png)"), "{h}");
     }
 
     #[test]

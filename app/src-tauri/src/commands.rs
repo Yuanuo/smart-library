@@ -167,6 +167,11 @@ impl AppState {
         Ok(t)
     }
 
+    /// Where the pictures pasted into the notes of a library are kept.
+    pub fn attachments_dir(&self, lib: &str) -> PathBuf {
+        self.data_dir.join("repos").join(lib).join("attachments")
+    }
+
     fn index_dir(&self, id: &str) -> PathBuf {
         self.data_dir.join("repos").join(id).join("index")
     }
@@ -277,6 +282,12 @@ pub fn asset(state: &AppState, url_path: &str) -> Option<(Vec<u8>, &'static str)
     let decoded = percent_decode(url_path);
     let (lib, path) = decoded.split_once('/')?;
     let lib = state.library(lib).ok()?;
+    if lib.kind == "notes" {
+        // a picture pasted into a note
+        let name = path.strip_prefix("attachments/")?;
+        let file = smart_library_core::attach::path_of(&state.attachments_dir(&lib.id), name)?;
+        return Some((std::fs::read(file).ok()?, smart_library_core::attach::mime_of(name)));
+    }
     let bytes = state.bookcase_of(&lib).ok()?.asset(path)?;
     let mime = match path.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
         Some("gif") => "image/gif",
@@ -761,6 +772,22 @@ pub async fn rename_note(lib: String, id: String, title: String, state: State<'_
 #[tauri::command]
 pub async fn save_note(lib: String, id: String, content: String, state: State<'_, AppState>) -> Result<(), String> {
     notes_of(&state, &lib)?.update(note_id(&id)?, None, Some(&content))
+}
+
+/// Keep a picture pasted into a note: the request body is the picture, the
+/// headers `lib` and `mime` say where and what. Returns the name to refer to
+/// it as, `![](attach:<name>)`.
+#[tauri::command]
+pub async fn note_attach(request: tauri::ipc::Request<'_>, state: State<'_, AppState>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
+        return Err("没有图片数据".into());
+    };
+    let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let l = state.library(&header("lib"))?;
+    if l.kind != "notes" {
+        return Err("只有自建知识库的笔记可以放图片".into());
+    }
+    smart_library_core::attach::store(&state.attachments_dir(&l.id), data, &header("mime"))
 }
 
 /// Add text at the end of a note.
@@ -2285,6 +2312,8 @@ struct Exporter<'a> {
     files: usize,
     total: usize,
     app: AppHandle,
+    /// pictures of notes already in the package
+    attached: HashSet<String>,
 }
 
 impl Exporter<'_> {
@@ -2331,6 +2360,17 @@ impl Exporter<'_> {
             let n = store.get(id)?.ok_or("笔记不存在")?;
             let file = self.doc(&p.title, &n.content, "")?;
             m.insert("file".into(), json!(file));
+            // the pictures the note shows
+            for name in smart_library_core::attach::refs(&n.content) {
+                if self.attached.insert(name.clone()) {
+                    if let Some(path) = smart_library_core::attach::path_of(&self.state.attachments_dir(&self.lib.id), &name) {
+                        if let Ok(bytes) = std::fs::read(path) {
+                            self.w.add_file(&format!("attachments/{}", name), &bytes)?;
+                            self.files += 1;
+                        }
+                    }
+                }
+            }
         }
         match &p.src {
             Src::None => {}
@@ -2450,7 +2490,7 @@ pub async fn export_library(req: ExportReq, app: AppHandle, state: State<'_, App
     }
     let whole = req.whole || (req.keys.is_empty() && req.rels.is_empty());
     let w = smart_library_core::exchange::PackageWriter::create(Path::new(&req.out))?;
-    let mut ex = Exporter { state: &state, lib: l.clone(), w, with_files: req.with_files, done: 0, files: 0, total: 0, app };
+    let mut ex = Exporter { state: &state, lib: l.clone(), w, with_files: req.with_files, done: 0, files: 0, total: 0, app, attached: HashSet::new() };
     ex.total = plans.iter().map(|p| ex.count(p)).sum();
     let mut nodes = Vec::new();
     for p in &plans {
@@ -2460,6 +2500,16 @@ pub async fn export_library(req: ExportReq, app: AppHandle, state: State<'_, App
     let (docs, files) = (ex.done, ex.files);
     ex.w.finish(&manifest)?;
     Ok(ExportDone { path: req.out, docs, files })
+}
+
+/// A picture of an export package goes to the attachments of the library (the same name = the same picture).
+fn keep_picture(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    let file = smart_library_core::attach::path_of(dir, name).ok_or("图片名不对")?;
+    if !file.exists() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        std::fs::write(file, bytes).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -2482,7 +2532,8 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
         };
         // a whole library comes as one note named like it; picked nodes come as they are
         let wrap = pkg.manifest["scope"] == "library";
-        let notes = smart_library_core::exchange::import_into(&store, &mut pkg, parent, wrap)?;
+        let dir = state.attachments_dir(&lib_id);
+        let notes = smart_library_core::exchange::import_into(&store, &mut pkg, parent, wrap, &mut |name, bytes| keep_picture(&dir, name, &bytes))?;
         return Ok(ImportDone { status: status_of(&state), title: state.library(&lib_id)?.title, notes });
     }
     let base = pkg.title();
@@ -2506,7 +2557,8 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
         .cloned()
         .ok_or("知识库没有建好")?;
     let store = state.notes(&lib)?;
-    let notes = smart_library_core::exchange::import_into(&store, &mut pkg, None, false)?;
+    let dir = state.attachments_dir(&lib.id);
+    let notes = smart_library_core::exchange::import_into(&store, &mut pkg, None, false, &mut |name, bytes| keep_picture(&dir, name, &bytes))?;
     state.titles.write().unwrap().remove(&lib.id);
     Ok(ImportDone { status, title, notes })
 }

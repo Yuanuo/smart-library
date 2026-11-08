@@ -286,6 +286,15 @@ impl Walker {
                     h.raw("<br>");
                 }
             }
+            "img" if el.attr("src").is_some_and(|s| s.starts_with("attach:")) => {
+                // a picture pasted into a note: kept in the library's attachments
+                let name = el.attr("src").unwrap_or("").trim_start_matches("attach:");
+                if crate::attach::is_name(name) {
+                    if let Some(h) = self.html.as_mut() {
+                        h.img(&format!("attachments/{}", name));
+                    }
+                }
+            }
             "img" => {
                 if let Some(path) = el.attr("src").and_then(|s| resolve_relative(&self.dir, s)) {
                     if let Some(h) = self.html.as_mut() {

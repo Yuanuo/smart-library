@@ -310,6 +310,18 @@ impl Package {
         self.manifest["library"]["title"].as_str().unwrap_or("导入的知识库").to_string()
     }
 
+    /// The names of all files of the package.
+    pub fn names(&self) -> Vec<String> {
+        self.archive.file_names().map(|s| s.to_string()).collect()
+    }
+
+    pub fn read_bytes(&mut self, name: &str) -> Result<Vec<u8>, String> {
+        let mut f = self.archive.by_name(name).map_err(|_| format!("导出包里缺少 {}", name))?;
+        let mut v = Vec::new();
+        f.read_to_end(&mut v).map_err(zerr)?;
+        Ok(v)
+    }
+
     pub fn read_text(&mut self, name: &str) -> Result<String, String> {
         let mut f = self.archive.by_name(name).map_err(|_| format!("导出包里缺少 {}", name))?;
         let mut s = String::new();
@@ -320,7 +332,20 @@ impl Package {
 
 /// Make the notes of a package below `parent` (`None`: the top); `wrap`: below
 /// one more note named like the package's library. The number of notes made.
-pub fn import_into(store: &NotesStore, pkg: &mut Package, parent: Option<i64>, wrap: bool) -> Result<usize, String> {
+/// `attach` is given each picture of `attachments/` (name, bytes) to keep.
+pub fn import_into(
+    store: &NotesStore,
+    pkg: &mut Package,
+    parent: Option<i64>,
+    wrap: bool,
+    attach: &mut dyn FnMut(&str, Vec<u8>) -> Result<(), String>,
+) -> Result<usize, String> {
+    for name in pkg.names() {
+        if let Some(file) = name.strip_prefix("attachments/").filter(|f| crate::attach::is_name(f)) {
+            let bytes = pkg.read_bytes(&name)?;
+            attach(file, bytes)?;
+        }
+    }
     let nodes = pkg.manifest["nodes"].as_array().cloned().unwrap_or_default();
     let mut n = 0;
     let mut parent = parent;
@@ -399,6 +424,8 @@ mod tests {
         let f1 = w.add_doc(&document("甲/乙:丙", "正文 **粗**", "测试库 · 1")).unwrap();
         let f2 = w.add_doc("无标题行的内容").unwrap();
         w.add_file("files/图/a.bin", &[1, 2, 3]).unwrap();
+        w.add_file("attachments/0123456789abcdef0123456789abcdef.png", &[9]).unwrap();
+        w.add_file("attachments/evil.png", &[9]).unwrap();
         let nodes = vec![json!({
             "title": "甲/乙:丙", "file": f1,
             "children": [ { "title": "子", "file": f2 }, { "title": "夹", "children": [] } ]
@@ -408,7 +435,10 @@ mod tests {
         let mut p = Package::open(&path).unwrap();
         assert_eq!(p.title(), "测试库");
         let store = NotesStore::memory().unwrap();
-        assert_eq!(import_into(&store, &mut p, None, false).unwrap(), 3);
+        let mut got: Vec<(String, Vec<u8>)> = Vec::new();
+        assert_eq!(import_into(&store, &mut p, None, false, &mut |n, b| (got.push((n.to_string(), b)), Ok(())).1).unwrap(), 3);
+        // only well-formed picture names are handed over
+        assert_eq!(got, vec![("0123456789abcdef0123456789abcdef.png".to_string(), vec![9u8])]);
         let top = store.children(None).unwrap();
         assert_eq!(top[0].title, "甲/乙:丙");
         let note = store.get(top[0].id).unwrap().unwrap();
@@ -417,7 +447,7 @@ mod tests {
         assert_eq!(store.children(Some(top[0].id)).unwrap().len(), 2);
         // below a note, with a note for the library around it
         let mut p2 = Package::open(&path).unwrap();
-        assert_eq!(import_into(&store, &mut p2, Some(top[0].id), true).unwrap(), 4);
+        assert_eq!(import_into(&store, &mut p2, Some(top[0].id), true, &mut |_, _| Ok(())).unwrap(), 4);
         let under = store.children(Some(top[0].id)).unwrap();
         assert_eq!(under.last().unwrap().title, "测试库");
         assert_eq!(store.children(Some(under.last().unwrap().id)).unwrap()[0].title, "甲/乙:丙");

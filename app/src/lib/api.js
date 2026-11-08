@@ -34,6 +34,8 @@ export const onExportProgress = (cb) => listen("export-progress", (e) => cb(e.pa
 export const exportLibrary = (req) => invoke("export_library", { req });
 export const importPackage = (path, lib = null, parent = null) => invoke("import_package", { path, lib, parent });
 export const renameNote = (lib, id, title) => invoke("rename_note", { lib, id, title });
+/** Keep a picture (an ArrayBuffer) for the notes of a library; resolves to its name. */
+export const noteAttach = (lib, bytes, mime) => invoke("note_attach", bytes, { headers: { lib, mime } });
 export const noteAppend = (lib, id, text) => invoke("note_append", { lib, id, text });
 export const saveNote = (lib, id, content) => invoke("save_note", { lib, id, content });
 export const deleteNote = (lib, id) => invoke("delete_note", { lib, id });
