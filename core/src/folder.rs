@@ -59,6 +59,11 @@ impl FolderFilter {
     }
 }
 
+/// The file is read as text (else its media information stands for it).
+pub fn is_text(name: &str) -> bool {
+    TEXT_EXTS.contains(&ext_of(name).as_str())
+}
+
 fn ext_of(name: &str) -> String {
     name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default()
 }
@@ -95,7 +100,7 @@ impl FolderLibrary {
         Ok(FolderLibrary { root: root.to_path_buf(), filter })
     }
 
-    fn abs(&self, rel: &str) -> Result<PathBuf, String> {
+    pub fn abs(&self, rel: &str) -> Result<PathBuf, String> {
         if rel.split('/').any(|p| p == ".." || p.contains(':') || p.contains('\\')) {
             return Err(format!("路径不合法：{}", rel));
         }

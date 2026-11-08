@@ -16,6 +16,8 @@
   import { openPanelWindow } from "./lib/panels.js";
   import { fullPath } from "./lib/paths.js";
   import ClipDialog from "./lib/ClipDialog.svelte";
+  import ExportDialog from "./lib/ExportDialog.svelte";
+  import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { clipMarkdown } from "./lib/clip.js";
   import { getLast, setLast } from "./lib/clipTarget.js";
   import { emit, listen } from "@tauri-apps/api/event";
@@ -150,6 +152,23 @@
       const tp = await libPanel?.treePath({ lib, bookId, path });
       copyPath(tp ?? [l?.title, title].filter(Boolean).join(" › "));
     } else copyPath(fullPath(l, path));
+  }
+
+  // ---- export and import of libraries
+  let exportDlg = $state(null); // { lib, sel, label }
+
+  async function importLibrary() {
+    try {
+      const path = await openFile({ multiple: false, title: "选择导出包", filters: [{ name: "知识库导出包", extensions: ["zip"] }] });
+      if (!path) return;
+      notice = "正在导入…";
+      const r = await api.importPackage(path);
+      st = r.status;
+      notice = `已导入「${r.title}」：${r.notes} 篇笔记。右键知识库可以建立索引。`;
+      api.prepareTitles().catch(() => {});
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   // ---- clippings: selected text into a note
@@ -624,7 +643,9 @@
             onindex={startIndex}
             onsearchfrom={searchFrom}
             ontag={tagFromTree}
-            oncopy={copyPath} />
+            oncopy={copyPath}
+            onexport={(lib, sel, label) => (exportDlg = { lib, sel, label })}
+            onimport={importLibrary} />
         {:else}
           <p class="muted">载入中…</p>
         {/if}
@@ -687,6 +708,11 @@
       <p class="muted">还没有消息。</p>
     {/each}
   </div>
+{/if}
+
+{#if exportDlg}
+  <ExportDialog lib={exportDlg.lib} sel={exportDlg.sel} label={exportDlg.label}
+    ondone={(r) => (notice = `已导出 ${r.docs} 篇：${r.path}`)} onclose={() => (exportDlg = null)} />
 {/if}
 
 {#if clipDlg}

@@ -30,6 +30,9 @@ export const nodeTagsSet = (lib, bookId, path, docTitle, tags) => invoke("node_t
 export const appInfo = () => invoke("app_info");
 export const listFonts = () => invoke("list_fonts");
 export const findInPage = () => invoke("find_in_page");
+export const onExportProgress = (cb) => listen("export-progress", (e) => cb(e.payload));
+export const exportLibrary = (req) => invoke("export_library", { req });
+export const importPackage = (path) => invoke("import_package", { path });
 export const renameNote = (lib, id, title) => invoke("rename_note", { lib, id, title });
 export const noteAppend = (lib, id, text) => invoke("note_append", { lib, id, text });
 export const saveNote = (lib, id, content) => invoke("save_note", { lib, id, content });

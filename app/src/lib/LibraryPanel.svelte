@@ -13,7 +13,7 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import { fullPath } from "./paths.js";
 
-  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, oncopy } = $props();
+  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, oncopy, onexport, onimport } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -85,6 +85,12 @@
         { label: "从所选节点搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinMany(l, list) }) },
         "separator",
         { label: "复制目录树路径", action: () => oncopy(list.map(({ key }) => titleChain(l, key).join(" › ")).join("\n")) },
+        "separator",
+        {
+          label: "导出所选…",
+          action: () =>
+            onexport(l, { whole: false, keys: list.map((x) => x.key), rels: list.map((x) => x.node.rel).filter(Boolean) }, `已选 ${list.length} 项`),
+        },
         "separator",
         { label: "取消选择", action: clearPicked },
       ],
@@ -306,6 +312,8 @@
     "separator",
     ...(l.kind === "notes" ? [] : [{ label: "复制原文件路径", action: () => oncopy(filePath(l, node)) }]),
     { label: "复制目录树路径", action: () => oncopy(titleChain(l, key).join(" › ")) },
+    "separator",
+    { label: "导出此节点…", action: () => onexport(l, { whole: false, keys: [key], rels: node.rel ? [node.rel] : [] }, node.title) },
   ];
 
   /** Context menu of a node: search from here; notes can also be edited. */
@@ -353,6 +361,8 @@
         disabled: !libraries.some((l) => l.kind === "notes"), // only internal libraries are writable
       },
       { label: "知识库…", action: onbind },
+      "separator",
+      { label: "导入知识库（导出包）…", action: onimport },
     ];
   }
 
@@ -519,6 +529,7 @@
         { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
         ...(l.kind === "notes" ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
         { label: "复制目录树路径", action: () => oncopy(l.title) },
+        { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title) },
         "separator",
         { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
         ...(l.kind === "folder" ? [] : [{ label: "从同一数据包绑定其他知识库…", action: () => onrebind(l) }]),

@@ -2,7 +2,8 @@
 //! paragraphs, bullet and numbered lists, block quotes, fenced code,
 //! `**bold**`, `*italic*`, and a link to a place in a document,
 //! `[text](smartlib://open?lib=…&path=…&lb=…)` (how a clipping points back to
-//! its source). Anything else stays plain text. Not a full
+//! its source), and footnotes `[^1]` with `[^1]: text` lines (shown as hover
+//! notes). Anything else stays plain text. Not a full
 //! CommonMark implementation: notes are read through the paragraph view, so
 //! only the structure that view shows matters.
 
@@ -63,7 +64,61 @@ fn links(s: &str) -> String {
     out
 }
 
+type Defs = std::collections::BTreeMap<String, String>;
+
+/// Percent-encoding of everything but `A-Za-z0-9-_.~` (the form the HTML
+/// footnotes of the `a/` trees use: `data-note`).
+fn pct(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+/// `[^id: text` -> (id, text) for a definition line `[^id]: text`.
+fn definition(line: &str) -> Option<(String, String)> {
+    let t = line.trim_start().strip_prefix("[^")?;
+    let (id, rest) = t.split_once("]:")?;
+    (!id.is_empty() && !id.contains(['[', ']', ' '])).then(|| (id.to_string(), rest.trim().to_string()))
+}
+
+/// `[^id]` of an already escaped line -> a footnote anchor (when it is defined).
+fn refs(s: &str, defs: &Defs) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(at) = rest.find("[^") {
+        let after = &rest[at + 2..];
+        if let Some(end) = after.find(']') {
+            if let Some(text) = defs.get(&after[..end]).filter(|t| !t.is_empty()) {
+                out.push_str(&rest[..at]);
+                out.push_str(&format!("<a data-note=\"{}\"></a>", pct(&unesc(text))));
+                rest = &after[end + 1..];
+                continue;
+            }
+        }
+        out.push_str(&rest[..at + 2]);
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+fn unesc(s: &str) -> String {
+    s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+}
+
+/// One line of text: footnotes, links, bold and italic.
+fn line(s: &str, defs: &Defs) -> String {
+    inline(&links(&refs(&esc(s), defs)))
+}
+
 pub fn to_html(md: &str) -> String {
+    let defs: Defs = md.lines().filter_map(definition).collect();
     let mut out = String::from("<html><body>");
     let mut list: Option<&str> = None;
     let mut code = false;
@@ -73,6 +128,9 @@ pub fn to_html(md: &str) -> String {
         }
     };
     for raw in md.lines() {
+        if definition(raw).is_some() {
+            continue;
+        }
         let line = raw.trim_end();
         if line.trim_start().starts_with("```") {
             code = !code;
@@ -93,30 +151,30 @@ pub fn to_html(md: &str) -> String {
         let hashes = t.chars().take_while(|&c| c == '#').count();
         if (1..=6).contains(&hashes) && t[hashes..].starts_with(' ') {
             close_list(&mut out, &mut list);
-            out.push_str(&format!("<h{0}>{1}</h{0}>", hashes, inline(&esc(t[hashes..].trim()))));
+            out.push_str(&format!("<h{0}>{1}</h{0}>", hashes, self::line(t[hashes..].trim(), &defs)));
         } else if let Some(rest) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).or_else(|| t.strip_prefix("+ ")) {
             if list != Some("ul") {
                 close_list(&mut out, &mut list);
                 out.push_str("<ul>");
                 list = Some("ul");
             }
-            out.push_str(&format!("<li>{}</li>", inline(&esc(rest.trim()))));
+            out.push_str(&format!("<li>{}</li>", self::line(rest.trim(), &defs)));
         } else if let Some(rest) = numbered(t) {
             if list != Some("ol") {
                 close_list(&mut out, &mut list);
                 out.push_str("<ol>");
                 list = Some("ol");
             }
-            out.push_str(&format!("<li>{}</li>", inline(&esc(rest.trim()))));
+            out.push_str(&format!("<li>{}</li>", self::line(rest.trim(), &defs)));
         } else {
             close_list(&mut out, &mut list);
             if let Some(q) = t.strip_prefix('>') {
                 // a quoted line is a paragraph of its own; an empty one only separates
                 if !q.trim().is_empty() {
-                    out.push_str(&format!("<blockquote>{}</blockquote>", inline(&links(&esc(q.trim())))));
+                    out.push_str(&format!("<blockquote>{}</blockquote>", self::line(q.trim(), &defs)));
                 }
             } else {
-                out.push_str(&format!("<p>{}</p>", inline(&links(&esc(t)))));
+                out.push_str(&format!("<p>{}</p>", self::line(t, &defs)));
             }
         }
     }
