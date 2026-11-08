@@ -122,6 +122,28 @@ pub fn resolve_relative(dir: &str, src: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
+/// `%E3%80%8A` -> `《` (invalid escapes are kept as they are).
+fn percent_decode(s: &str) -> String {
+    fn hex(b: u8) -> Option<u8> {
+        (b as char).to_digit(16).map(|d| d as u8)
+    }
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 const SKIP: [&str; 12] = [
     "script", "style", "head", "title", "meta", "link", "noscript", "svg", "button", "input", "select", "template",
 ];
@@ -281,6 +303,17 @@ impl Walker {
                 self.walk_children(el);
                 self.close("em");
             }
+            // a footnote marker `<a id="footnote-1" data-note="%E3…">`: the note
+            // text is not part of the text; the page shows a mark and the text on hover
+            "a" if el.attr("data-note").is_some() => {
+                let note = percent_decode(el.attr("data-note").unwrap_or("")).trim().to_string();
+                if !note.is_empty() {
+                    if let Some(h) = self.html.as_mut() {
+                        h.open("span", &[("class", "fn"), ("data-fn", &note)]);
+                        h.close("span");
+                    }
+                }
+            }
             "sup" | "sub" => {
                 self.open(name, "");
                 self.walk_children(el);
@@ -324,6 +357,15 @@ mod tests {
         let html = a.html.unwrap();
         assert!(!html.contains("script") && !html.contains("alert"));
         assert!(html.contains("class=\"p verse\""));
+    }
+
+    #[test]
+    fn keeps_footnote_markers_out_of_the_text() {
+        let src = r#"<body><p>见断是112种。<a id="a-1"></a><a id="footnote-133" data-note="%E3%80%8A%E6%99%BA%E3%80%8B%EF%BC%9A%E2%80%9C%E4%B8%80%E2%80%9D"></a>修断。</p></body>"#;
+        let a = read_article(src, "a/ZB/x/1.html", Some(&RenderOptions::default()));
+        assert_eq!(a.text.plain, "见断是112种修断");
+        let html = a.html.unwrap();
+        assert!(html.contains("class=\"fn\"") && html.contains("data-fn=\"《智》：“一”\""), "{html}");
     }
 
     #[test]

@@ -152,17 +152,37 @@
       });
   }
 
+  /** A CBETA note that only lists readings, `西天譯經【大】，宋西【明】`, as
+   * aligned rows like the other readings: `【大】 西天譯經`; null for other notes. */
+  function editionRows(text) {
+    const segs = text.split(/[，；;]/).map((s) => s.trim()).filter(Boolean);
+    if (!segs.length) return null;
+    const rows = [];
+    for (const s of segs) {
+      const m = s.match(/^(.*?)((?:\s*【[^】]*】)+)$/);
+      if (!m || !m[1].trim()) return null;
+      rows.push([m[2].replace(/\s+/g, ""), m[1].trim()]);
+    }
+    return rows;
+  }
+
   function noteRows(note) {
     if (!note) return [];
     const orig = note.querySelector(".nb-orig")?.textContent;
     const cb = note.querySelector(".nb-cb")?.textContent;
     const rows = [];
     if (noteMode === "color-orig" && orig) rows.push(["原编注", orig]);
-    if (cb || orig) rows.push(["CBETA", cb || orig]);
-    return noteMode === "num" ? rows.slice(-1).map(([, t]) => ["", t]) : rows;
+    if (cb || orig) {
+      const text = cb || orig;
+      const eds = editionRows(text);
+      if (eds) rows.push(...eds);
+      else rows.push([noteMode === "num" ? "" : "CBETA", text]);
+    }
+    return noteMode === "num" ? rows.filter((r) => r[0] !== "原编注") : rows;
   }
 
   function tipFor(el) {
+    if (el.classList.contains("fn")) return [[["", el.dataset.fn || ""]]]; // footnote of an HTML article
     if (el.classList.contains("note")) return [noteRows(el)];
     if (el.classList.contains("app")) {
       const n = el.dataset.n;
@@ -178,7 +198,7 @@
   }
 
   function overDoc(e) {
-    let sel = ".tt[title], .tt[data-tip], .g[title], .g[data-tip]";
+    let sel = ".tt[title], .tt[data-tip], .g[title], .g[data-tip], .fn";
     if (noteMode === "num") sel += ", .note";
     if (coloring) sel += ", .app.v, .note.lone";
     const el = e.target.closest?.(sel);
@@ -495,6 +515,13 @@
   .doc :global(img.figure) { max-width: 100%; display: block; margin: 0.5em 0; background: white; }
   /* notes by mode: a note point holds .nb-orig and/or .nb-cb */
   .doc :global(.note sup), .doc :global(.note .nb-orig), .doc :global(.note .nb-cb) { display: none; }
+  /* footnote mark of an HTML article: the "(注)" is CSS content, so it is
+     not copied with the text; the note shows on hover */
+  .doc :global(.fn)::before {
+    content: "（注）"; color: var(--note); font-weight: 700; font-size: 0.8em; cursor: help; user-select: none;
+  }
+  .doc :global(.fn:hover)::before { background: var(--accent-soft); border-radius: 3px; }
+  .doc.notes-none :global(.fn) { display: none; }
   .doc.notes-num :global(.note) { cursor: help; }
   .doc.notes-num :global(.note sup) {
     display: inline; color: var(--accent); font-size: 0.85em; font-weight: 700; padding: 0 3px; margin: 0 1px;

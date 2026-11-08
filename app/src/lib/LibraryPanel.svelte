@@ -11,8 +11,9 @@
   import Icon from "./Icon.svelte";
   import * as workspace from "./workspace.svelte.js";
   import { ask } from "@tauri-apps/plugin-dialog";
+  import { fullPath } from "./paths.js";
 
-  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag } = $props();
+  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, oncopy } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -191,10 +192,31 @@
     };
   }
 
-  const searchItems = (l, node) => [
+  /** The titles from the library down to a node (`key` is its index path). */
+  function titleChain(l, key) {
+    let list = nodes[l.id];
+    const out = [l.title];
+    for (const i of key.split("/").filter(Boolean).map(Number)) {
+      const n = list?.[i];
+      if (!n) break;
+      out.push(n.title);
+      list = n.children;
+    }
+    return out;
+  }
+
+  /** The full path of a node: a file path for folders, `<package>!/<path>` for data packages, the titles for notes. */
+  function pathText(l, node, key) {
+    const p = l.kind === "notes" ? null : node.path ?? node.rel ?? node.start;
+    return p ? fullPath(l, p) : titleChain(l, key).join(" › ");
+  }
+
+  const searchItems = (l, node, key) => [
     ...(node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node) }, "separator"] : []),
     { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
     { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
+    "separator",
+    { label: "复制路径", action: () => oncopy(pathText(l, node, key)) },
   ];
 
   /** Context menu of a node: search from here; notes can also be edited. */
@@ -202,7 +224,7 @@
     if (l.kind === "notes") return noteMenu(e, l, node, key);
     e.preventDefault();
     e.stopPropagation();
-    menu = { x: e.clientX, y: e.clientY, items: searchItems(l, node) };
+    menu = { x: e.clientX, y: e.clientY, items: searchItems(l, node, key) };
   }
 
   function noteMenu(e, l, node, key) {
@@ -212,7 +234,7 @@
       x: e.clientX,
       y: e.clientY,
       items: [
-        ...searchItems(l, node),
+        ...searchItems(l, node, key),
         "separator",
         { label: "新建子笔记…", action: () => newNote(l.id, node, key) },
         { label: "重命名…", action: () => renameNote(l.id, node, key) },
@@ -397,6 +419,7 @@
         ...(l.kind === "notes" ? [{ label: "新建笔记…", action: () => newNote(l.id, null, null) }] : []),
         { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: l.title, within: null }) },
         { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
+        { label: "复制路径", action: () => oncopy(l.kind === "notes" ? l.title : l.source) },
         "separator",
         { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
         ...(l.kind === "folder" ? [] : [{ label: "从同一数据包绑定其他知识库…", action: () => onrebind(l) }]),

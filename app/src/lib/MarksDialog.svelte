@@ -110,9 +110,9 @@
           <button class:on={kind === k} onclick={() => setKind(k)}>{label}</button>
         {/each}
       </div>
-      {#if doc}
-        <label class="check"><input type="checkbox" bind:checked={thisDoc} onchange={load} /> 只看当前文档</label>
-      {/if}
+      <label class="check" class:off={!doc} title={doc ? doc.title : "还没有打开过阅读器"}>
+        <input type="checkbox" bind:checked={thisDoc} disabled={!doc} onchange={load} /> 只看当前文档
+      </label>
       <input type="search" placeholder="筛选：文字、备注、标题、标签" bind:value={filter} bind:this={input} oninput={changed} />
     </div>
     {#if error}<p class="error">{error}</p>{/if}
@@ -184,6 +184,7 @@
   .embedded .box { width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
   .head { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .head input[type="search"] { flex: 1; min-width: 180px; }
+  .check.off { opacity: 0.5; }
   .check { display: flex; gap: 4px; align-items: center; font-size: 13px; white-space: nowrap; }
   .seg { display: flex; }
   .seg button { border-radius: 0; margin-left: -1px; padding: 3px 12px; }

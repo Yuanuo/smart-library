@@ -14,6 +14,7 @@
   import AboutDialog from "./lib/AboutDialog.svelte";
   import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
   import { openPanelWindow } from "./lib/panels.js";
+  import { fullPath } from "./lib/paths.js";
   import { emit, listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -120,6 +121,21 @@
     } else {
       markAction(a);
     }
+  }
+
+  async function copyPath(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      notice = `已复制路径：${text}`;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** "Copy path" of a reading tab. */
+  function copyTabPath({ lib, path, title }) {
+    const l = libraries.find((x) => x.id === lib);
+    copyPath(l && l.kind !== "notes" && path ? fullPath(l, path) : [l?.title, title].filter(Boolean).join(" › "));
   }
 
   // ---- bookmarks, collections and tags
@@ -427,7 +443,7 @@
   $effect(() => {
     if (wsEl && st && !wsReady) {
       wsReady = true;
-      workspace.init(wsEl, { resultsProps: rs, libraries: st.libraries, onlocate: locate, onaction: readerAction }).catch((e) => (error = String(e)));
+      workspace.init(wsEl, { resultsProps: rs, libraries: st.libraries, onlocate: locate, onaction: readerAction, oncopypath: copyTabPath }).catch((e) => (error = String(e)));
     }
   });
 
@@ -569,7 +585,8 @@
             onunbind={unbind}
             onindex={startIndex}
             onsearchfrom={searchFrom}
-            ontag={tagFromTree} />
+            ontag={tagFromTree}
+            oncopy={copyPath} />
         {:else}
           <p class="muted">载入中…</p>
         {/if}

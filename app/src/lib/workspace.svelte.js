@@ -29,7 +29,7 @@ let hooks = {};
 let progress = {}; // tab -> { lb, mode, t }
 let popouts = {}; // tab -> { label, lib, bookId, path, title }
 let tooltips = {}; // tab -> tooltip of its tab (title, author, path)
-let metas = {}; // tab -> { author } of its document
+let infos = {}; // tab -> { title, lib, path, bookId, author } of its document
 let restoring = false;
 let saveTimer = null;
 let defaultMode = "para";
@@ -110,6 +110,10 @@ function readerRenderer() {
     element,
     init(params) {
       panelApi = params.api;
+      {
+        const prm = params.params || {};
+        infos[panelApi.id] = { title: params.title || "", lib: prm.lib, path: prm.path, bookId: prm.bookId ?? null, author: "" };
+      }
       panelApi.onDidVisibilityChange(({ isVisible }) => {
         if (!isVisible) return;
         if (!positioned && p?.target) {
@@ -150,8 +154,8 @@ function readerRenderer() {
           onprogress: (lb, mode) => recordProgress(tab, lb, mode),
           ontitle: (t, tooltip, meta) => {
             panelApi?.setTitle(t);
-            metas[panelApi.id] = meta || {};
-            if (panelApi?.isActive) ws.current = { title: t, lib: state.lib, path: state.path, bookId: state.bookId, author: meta?.author || "" };
+            infos[panelApi.id] = { title: t, lib: state.lib, path: state.path, bookId: state.bookId, author: meta?.author || "" };
+            if (panelApi?.isActive) ws.current = { ...infos[panelApi.id] };
             tooltips[panelApi.id] = tooltip;
             applyTooltip(panelApi.id);
           },
@@ -172,7 +176,7 @@ function readerRenderer() {
     dispose() {
       if (panelApi) {
         delete tooltips[panelApi.id];
-        delete metas[panelApi.id];
+        delete infos[panelApi.id];
       }
       if (instance) unmount(instance);
     },
@@ -236,8 +240,15 @@ function tabMenu({ panel, group }) {
     items.push({
       label: "在目录树中定位",
       action: () => {
-        const prm = panel.params || {};
-        hooks.onlocate?.({ lib: prm.lib, bookId: prm.bookId, path: prm.path });
+        const i = infos[panel.id] || panel.params || {};
+        hooks.onlocate?.({ lib: i.lib, bookId: i.bookId, path: i.path });
+      },
+    });
+    items.push({
+      label: "复制路径",
+      action: () => {
+        const i = infos[panel.id] || panel.params || {};
+        hooks.oncopypath?.({ lib: i.lib, path: i.path, title: panel.title });
       },
     });
   }
@@ -326,14 +337,18 @@ export async function init(element, h) {
     for (const id of Object.keys(tooltips)) applyTooltip(id);
   });
   const refreshEmpty = () => (ws.empty = dv.panels.length === 0);
+  // the document being read = the last active reader (the results tab and
+  // an empty workspace keep / clear it)
   dv.onDidActivePanelChange((panel) => {
-    ws.current =
-      panel && panel.id !== "search" && panel.params?.lib
-        ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null, author: metas[panel.id]?.author || "" }
-        : null;
+    const i = panel && infos[panel.id];
+    if (i) ws.current = { ...i, title: panel.title || i.title };
+    else if (!panel || !dv.panels.some((x) => infos[x.id])) ws.current = null;
   });
   dv.onDidAddPanel(refreshEmpty);
-  dv.onDidRemovePanel(refreshEmpty);
+  dv.onDidRemovePanel((panel) => {
+    refreshEmpty();
+    if (ws.current && panel.id === `${ws.current.lib}|${ws.current.path}`) ws.current = null;
+  });
   listenToPopouts();
 
   const saved = await api.loadWorkspace().catch(() => null);
