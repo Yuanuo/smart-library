@@ -499,7 +499,7 @@
     padding: 8px 24px; border-bottom: 1px solid var(--line); background: var(--paper);
   }
   .grow { flex: 1; }
-  .nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+  .nav { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
   .vols { max-width: 16em; }
   .seg { display: inline-flex; }
   .seg button { border-radius: 0; padding: 4px 10px; }
