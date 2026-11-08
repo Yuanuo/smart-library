@@ -58,9 +58,9 @@
     const c = new Crepe({
       root,
       defaultValue: initial,
-      // tables and code blocks are on (the search index reads their rows and lines as text);
-      // formulas, the top bar and the AI helper are not
-      features: { [F.Latex]: false, [F.TopBar]: false, [F.AI]: false },
+      // everything of Crepe is on (tables, code blocks and formulas are Markdown text that the
+      // search index reads as lines) except the AI helper: it needs a language model service
+      features: { [F.AI]: false },
       featureConfigs: {
         [F.ImageBlock]: { onUpload: upload, blockOnUpload: upload, inlineOnUpload: upload, proxyDomURL: proxy },
         [F.Placeholder]: { text: "写点什么……（输入 / 选择标题、列表、引文、表格、代码、图片；可以直接粘贴图片）" },

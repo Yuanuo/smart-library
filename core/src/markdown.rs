@@ -198,6 +198,10 @@ pub fn to_html(md: &str) -> String {
             code = !code;
             continue;
         }
+        // `$$` around a formula block is only a mark; the formula's lines are text
+        if line.trim() == "$$" {
+            continue;
+        }
         if code {
             if !line.trim().is_empty() {
                 close_list(&mut out, &mut list);
