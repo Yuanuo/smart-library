@@ -32,6 +32,7 @@
   // `onprogress(lb)` reports the first line at the top of the view.
   import { tick } from "svelte";
   import Icon from "./Icon.svelte";
+  import TitleLink from "./TitleLink.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
@@ -382,6 +383,7 @@
   <div class="reader">
     <header>
       <div class="nav">
+        <TitleLink title={vol.label ? `${vol.title} ${vol.label}` : vol.title} {onlocate} />
         <select aria-label={vol.kind !== "cbeta" ? "同一目录的文章" : "卷"} class="vols" value={vol.path} onchange={(e) => onvolume(e.target.value)}>
           {#each vol.volumes as v}
             <option value={v.path} disabled={!v.exists}>{v.label}{v.exists ? "" : "（缺）"}</option>
@@ -417,7 +419,6 @@
         {/if}
         {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
         {#if onaction}<button class="locate" onclick={() => onaction({ type: "tag", vol })} title="为本卷（本篇）加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
-        {#if onlocate}<button class="locate" onclick={onlocate} title="在目录树中定位" aria-label="在目录树中定位"><Icon name="locate" size={20} /></button>{/if}
       </div>
     </header>
     <!-- svelte-ignore a11y_mouse_events_have_key_events -->

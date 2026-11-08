@@ -12,6 +12,7 @@
   import Reader from "./Reader.svelte";
   import MindMapView from "./MindMapView.svelte";
   import WhiteboardView from "./WhiteboardView.svelte";
+  import TitleLink from "./TitleLink.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import Icon from "./Icon.svelte";
 
@@ -224,17 +225,17 @@
   <p class="error">{error}</p>
 {:else if vol && vol.content_type === "mindmap"}
   {#key vol}
-    <MindMapView {vol} title={p.retitled ?? vol.title} lib={p.lib} path={p.path} onjump={onopen} />
+    <MindMapView {vol} title={p.retitled ?? vol.title} {onlocate} ontag={onaction ? () => onaction({ type: "tag", vol }) : null} lib={p.lib} path={p.path} onjump={onopen} />
   {/key}
 {:else if vol && vol.content_type === "whiteboard"}
   {#key vol}
-    <WhiteboardView {vol} title={p.retitled ?? vol.title} lib={p.lib} path={p.path} />
+    <WhiteboardView {vol} title={p.retitled ?? vol.title} {onlocate} ontag={onaction ? () => onaction({ type: "tag", vol }) : null} lib={p.lib} path={p.path} />
   {/key}
 {:else if vol && isNote(vol)}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="editor" onkeydown={noteKey}>
     <div class="bar">
-      <strong>{p.retitled ?? vol.title}</strong>
+      <TitleLink title={p.retitled ?? vol.title} {onlocate} />
       <span class="muted status">{status}</span>
       <span class="grow"></span>
       <div class="seg" role="group" aria-label="编辑方式">
@@ -242,7 +243,6 @@
         <button class:on={!visual} onclick={() => visual && setVisual(false)} title="直接编辑 Markdown 源码">源码</button>
       </div>
       {#if onaction}<button class="icon" onclick={() => onaction({ type: "tag", vol })} title="为本篇加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
-      {#if onlocate}<button class="icon" onclick={onlocate} title="在目录树中定位" aria-label="在目录树中定位"><Icon name="locate" size={20} /></button>{/if}
     </div>
     <div class="body">
       {#key ver}

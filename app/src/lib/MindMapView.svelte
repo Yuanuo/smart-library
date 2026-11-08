@@ -7,8 +7,10 @@
   import * as api from "./api.js";
   import { parseSource } from "./clip.js";
   import ContextMenu from "./ContextMenu.svelte";
+  import TitleLink from "./TitleLink.svelte";
+  import Icon from "./Icon.svelte";
 
-  let { vol, title = vol.title, lib, path, onjump = null } = $props();
+  let { vol, title = vol.title, lib, path, onjump = null, onlocate = null, ontag = null } = $props();
 
   let el = $state();
   let mind = null;
@@ -202,6 +204,7 @@
       mind.install(nodeMenu);
       await mind.init(data);
       // the right button is for the menu, the middle one moves the board (as in the whiteboard)
+      el.addEventListener("contextmenu", again, true);
       el.addEventListener("pointerdown", down, true);
       el.addEventListener("pointermove", drag);
       el.addEventListener("pointerup", drop);
@@ -211,6 +214,21 @@
       error = String(e);
     }
   });
+
+  // The map's own menu covers the whole board (it closes on a left click only), so a
+  // right-click on another node reached the cover, not the node. Close the menu and
+  // give the right-click to whatever is under it.
+  function again(e) {
+    const cover = e.target;
+    if (!(cover instanceof Element) || !cover.classList.contains("context-menu") || cover.hidden) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cover.hidden = true;
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    under?.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY, button: 2, buttons: 2, view: window }),
+    );
+  }
 
   function down(e) {
     if (e.pointerType !== "mouse") return;
@@ -264,11 +282,12 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="mm" onkeydown={key}>
   <div class="bar">
-    <strong>{title}</strong>
+    <TitleLink {title} {onlocate} />
     <span class="muted">脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布</span>
     <span class="grow"></span>
     <span class="muted">{status}</span>
     <button onclick={exportMenu}>导出 ▾</button>
+    {#if ontag}<button class="icon" onclick={ontag} title="为本篇加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
   </div>
   {#if error}<p class="error">{error}</p>{/if}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -283,6 +302,8 @@
   .mm { display: flex; flex-direction: column; height: 100%; }
   .bar { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
   .grow { flex: 1; }
+  .icon { border: none; background: none; padding: 3px 7px; border-radius: 4px; display: inline-flex; align-items: center; color: var(--accent); }
+  .icon:hover { background: var(--accent-soft); }
   .map { flex: 1; min-height: 0; position: relative; }
   .error { color: var(--hl); padding: 4px 12px; margin: 0; }
 </style>

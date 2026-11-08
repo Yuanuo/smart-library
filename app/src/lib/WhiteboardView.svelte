@@ -5,8 +5,10 @@
   // change to the drawing (not for moving the view or selecting), and with Ctrl+S.
   import { onMount, onDestroy, untrack } from "svelte";
   import * as api from "./api.js";
+  import TitleLink from "./TitleLink.svelte";
+  import Icon from "./Icon.svelte";
 
-  let { vol, title = vol.title, lib, path } = $props();
+  let { vol, title = vol.title, lib, path, onlocate = null, ontag = null } = $props();
 
   let el = $state();
   let error = $state("");
@@ -168,9 +170,11 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="board" onkeydown={key}>
   <div class="bar">
-    <strong>{title}</strong>
+    <TitleLink {title} {onlocate} />
     <span class="muted status">{status}</span>
     {#if error}<span class="error">{error}</span>{/if}
+    <span class="grow"></span>
+    {#if ontag}<button class="icon" onclick={ontag} title="为本篇加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
   </div>
   <div class="canvas" bind:this={el}></div>
 </div>
@@ -179,6 +183,9 @@
   .board { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: clip; }
   .bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px; border-bottom: 1px solid var(--line); }
   .status { font-size: 12px; }
+  .grow { flex: 1; }
+  .icon { border: none; background: none; padding: 3px 7px; border-radius: 4px; display: inline-flex; align-items: center; color: var(--accent); }
+  .icon:hover { background: var(--accent-soft); }
   .error { color: var(--hl); font-size: 13px; }
   .canvas { flex: 1; min-height: 0; position: relative; overflow: clip; }
   /* Excalidraw's containers must not be scrolled by the browser (a focused popover does that) */
