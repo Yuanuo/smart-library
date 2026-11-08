@@ -18,6 +18,8 @@
   let status = $state("");
   let error = $state("");
   let menu = $state(null);
+  let wait = null; // watching for the board to get a size
+  let pan = null; // a drag of the board with the middle button: where it was last
   const start = untrack(() => vol.raw);
 
   const dataText = () => JSON.stringify(mind.getData(), (k, v) => (k === "parent" ? undefined : v));
@@ -159,6 +161,19 @@
         import("@mind-elixir/node-menu/dist/style.css"),
       ]);
       if (gone) return;
+      // a tab restored after a restart is hidden (it has no size) until it is first shown, and a
+      // map made then is laid out wrong: wait for the first time the board has a size
+      if (!el.clientWidth || !el.clientHeight) {
+        await new Promise((ok) => {
+          const ro = new ResizeObserver(() => {
+            if (el.clientWidth && el.clientHeight) (ro.disconnect(), ok());
+          });
+          ro.observe(el);
+          wait = ro;
+        });
+        wait = null;
+        if (gone) return;
+      }
       let data = null;
       try {
         data = JSON.parse(start);
@@ -186,13 +201,41 @@
       mind.locale = "zh_CN";
       mind.install(nodeMenu);
       await mind.init(data);
+      // the right button is for the menu, the middle one moves the board (as in the whiteboard)
+      el.addEventListener("pointerdown", down, true);
+      el.addEventListener("pointermove", drag);
+      el.addEventListener("pointerup", drop);
+      el.addEventListener("pointercancel", drop);
       mind.bus.addListener("operation", changed);
     } catch (e) {
       error = String(e);
     }
   });
 
+  function down(e) {
+    if (e.pointerType !== "mouse") return;
+    if (e.button === 2) {
+      e.stopImmediatePropagation(); // no dragging with it: only the menu
+    } else if (e.button === 1) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      pan = { x: e.clientX, y: e.clientY };
+      el.setPointerCapture?.(e.pointerId);
+    }
+  }
+  function drag(e) {
+    if (!pan || !mind) return;
+    mind.move(e.clientX - pan.x, e.clientY - pan.y);
+    pan = { x: e.clientX, y: e.clientY };
+  }
+  function drop(e) {
+    if (!pan) return;
+    pan = null;
+    el.releasePointerCapture?.(e.pointerId);
+  }
+
   onDestroy(() => {
+    wait?.disconnect();
     gone = true;
     clearTimeout(timer);
     if (mind && dirty) api.saveNote(lib, path, dataText()).catch(() => {});
@@ -222,7 +265,7 @@
 <div class="mm" onkeydown={key}>
   <div class="bar">
     <strong>{title}</strong>
-    <span class="muted">脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多</span>
+    <span class="muted">脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布</span>
     <span class="grow"></span>
     <span class="muted">{status}</span>
     <button onclick={exportMenu}>导出 ▾</button>
