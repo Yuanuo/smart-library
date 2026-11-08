@@ -197,7 +197,11 @@
       const n = el.dataset.n;
       const note = n ? scroller.querySelector(`.note[data-n="${CSS.escape(n)}"]`) : null;
       const rs = readings(tipText(el));
-      return [noteRows(note), rs.slice(0, 1), rs.slice(1)];
+      // the note often lists the same editions as the reading itself (`【大】如，宋元明【無】`):
+      // then only what it adds (the original note, other text) comes first
+      const listed = rs.some(([k]) => k.startsWith("【"));
+      const rows = noteRows(note).filter((r) => !(listed && r[0].startsWith("【")));
+      return [rows, rs.slice(0, 1), rs.slice(1)];
     }
     const text = tipText(el);
     if (el.classList.contains("tt")) {
