@@ -84,6 +84,6 @@
   }
   .folder { font-weight: 600; }
   .twisty:hover { background: var(--accent-soft); color: var(--accent); }
-  .leaf:hover, .folder:hover { background: var(--accent-soft); }
+  .row:hover:not(.picked):not(.marked) { background: var(--accent-soft); }
   .unsupported { color: var(--muted); cursor: default; }
 </style>

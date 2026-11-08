@@ -584,9 +584,9 @@
     if (l.error) return { text: "数据不可用", warn: true };
     const p = progress[l.id];
     if (l.building || p) return { text: p ? `建索引 ${Math.floor((100 * p.done) / Math.max(1, p.total))}%` : "建索引…" };
-    if (!l.index_ready) return { text: "未建索引", warn: true };
+    if (!l.index_ready) return { text: "未建索引", warn: true, index: true };
     if (l.index_data_version && l.data_version && l.index_data_version !== l.data_version)
-      return { text: "索引过期", warn: true };
+      return { text: "索引过期", warn: true, index: true };
     return null;
   }
 
@@ -681,7 +681,9 @@
         </button>
         <span class="libicon"><Icon name="library" size={18} /></span>
         <button class="title" onclick={() => toggle(l)} tabindex="-1" title={`${l.title}\n${l.source}`}>{l.title}</button>
-        {#if b}<span class="badge" class:warn={b.warn}>{b.text}</span>{/if}
+        {#if b?.index}
+          <button class="badge warn link" tabindex="-1" title="点击建立索引" onclick={(e) => (e.stopPropagation(), onindex(l.id))}>{b.text}</button>
+        {:else if b}<span class="badge" class:warn={b.warn}>{b.text}</span>{/if}
       </div>
       {#if open[l.id]}
         {#if loading[l.id]}
@@ -746,6 +748,8 @@
   }
   .badge { font-size: 11px; color: var(--muted); white-space: nowrap; }
   .badge.warn { color: var(--hl); }
+  .badge.link { border: none; background: none; padding: 1px 4px; border-radius: 4px; cursor: pointer; }
+  .badge.link:hover { background: var(--accent-soft); text-decoration: underline; }
   .note { font-size: 13px; padding-left: 24px; }
   .error { color: var(--hl); }
   .empty { padding: 24px 12px; text-align: center; }

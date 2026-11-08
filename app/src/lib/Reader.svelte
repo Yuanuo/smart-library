@@ -409,6 +409,7 @@
           </select>
         {/if}
         {@render extra?.()}
+        <span class="grow"></span>
         <div class="seg" role="group" aria-label="版式">
           <button class:on={mode === "para"} onclick={() => (mode = "para")}>段落</button>
           <button class:on={mode === "lines"} onclick={() => (mode = "lines")}>原书行</button>
@@ -497,6 +498,7 @@
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
     padding: 8px 24px; border-bottom: 1px solid var(--line); background: var(--paper);
   }
+  .grow { flex: 1; }
   .nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
   .vols { max-width: 16em; }
   .seg { display: inline-flex; }
