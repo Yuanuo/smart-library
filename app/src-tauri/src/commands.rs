@@ -1314,25 +1314,36 @@ pub struct WithinDto {
     books: Vec<String>,
     #[serde(default)]
     paths: Vec<String>,
+    /// the subtrees of folder / notes libraries (a folder path or a note id)
+    #[serde(default)]
+    rels: Vec<String>,
     rel: Option<String>,
 }
 
 fn resolve_within(state: &AppState, w: &WithinDto) -> Result<Within, String> {
     let l = state.library(&w.lib)?;
     let mut within = Within { books: w.books.clone(), paths: w.paths.clone() };
-    if let Some(rel) = w.rel.as_deref().filter(|r| !r.is_empty()) {
+    let mut rels: Vec<&str> = w.rels.iter().map(|r| r.as_str()).collect();
+    rels.extend(w.rel.as_deref());
+    rels.retain(|r| !r.is_empty());
+    if !rels.is_empty() {
         if l.kind == "folder" {
-            let prefix = format!("{}/", rel);
+            let prefixes: Vec<String> = rels.iter().map(|r| format!("{}/", r)).collect();
             within.paths = state
                 .folder(&l)?
                 .files()
                 .into_iter()
-                .filter(|f| f.rel == rel || f.rel.starts_with(&prefix))
+                .filter(|f| rels.contains(&f.rel.as_str()) || prefixes.iter().any(|p| f.rel.starts_with(p)))
                 .map(|f| f.rel)
                 .collect();
         } else if l.kind == "notes" {
-            let id: i64 = rel.parse().map_err(|_| "笔记编号不对")?;
-            within.paths = state.notes(&l)?.descendants(id)?.iter().map(|i| i.to_string()).collect();
+            let store = state.notes(&l)?;
+            let mut ids = std::collections::BTreeSet::new();
+            for rel in &rels {
+                let id: i64 = rel.parse().map_err(|_| "笔记编号不对")?;
+                ids.extend(store.descendants(id)?);
+            }
+            within.paths = ids.iter().map(|i| i.to_string()).collect();
         }
     }
     Ok(within)

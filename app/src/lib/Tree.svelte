@@ -6,8 +6,19 @@
   import Tree from "./Tree.svelte";
   import Icon from "./Icon.svelte";
 
-  let { nodes, onopen, ontoggle, oncontext = null, expanded, depth = 0, prefix = "", current = null, seen = null } = $props();
+  let { nodes, onopen, ontoggle, oncontext = null, expanded, depth = 0, prefix = "", current = null, seen = null, picked = null, onselect = null, onclear = null } = $props();
   const wasOpened = (n) => !!seen && ((n.book_id && seen.books.has(n.book_id)) || (n.path && seen.paths.has(n.path)));
+
+  /** Ctrl / Shift + click picks nodes (several can be picked); a plain click opens. */
+  function click(e, node, key, plain) {
+    if (onselect && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+      e.preventDefault();
+      onselect(node, key, e);
+      return;
+    }
+    onclear?.();
+    plain();
+  }
 </script>
 
 <ul class:root={depth === 0}>
@@ -16,7 +27,7 @@
     {@const hasChildren = node.children.length > 0 || !!node.lazy}
     {@const open = !!expanded[key]}
     <li>
-      <div class="row" class:current={current === key} data-key={key} style="padding-left: {depth * 14 + 4}px"
+      <div class="row" class:current={current === key} class:picked={picked?.has(key)} data-key={key} style="padding-left: {depth * 14 + 4}px"
         role="presentation" oncontextmenu={(e) => oncontext?.(node, key, e)}>
         {#if hasChildren}
           <button class="twisty" onclick={() => ontoggle(key)} aria-label={open ? "收起" : "展开"}>
@@ -29,15 +40,15 @@
           <Icon name={hasChildren ? (open ? "folder-open" : "folder") : "file"} size={17} />
         </span>
         {#if node.book_id || node.path}
-          <button class="leaf" class:seen={wasOpened(node)} onclick={() => { onopen(node, key); if (hasChildren) ontoggle(key); }} title={node.title}>{node.title}</button>
+          <button class="leaf" class:seen={wasOpened(node)} onclick={(e) => click(e, node, key, () => { onopen(node, key); if (hasChildren) ontoggle(key); })} title={node.title}>{node.title}</button>
         {:else if node.href}
           <span class="leaf unsupported" title="内容尚未接入：{node.href}">{node.title}</span>
         {:else}
-          <button class="folder" onclick={() => ontoggle(key)} title={node.title}>{node.title}</button>
+          <button class="folder" onclick={(e) => click(e, node, key, () => ontoggle(key))} title={node.title}>{node.title}</button>
         {/if}
       </div>
       {#if hasChildren && open}
-        <Tree nodes={node.children} {onopen} {ontoggle} {oncontext} {expanded} depth={depth + 1} prefix={key} {current} {seen} />
+        <Tree nodes={node.children} {onopen} {ontoggle} {oncontext} {expanded} depth={depth + 1} prefix={key} {current} {seen} {picked} {onselect} {onclear} />
       {/if}
     </li>
   {/each}
@@ -55,6 +66,7 @@
   .kind.seen { color: var(--note); }
   .leaf.seen { color: var(--note); }
   .row.current { background: var(--accent-soft); }
+  .row.picked { background: color-mix(in srgb, var(--accent) 24%, transparent); }
   .row.current .leaf, .row.current .folder { color: var(--accent); font-weight: 700; }
   .twisty {
     width: 22px; height: 22px; flex: none; border: none; background: none; padding: 0;

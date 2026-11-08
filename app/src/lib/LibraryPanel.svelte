@@ -28,6 +28,69 @@
     for (const id of Object.keys(nodes)) loadSeen(id);
   });
 
+  // several nodes picked with Ctrl / Shift + click (one library at a time)
+  let multi = $state({ lib: null, keys: new Set(), anchor: null });
+  const clearPicked = () => {
+    if (multi.keys.size) multi = { lib: null, keys: new Set(), anchor: null };
+  };
+
+  function pickNode(l, node, key, e) {
+    const same = multi.lib === l.id;
+    const keys = new Set(same ? multi.keys : []);
+    if (!keys.size && current?.lib === l.id) keys.add(current.key); // the node being read joins the picked ones
+    const anchor = same && multi.anchor ? multi.anchor : current?.lib === l.id ? current.key : null;
+    if (e.shiftKey && anchor) {
+      const order = [...panel.querySelectorAll(`[data-lib="${l.id}"] [data-key]`)].map((el) => el.dataset.key);
+      const a = order.indexOf(anchor);
+      const b = order.indexOf(key);
+      if (a >= 0 && b >= 0) {
+        if (!(e.ctrlKey || e.metaKey)) keys.clear();
+        for (let i = Math.min(a, b); i <= Math.max(a, b); i++) keys.add(order[i]);
+        multi = { lib: l.id, keys, anchor };
+        return;
+      }
+    }
+    if (keys.has(key)) keys.delete(key);
+    else keys.add(key);
+    multi = { lib: l.id, keys, anchor: key };
+  }
+
+  /** The picked nodes of a library. */
+  const pickedNodes = (l) => [...multi.keys].map((k) => ({ key: k, node: nodeAt(l.id, k) })).filter((x) => x.node);
+
+  /** One search range for several nodes. */
+  function withinMany(l, list) {
+    const books = new Set();
+    const paths = new Set();
+    const rels = [];
+    for (const { node } of list) {
+      const w = withinOf(l, node);
+      w.books.forEach((b) => books.add(b));
+      w.paths.forEach((p) => paths.add(p));
+      if (w.rel) rels.push(w.rel);
+    }
+    return { lib: l.id, books: [...books], paths: [...paths], rels };
+  }
+
+  function multiMenu(e, l) {
+    const list = pickedNodes(l);
+    const label = `${l.title} › 已选 ${list.length} 项`;
+    menu = {
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: `已选 ${list.length} 项`, action: () => {}, disabled: true },
+        "separator",
+        { label: "从所选节点搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label, within: withinMany(l, list) }) },
+        { label: "从所选节点搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinMany(l, list) }) },
+        "separator",
+        { label: "复制目录树路径", action: () => oncopy(list.map(({ key }) => titleChain(l, key).join(" › ")).join("\n")) },
+        "separator",
+        { label: "取消选择", action: clearPicked },
+      ],
+    };
+  }
+
   let nameDlg = $state(null); // { title, label, value, okLabel, onok }
   let noteDlg = $state(null); // { position, defaultLib }
   let selected = $state(null); // { lib, key }: the last note opened from the tree
@@ -247,6 +310,11 @@
 
   /** Context menu of a node: search from here; notes can also be edited. */
   function nodeMenu(e, l, node, key) {
+    if (multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return multiMenu(e, l);
+    }
     if (l.kind === "notes") return noteMenu(e, l, node, key);
     e.preventDefault();
     e.stopPropagation();
@@ -492,6 +560,9 @@
             expanded={expanded[l.id] ?? {}}
             current={current?.lib === l.id ? current.key : null}
             seen={seen[l.id] ?? null}
+            picked={multi.lib === l.id ? multi.keys : null}
+            onselect={(node, key, e) => pickNode(l, node, key, e)}
+            onclear={clearPicked}
             ontoggle={(key) => toggleNode(l.id, key)}
             oncontext={(node, key, e) => nodeMenu(e, l, node, key)}
             onopen={(node, key) => {
