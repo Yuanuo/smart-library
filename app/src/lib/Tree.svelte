@@ -34,7 +34,7 @@
             <Icon name={open ? "chevron-down" : "chevron-right"} size={14} />
           </button>
         {:else}
-          <span class="twisty"></span>
+          <span class="gap"></span>
         {/if}
         <span class="kind" class:file={!hasChildren} class:seen={wasOpened(node)} class:dim={!node.book_id && !node.path && node.href}>
           <Icon name={hasChildren ? (open ? "folder-open" : "folder") : "file"} size={17} />
@@ -68,6 +68,7 @@
   .row.current { background: var(--accent-soft); }
   .row.picked { background: color-mix(in srgb, var(--accent) 24%, transparent); }
   .row.current .leaf, .row.current .folder { color: var(--accent); font-weight: 700; }
+  .gap { width: 22px; height: 22px; flex: none; }
   .twisty {
     width: 22px; height: 22px; flex: none; border: none; background: none; padding: 0;
     color: var(--muted); display: inline-flex; align-items: center; justify-content: center;

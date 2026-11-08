@@ -157,14 +157,24 @@
   // ---- export and import of libraries
   let exportDlg = $state(null); // { lib, sel, label }
 
-  async function importLibrary() {
+  /** `target`: { lib, parent, key } to import below a place of an internal library; none: as a new library. */
+  async function importLibrary(target = null) {
     try {
-      const path = await openFile({ multiple: false, title: "选择导出包", filters: [{ name: "知识库导出包", extensions: ["zip"] }] });
+      const path = await openFile({
+        multiple: false,
+        title: "选择导出包",
+        filters: [{ name: "知识库导出包（*.smartlib）", extensions: ["smartlib"] }, { name: "ZIP", extensions: ["zip"] }],
+      });
       if (!path) return;
       notice = "正在导入…";
-      const r = await api.importPackage(path);
+      const r = await api.importPackage(path, target?.lib ?? null, target?.parent ?? null);
       st = r.status;
-      notice = `已导入「${r.title}」：${r.notes} 篇笔记。右键知识库可以建立索引。`;
+      if (target) {
+        await libPanel?.reloadNode(target.lib, target.key);
+        notice = `已导入到「${r.title}」：${r.notes} 篇笔记。`;
+      } else {
+        notice = `已导入「${r.title}」：${r.notes} 篇笔记。右键知识库可以建立索引。`;
+      }
       api.prepareTitles().catch(() => {});
     } catch (e) {
       error = String(e);
@@ -644,7 +654,7 @@
             onsearchfrom={searchFrom}
             ontag={tagFromTree}
             oncopy={copyPath}
-            onexport={(lib, sel, label) => (exportDlg = { lib, sel, label })}
+            onexport={(lib, sel, label, name) => (exportDlg = { lib, sel, label, name })}
             onimport={importLibrary} />
         {:else}
           <p class="muted">载入中…</p>
@@ -711,7 +721,7 @@
 {/if}
 
 {#if exportDlg}
-  <ExportDialog lib={exportDlg.lib} sel={exportDlg.sel} label={exportDlg.label}
+  <ExportDialog lib={exportDlg.lib} sel={exportDlg.sel} label={exportDlg.label} name={exportDlg.name}
     ondone={(r) => (notice = `已导出 ${r.docs} 篇：${r.path}`)} onclose={() => (exportDlg = null)} />
 {/if}
 

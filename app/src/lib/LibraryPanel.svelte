@@ -72,6 +72,14 @@
     return { lib: l.id, books: [...books], paths: [...paths], rels };
   }
 
+  /** The name an export of several nodes is called: their common parent, else the library. */
+  function parentName(l, list) {
+    const parents = new Set(list.map((x) => x.key.slice(0, x.key.lastIndexOf("/"))));
+    if (parents.size !== 1) return l.title;
+    const p = [...parents][0];
+    return p ? titleChain(l, p).at(-1) : l.title;
+  }
+
   function multiMenu(e, l) {
     const list = pickedNodes(l);
     const label = `${l.title} › 已选 ${list.length} 项`;
@@ -89,7 +97,7 @@
         {
           label: "导出所选…",
           action: () =>
-            onexport(l, { whole: false, keys: list.map((x) => x.key), rels: list.map((x) => x.node.rel).filter(Boolean) }, `已选 ${list.length} 项`),
+            onexport(l, { whole: false, keys: list.map((x) => x.key), rels: list.map((x) => x.node.rel).filter(Boolean) }, `已选 ${list.length} 项`, parentName(l, list)),
         },
         "separator",
         { label: "取消选择", action: clearPicked },
@@ -106,6 +114,12 @@
 
   /** Reload one level of a library (`key` null: its top), keeping what was
    * loaded below the notes that are still there. */
+  /** Read a node (or the top of a library) again, after notes were added below it. */
+  export async function reloadNode(lib, key) {
+    open[lib] = true;
+    await refresh(lib, key);
+  }
+
   async function refresh(lib, key) {
     const fresh = key ? await api.folderChildren(lib, nodeAt(lib, key)?.rel ?? "") : await api.tree(lib);
     const old = key ? (nodeAt(lib, key)?.children ?? []) : (nodes[lib] ?? []);
@@ -313,7 +327,8 @@
     ...(l.kind === "notes" ? [] : [{ label: "复制原文件路径", action: () => oncopy(filePath(l, node)) }]),
     { label: "复制目录树路径", action: () => oncopy(titleChain(l, key).join(" › ")) },
     "separator",
-    { label: "导出此节点…", action: () => onexport(l, { whole: false, keys: [key], rels: node.rel ? [node.rel] : [] }, node.title) },
+    ...(l.kind === "notes" ? [{ label: "导入到这里（作为子节点）…", action: () => onimport({ lib: l.id, parent: node.rel, key }) }] : []),
+    { label: "导出此节点…", action: () => onexport(l, { whole: false, keys: [key], rels: node.rel ? [node.rel] : [] }, node.title, node.title) },
   ];
 
   /** Context menu of a node: search from here; notes can also be edited. */
@@ -362,7 +377,7 @@
       },
       { label: "知识库…", action: onbind },
       "separator",
-      { label: "导入知识库（导出包）…", action: onimport },
+      { label: "导入知识库（导出包）…", action: () => onimport(null) },
     ];
   }
 
@@ -529,7 +544,9 @@
         { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
         ...(l.kind === "notes" ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
         { label: "复制目录树路径", action: () => oncopy(l.title) },
-        { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title) },
+        "separator",
+        ...(l.kind === "notes" ? [{ label: "导入到此知识库…", action: () => onimport({ lib: l.id, parent: null, key: null }) }] : []),
+        { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title, l.title) },
         "separator",
         { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
         ...(l.kind === "folder" ? [] : [{ label: "从同一数据包绑定其他知识库…", action: () => onrebind(l) }]),

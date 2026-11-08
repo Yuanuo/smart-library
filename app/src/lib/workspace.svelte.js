@@ -357,8 +357,10 @@ export async function init(element, h) {
   const refreshEmpty = () => (ws.empty = dv.panels.length === 0);
   // the document being read = the last active reader (the results tab and
   // an empty workspace keep / clear it)
-  dv.onDidActivePanelChange((panel) => {
-    const i = panel && infos[panel.id];
+  dv.onDidActivePanelChange((e) => {
+    const panel = e?.panel; // the event is { panel, origin }; panel is undefined when nothing is active
+    // a restored tab that was never shown has no document info yet: its parameters have it
+    const i = panel && (infos[panel.id] || (panel.params?.lib ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null, author: "" } : null));
     if (i) ws.current = { ...i, title: panel.title || i.title };
     else if (!panel || !dv.panels.some((x) => infos[x.id])) ws.current = null;
   });

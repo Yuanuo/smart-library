@@ -318,11 +318,17 @@ impl Package {
     }
 }
 
-/// Make the notes of a package below `parent`; the number of notes made.
-pub fn import_into(store: &NotesStore, pkg: &mut Package) -> Result<usize, String> {
+/// Make the notes of a package below `parent` (`None`: the top); `wrap`: below
+/// one more note named like the package's library. The number of notes made.
+pub fn import_into(store: &NotesStore, pkg: &mut Package, parent: Option<i64>, wrap: bool) -> Result<usize, String> {
     let nodes = pkg.manifest["nodes"].as_array().cloned().unwrap_or_default();
     let mut n = 0;
-    import_nodes(store, pkg, None, &nodes, &mut n)?;
+    let mut parent = parent;
+    if wrap {
+        parent = Some(store.create(parent, &pkg.title(), "")?);
+        n += 1;
+    }
+    import_nodes(store, pkg, parent, &nodes, &mut n)?;
     Ok(n)
 }
 
@@ -402,13 +408,19 @@ mod tests {
         let mut p = Package::open(&path).unwrap();
         assert_eq!(p.title(), "测试库");
         let store = NotesStore::memory().unwrap();
-        assert_eq!(import_into(&store, &mut p).unwrap(), 3);
+        assert_eq!(import_into(&store, &mut p, None, false).unwrap(), 3);
         let top = store.children(None).unwrap();
         assert_eq!(top[0].title, "甲/乙:丙");
         let note = store.get(top[0].id).unwrap().unwrap();
         // the title heading went into the title
         assert!(note.content.starts_with("正文 **粗**") && note.content.contains("来源：测试库"), "{}", note.content);
         assert_eq!(store.children(Some(top[0].id)).unwrap().len(), 2);
+        // below a note, with a note for the library around it
+        let mut p2 = Package::open(&path).unwrap();
+        assert_eq!(import_into(&store, &mut p2, Some(top[0].id), true).unwrap(), 4);
+        let under = store.children(Some(top[0].id)).unwrap();
+        assert_eq!(under.last().unwrap().title, "测试库");
+        assert_eq!(store.children(Some(under.last().unwrap().id)).unwrap()[0].title, "甲/乙:丙");
         assert!(Package::open(&dir.join("missing.zip")).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }

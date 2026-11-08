@@ -6,7 +6,8 @@
   import * as api from "./api.js";
 
   // `sel`: { whole, keys, rels } as the export command takes them; `label`: what is exported
-  let { lib, sel, label, onclose, ondone } = $props();
+  // `name`: what the file is named after (the node, the parent of the picked nodes, or the library)
+  let { lib, sel, label, name, onclose, ondone } = $props();
 
   let withFiles = $state(true);
   let busy = $state(false);
@@ -21,14 +22,21 @@
 
   const safe = (s) => s.replace(/[\\/:*?"<>|]+/g, "_").trim() || "export";
 
+  /** yyyyMMddHH: the version of the export */
+  function stamp() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}`;
+  }
+
   async function run() {
     error = "";
     let out;
     try {
       out = await save({
         title: "导出到",
-        defaultPath: `${safe(sel.whole ? lib.title : `${lib.title} - ${label}`)}.zip`,
-        filters: [{ name: "知识库导出包", extensions: ["zip"] }],
+        defaultPath: `${safe(name || lib.title)}-${stamp()}.smartlib`,
+        filters: [{ name: "知识库导出包（*.smartlib）", extensions: ["smartlib"] }],
       });
     } catch (e) {
       error = String(e);
@@ -54,7 +62,7 @@
     <h2>导出</h2>
     <p><b>{lib.title}</b>：{sel.whole ? "整个知识库" : label}</p>
     <p class="muted small">
-      导出包是一个 ZIP：<code>manifest.json</code>（目录树、标题、来源）加上每篇一个 Markdown 文件。
+      导出包（<code>.smartlib</code>，内部是 ZIP）：<code>manifest.json</code>（目录树、标题、来源）加上每篇一个 Markdown 文件。
       {#if lib.kind === "cbeta" || lib.kind === "html"}CBETA 的编注、异读和梵汉对照转成脚注，导入后仍可悬停查看；图片不导出。{/if}
       导入时成为一个可编辑的自建知识库。
     </p>

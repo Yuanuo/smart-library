@@ -2469,10 +2469,22 @@ pub struct ImportDone {
     notes: usize,
 }
 
-/// Read an export package into a new internal library.
+/// Read an export package: into a new internal library, or (`lib`, and
+/// `parent` a note id or none for the top) below a place of an internal one.
 #[tauri::command]
-pub async fn import_package(path: String, state: State<'_, AppState>) -> Result<ImportDone, String> {
+pub async fn import_package(path: String, lib: Option<String>, parent: Option<String>, state: State<'_, AppState>) -> Result<ImportDone, String> {
     let mut pkg = smart_library_core::exchange::Package::open(Path::new(&path))?;
+    if let Some(lib_id) = lib.filter(|l| !l.is_empty()) {
+        let store = notes_of(&state, &lib_id)?;
+        let parent = match parent.filter(|p| !p.is_empty()) {
+            Some(p) => Some(note_id(&p)?),
+            None => None,
+        };
+        // a whole library comes as one note named like it; picked nodes come as they are
+        let wrap = pkg.manifest["scope"] == "library";
+        let notes = smart_library_core::exchange::import_into(&store, &mut pkg, parent, wrap)?;
+        return Ok(ImportDone { status: status_of(&state), title: state.library(&lib_id)?.title, notes });
+    }
     let base = pkg.title();
     let title = {
         let libs = state.libraries.read().unwrap();
@@ -2494,7 +2506,7 @@ pub async fn import_package(path: String, state: State<'_, AppState>) -> Result<
         .cloned()
         .ok_or("知识库没有建好")?;
     let store = state.notes(&lib)?;
-    let notes = smart_library_core::exchange::import_into(&store, &mut pkg)?;
+    let notes = smart_library_core::exchange::import_into(&store, &mut pkg, None, false)?;
     state.titles.write().unwrap().remove(&lib.id);
     Ok(ImportDone { status, title, notes })
 }
