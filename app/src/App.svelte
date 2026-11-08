@@ -132,10 +132,13 @@
     }
   }
 
-  /** "Copy path" of a reading tab. */
-  function copyTabPath({ lib, path, title }) {
+  /** "Copy path" of a reading tab: the original file, or the titles in the tree. */
+  async function copyTabPath({ lib, bookId, path, title, tree }) {
     const l = libraries.find((x) => x.id === lib);
-    copyPath(l && l.kind !== "notes" && path ? fullPath(l, path) : [l?.title, title].filter(Boolean).join(" › "));
+    if (tree || !l || l.kind === "notes" || !path) {
+      const tp = await libPanel?.treePath({ lib, bookId, path });
+      copyPath(tp ?? [l?.title, title].filter(Boolean).join(" › "));
+    } else copyPath(fullPath(l, path));
   }
 
   // ---- bookmarks, collections and tags
@@ -443,7 +446,7 @@
   $effect(() => {
     if (wsEl && st && !wsReady) {
       wsReady = true;
-      workspace.init(wsEl, { resultsProps: rs, libraries: st.libraries, onlocate: locate, onaction: readerAction, oncopypath: copyTabPath }).catch((e) => (error = String(e)));
+      workspace.init(wsEl, { resultsProps: rs, libraries: st.libraries, onlocate: locate, onaction: readerAction, oncopypath: copyTabPath, ontreepath: (d) => libPanel?.treePath(d) }).catch((e) => (error = String(e)));
     }
   });
 

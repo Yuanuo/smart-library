@@ -21,6 +21,7 @@
   // type; the tabs limit it to one knowledge library.
   import { onMount, tick } from "svelte";
   import * as api from "./api.js";
+  import { settings } from "./settings.svelte.js";
 
   // `scope`: { lib, label, within } when started from a node of the tree
   let { libraries, onopen, onclose, scope = null, initialQuery = null } = $props();
@@ -60,7 +61,8 @@
     run();
   });
 
-  async function run() {
+  // `more`: the next batch is added to the list (the same search, a larger limit)
+  async function run(more = false) {
     const my = ++seq;
     if (!query.trim().startsWith("#")) quote = null;
     if (!scope) {
@@ -70,12 +72,15 @@
     }
     loading = true;
     try {
-      const r = await api.quickSearch(query, lib, 200, quote, scope?.within ?? null);
+      const limit = more && result ? result.items.length + settings.quickLimit : settings.quickLimit;
+      const r = await api.quickSearch(query, lib, limit, quote, scope?.within ?? null);
       if (my !== seq) return;
       result = r;
       error = "";
-      selected = 0;
-      list?.scrollTo(0, 0);
+      if (!more) {
+        selected = 0;
+        list?.scrollTo(0, 0);
+      }
     } catch (e) {
       if (my === seq) error = String(e);
     } finally {
@@ -103,10 +108,21 @@
     input.focus();
   }
 
+  /** The end of the list is near: add the next batch. */
+  function loadMore() {
+    if (!result || loading || result.items.length >= result.total) return;
+    run(true);
+  }
+
+  function onListScroll() {
+    if (list && list.scrollTop + list.clientHeight >= list.scrollHeight - 120) loadMore();
+  }
+
   async function move(delta) {
     const n = result?.items.length ?? 0;
     if (!n) return;
     selected = Math.max(0, Math.min(n - 1, selected + delta));
+    if (selected >= n - 3) loadMore();
     await tick();
     list?.querySelector(`[data-i="${selected}"]`)?.scrollIntoView({ block: "nearest" });
   }
@@ -171,7 +187,7 @@
       <span class="help" title={"输入经名、经号、品名、作译者；空格分隔多个关键词，简繁通用。\n输入 # 转到 CBETA 的经、卷或行（如 #T0001_001、#T01n0001_p0001a01），也可以直接粘贴 CBETA 的引用文字。\n↑↓ 选择，Enter 打开，Tab 切换知识库，Esc 关闭。"}>?</span>
     </div>
     <div class="field">
-      <input bind:this={input} bind:value={query} oninput={run} onpaste={paste} onkeydown={keydown}
+      <input bind:this={input} bind:value={query} oninput={() => run()} onpaste={paste} onkeydown={keydown}
         placeholder="经名、经号、品名、作译者（空格分隔关键词）" aria-label="快搜" spellcheck="false" />
       <span class="stat">
         {#if loading && !result}准备标题…
@@ -193,7 +209,7 @@
     {:else if result && !result.items.length}
       <p class="note">没有找到。</p>
     {/if}
-    <ul class="list" bind:this={list} role="listbox" aria-label="结果">
+    <ul class="list" bind:this={list} role="listbox" aria-label="结果" onscroll={onListScroll}>
       {#each result?.items ?? [] as item, i (i)}
         <li data-i={i} role="option" aria-selected={i === selected} class:sel={i === selected}
           onmousemove={() => (selected = i)} onclick={() => choose(item)}>

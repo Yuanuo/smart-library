@@ -1559,7 +1559,7 @@ pub async fn quick_search(
     state: State<'_, AppState>,
 ) -> Result<QuickDto, String> {
     let start = std::time::Instant::now();
-    let limit = limit.unwrap_or(200).clamp(1, 1000);
+    let limit = limit.unwrap_or(200).clamp(1, 5000);
     // `#...`: a command to go to a CBETA book, juan or line, nothing else
     let command = query.trim_start().starts_with('#');
     let words = query_words(&query);

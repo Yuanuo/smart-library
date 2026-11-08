@@ -67,6 +67,7 @@
   $effect(() => save("reader.showLb", showLb ? "1" : "0"));
   $effect(() => save("reader.noteMode", shared.noteMode));
   const noteMode = $derived(shared.noteMode);
+  const hasFn = $derived(!!vol?.html && vol.html.includes('class="fn"')); // an article with footnotes
   const coloring = $derived(noteMode === "color" || noteMode === "color-orig");
 
   // note points without a changed reading (no `.app.v` with their id): in
@@ -140,6 +141,9 @@
     return el.dataset.tip || "";
   }
 
+  /** CBETA writes "nothing" as no text or `〔－〕` after the editions. */
+  const reading = (t) => (!t.trim() || /^〔[－\-−]〕$/.test(t.trim()) ? "無" : t.trim());
+
   function readings(text) {
     return text
       .split("；")
@@ -148,7 +152,7 @@
       .map((s) => {
         // several editions share a reading: `【宋】 【元】 【明】憋`
         const m = s.match(/^((?:\s*【[^】]*】)+)\s*(.*)$/);
-        return m ? [m[1].replace(/\s+/g, ""), m[2]] : ["", s];
+        return m ? [m[1].replace(/\s+/g, ""), reading(m[2])] : ["", s];
       });
   }
 
@@ -160,8 +164,8 @@
     const rows = [];
     for (const s of segs) {
       const m = s.match(/^(.*?)((?:\s*【[^】]*】)+)$/);
-      if (!m || !m[1].trim()) return null;
-      rows.push([m[2].replace(/\s+/g, ""), m[1].trim()]);
+      if (!m) return null;
+      rows.push([m[2].replace(/\s+/g, ""), reading(m[1])]); // editions only: "nothing"
     }
     return rows;
   }
@@ -385,6 +389,11 @@
                 <button class:on={noteMode === k} title={help} onclick={() => ((shared.noteMode = k), closeTip())}>{label}</button>
               {/each}
             </div>
+          {:else if hasFn}
+            <div class="seg notes" role="group" aria-label="注释显示">
+              <button class:on={noteMode === "none"} title="不显示注释标记" onclick={() => ((shared.noteMode = "none"), closeTip())}>无</button>
+              <button class:on={noteMode !== "none"} title="显示（注），鼠标移上去看注释" onclick={() => ((shared.noteMode = noteMode === "none" ? "color" : noteMode), closeTip())}>标注</button>
+            </div>
           {/if}
         {/if}
         {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
@@ -448,7 +457,7 @@
   .tip.below::after { bottom: auto; top: -6px; border: 6px solid transparent; border-top: none; border-bottom-color: var(--ink); }
   .tip table { border-collapse: collapse; }
   .tip td { padding: 1px 0; vertical-align: top; }
-  .tip td.k { white-space: nowrap; padding-right: 2px; opacity: 0.85; }
+  .tip td.k { white-space: nowrap; padding-right: 2px; opacity: 0.85; text-align: right; }
   .tip tr.sep td { padding: 0; height: 9px; border-bottom: 1px solid color-mix(in srgb, var(--paper) 35%, transparent); }
   .tip tr.sep + tr td { padding-top: 6px; }
   .reader { display: flex; flex-direction: column; height: 100%; }

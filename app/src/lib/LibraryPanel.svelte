@@ -205,10 +205,30 @@
     return out;
   }
 
-  /** The full path of a node: a file path for folders, `<package>!/<path>` for data packages, the titles for notes. */
-  function pathText(l, node, key) {
-    const p = l.kind === "notes" ? null : node.path ?? node.rel ?? node.start;
-    return p ? fullPath(l, p) : titleChain(l, key).join(" › ");
+  /** The original file: a file path for folders, `<package>!/<path>` for data packages. */
+  function filePath(l, node) {
+    const p = node.path ?? node.rel ?? node.start;
+    return p ? fullPath(l, p) : l.source;
+  }
+
+  /** The titles from the library down to a document, as text (null when it is not in the tree). */
+  export async function treePath({ lib, bookId, path }) {
+    const l = libraries.find((x) => x.id === lib);
+    if (!l) return null;
+    try {
+      if (!nodes[lib]) await load(lib);
+      const trail = isFolder(lib) ? await findFolderNode(lib, path) : findNode(nodes[lib] ?? [], { bookId, path });
+      if (!trail) return null;
+      let list = nodes[lib];
+      const out = [l.title];
+      for (const i of trail) {
+        out.push(list[i].title);
+        list = list[i].children;
+      }
+      return out.join(" › ");
+    } catch {
+      return null;
+    }
   }
 
   const searchItems = (l, node, key) => [
@@ -216,7 +236,8 @@
     { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
     { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: `${l.title} › ${node.title}`, within: withinOf(l, node) }) },
     "separator",
-    { label: "复制路径", action: () => oncopy(pathText(l, node, key)) },
+    ...(l.kind === "notes" ? [] : [{ label: "复制原文件路径", action: () => oncopy(filePath(l, node)) }]),
+    { label: "复制目录树路径", action: () => oncopy(titleChain(l, key).join(" › ")) },
   ];
 
   /** Context menu of a node: search from here; notes can also be edited. */
@@ -284,7 +305,11 @@
     }
   });
 
-  async function load(id) {
+  const loadings = {}; // lib id -> the running load
+  function load(id) {
+    return (loadings[id] ??= doLoad(id).finally(() => delete loadings[id]));
+  }
+  async function doLoad(id) {
     loading[id] = true;
     errors[id] = "";
     try {
@@ -419,7 +444,8 @@
         ...(l.kind === "notes" ? [{ label: "新建笔记…", action: () => newNote(l.id, null, null) }] : []),
         { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: l.title, within: null }) },
         { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
-        { label: "复制路径", action: () => oncopy(l.kind === "notes" ? l.title : l.source) },
+        ...(l.kind === "notes" ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
+        { label: "复制目录树路径", action: () => oncopy(l.title) },
         "separator",
         { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
         ...(l.kind === "folder" ? [] : [{ label: "从同一数据包绑定其他知识库…", action: () => onrebind(l) }]),

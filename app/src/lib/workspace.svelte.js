@@ -156,8 +156,17 @@ function readerRenderer() {
             panelApi?.setTitle(t);
             infos[panelApi.id] = { title: t, lib: state.lib, path: state.path, bookId: state.bookId, author: meta?.author || "" };
             if (panelApi?.isActive) ws.current = { ...infos[panelApi.id] };
-            tooltips[panelApi.id] = tooltip;
-            applyTooltip(panelApi.id);
+            const id = panelApi.id;
+            tooltips[id] = tooltip;
+            applyTooltip(id);
+            // the path in the tree joins the tooltip when it is known
+            Promise.resolve(hooks.ontreepath?.({ lib: state.lib, bookId: state.bookId, path: state.path }))
+              .then((tp) => {
+                if (!tp || tooltips[id] === undefined) return;
+                tooltips[id] = `${tooltip}\n目录：${tp}`;
+                applyTooltip(id);
+              })
+              .catch(() => {});
           },
         },
       });
@@ -244,13 +253,15 @@ function tabMenu({ panel, group }) {
         hooks.onlocate?.({ lib: i.lib, bookId: i.bookId, path: i.path });
       },
     });
-    items.push({
-      label: "复制路径",
-      action: () => {
-        const i = infos[panel.id] || panel.params || {};
-        hooks.oncopypath?.({ lib: i.lib, path: i.path, title: panel.title });
-      },
-    });
+    for (const [label, tree] of [["复制原文件路径", false], ["复制目录树路径", true]]) {
+      items.push({
+        label,
+        action: () => {
+          const i = infos[panel.id] || panel.params || {};
+          hooks.oncopypath?.({ lib: i.lib, bookId: i.bookId, path: i.path, title: panel.title, tree });
+        },
+      });
+    }
   }
   return items;
 }

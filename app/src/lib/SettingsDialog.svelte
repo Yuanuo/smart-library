@@ -93,6 +93,17 @@
       <p class="sample" aria-label="预览">如是我聞。一時佛在舍衛國祇樹給孤獨園。Sample 0123</p>
     </fieldset>
 
+    <fieldset>
+      <legend>搜索</legend>
+      <div class="row">
+        <span>快搜每批</span>
+        <input type="range" min="50" max="1000" step="50" value={settings.quickLimit}
+          oninput={(e) => update({ quickLimit: Number(e.currentTarget.value) })} />
+        <output>{settings.quickLimit} 项</output>
+      </div>
+      <p class="muted hint">标题快搜先显示这么多条，列表滚到底（或用键盘走到末尾）时自动再加载一批。</p>
+    </fieldset>
+
     <div class="actions">
       <button onclick={reset}>恢复默认</button>
       <button class="primary" onclick={onclose}>完成</button>
@@ -127,5 +138,6 @@
     margin: 8px 0 0; padding: 10px 14px; background: var(--bg); border-radius: 6px;
     font-family: var(--reader-font, inherit); font-size: var(--reader-size, 19px); line-height: var(--reader-line, 2);
   }
+  .hint { margin: 0 0 6px; font-size: 13px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 </style>
