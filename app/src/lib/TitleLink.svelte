@@ -3,12 +3,13 @@
   // the locate icon and the title together show the document in the tree.
   import Icon from "./Icon.svelte";
 
-  let { title, onlocate = null } = $props();
+  // `text`: what is shown when it is not the whole title (the tool bar next to it may already say part of it)
+  let { title, text = title, onlocate = null } = $props();
 </script>
 
 {#if onlocate}
   <button class="title-link" onclick={onlocate} title="在目录树中定位：{title}" aria-label="在目录树中定位">
-    <Icon name="locate" size={16} /><span>{title}</span>
+    <Icon name="locate" size={16} />{#if text}<span>{text}</span>{/if}
   </button>
 {:else}
   <strong class="title-plain">{title}</strong>

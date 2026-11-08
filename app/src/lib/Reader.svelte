@@ -149,6 +149,13 @@
   /** CBETA writes "nothing" as no text or `〔－〕` after the editions. */
   const reading = (t) => (!t.trim() || /^〔[－\-−]〕$/.test(t.trim()) ? "無" : t.trim());
 
+  // the title at the left of the tool bar leaves out what the volume list next to it says
+  // (the volume `卷一`; the whole title when the list shows the article's name)
+  const shownTitle = $derived.by(() => {
+    const now = vol?.volumes?.find((v) => v.path === vol.path)?.label ?? "";
+    return now && now === vol.title ? "" : vol?.title ?? "";
+  });
+
   function readings(text) {
     return text
       .split("；")
@@ -387,7 +394,7 @@
   <div class="reader">
     <header>
       <div class="nav">
-        <TitleLink title={vol.label ? `${vol.title} ${vol.label}` : vol.title} {onlocate} />
+        <TitleLink title={vol.label ? `${vol.title} ${vol.label}` : vol.title} text={shownTitle} {onlocate} />
         <select aria-label={vol.kind !== "cbeta" ? "同一目录的文章" : "卷"} class="vols" value={vol.path} onchange={(e) => onvolume(e.target.value)}>
           {#each vol.volumes as v}
             <option value={v.path} disabled={!v.exists}>{v.label}{v.exists ? "" : "（缺）"}</option>
