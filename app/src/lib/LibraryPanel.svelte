@@ -321,7 +321,7 @@
     if (!l) return null;
     try {
       if (!nodes[lib]) await load(lib);
-      const trail = isFolder(lib) ? await findFolderNode(lib, path) : findNode(nodes[lib] ?? [], { bookId, path });
+      const trail = await trailOf(lib, bookId, path);
       if (!trail) return null;
       let list = nodes[lib];
       const out = [l.title];
@@ -529,12 +529,38 @@
     return trail;
   }
 
+  /** Index path of a note of an internal library: its chain of ids, loading the levels on the way. */
+  async function findNoteNode(lib, id) {
+    let chain;
+    try {
+      chain = await api.noteChain(lib, id);
+    } catch {
+      return null; // deleted
+    }
+    let list = nodes[lib] ?? [];
+    const trail = [];
+    for (let d = 0; d < chain.length; d++) {
+      const i = list.findIndex((n) => n.rel === chain[d]);
+      if (i < 0) return null;
+      trail.push(i);
+      if (d < chain.length - 1) {
+        await loadChildren(lib, list[i]);
+        list = list[i].children;
+      }
+    }
+    return trail;
+  }
+
+  /** Index path of a document in the tree (loading folders on the way). */
+  const trailOf = (lib, bookId, path) =>
+    isFolder(lib) ? findFolderNode(lib, path) : isNotes(lib) ? findNoteNode(lib, path) : findNode(nodes[lib] ?? [], { bookId, path });
+
   /** Open the tree down to the node of a document and select it. */
   export async function reveal({ lib, bookId, path }) {
     if (!libraries.some((l) => l.id === lib)) return false;
     open[lib] = true;
     if (!nodes[lib]) await load(lib);
-    const trail = isFolder(lib) ? await findFolderNode(lib, path) : findNode(nodes[lib] ?? [], { bookId, path });
+    const trail = await trailOf(lib, bookId, path);
     if (!trail) return false;
     const ex = (expanded[lib] ??= {});
     let key = "";

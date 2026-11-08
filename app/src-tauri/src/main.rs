@@ -94,6 +94,7 @@ fn main() {
             commands::note_targets,
             commands::create_note_at,
             commands::diary_today,
+            commands::note_chain,
             commands::rename_library,
             commands::rename_note,
             commands::save_note,

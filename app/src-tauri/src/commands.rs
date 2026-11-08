@@ -816,6 +816,19 @@ pub async fn diary_today(date: String, state: State<'_, AppState>) -> Result<Dia
     Ok(DiaryDto { status: status_of(&state), note })
 }
 
+/// The ids from the top of a library down to a note (itself last), to find it in the tree.
+#[tauri::command]
+pub async fn note_chain(lib: String, id: String, state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let l = state.library(&lib)?;
+    if l.kind != "notes" {
+        return Err("这个知识库不是自建的".into());
+    }
+    let store = state.notes(&l)?;
+    let id = note_id(&id)?;
+    store.get(id)?.ok_or("笔记不存在")?;
+    Ok(store.chain(id)?.iter().map(|i| i.to_string()).collect())
+}
+
 fn notes_of(state: &AppState, lib: &str) -> Result<Arc<NotesStore>, String> {
     let l = state.library(lib)?;
     if l.kind != "notes" {
