@@ -1,5 +1,6 @@
 //! A small Markdown subset to the HTML whitelist of `article.rs`: headings,
 //! paragraphs, bullet and numbered lists, block quotes, fenced code,
+//! tables (every row is a paragraph of its own, the cells apart by ` | `),
 //! `**bold**`, `*italic*`, and a link to a place in a document,
 //! `[text](smartlib://open?lib=…&path=…&lb=…)` (how a clipping points back to
 //! its source), and footnotes `[^1]` with `[^1]: text` lines (shown as hover
@@ -209,6 +210,15 @@ pub fn to_html(md: &str) -> String {
             close_list(&mut out, &mut list);
             continue;
         }
+        // a table row `| a | b |`; the line under the header (`| - | - |`) says nothing
+        if t.len() > 1 && t.starts_with('|') && t.ends_with('|') {
+            close_list(&mut out, &mut list);
+            if !t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')) {
+                let cells: Vec<String> = t[1..t.len() - 1].split('|').map(|c| self::line(c.trim(), &defs)).collect();
+                out.push_str(&format!("<p>{}</p>", cells.join(" | ")));
+            }
+            continue;
+        }
         let hashes = t.chars().take_while(|&c| c == '#').count();
         if (1..=6).contains(&hashes) && t[hashes..].starts_with(' ') {
             close_list(&mut out, &mut list);
@@ -265,6 +275,19 @@ mod tests {
         assert!(h.contains("<ul><li>一</li><li>二</li></ul>"));
         assert!(h.contains("<ol><li>甲</li></ol>"));
         assert!(h.contains("<blockquote>引用</blockquote>") && h.contains("<p>code</p>"));
+    }
+
+    #[test]
+    fn table_rows_are_paragraphs() {
+        let h = to_html("| 名 | 义 |
+| - | - |
+| **甲** | 一 |
+
+```js
+let a = 1;
+```");
+        assert!(h.contains("<p>名 | 义</p><p><b>甲</b> | 一</p>"), "{h}");
+        assert!(!h.contains("- | -") && h.contains("<p>let a = 1;</p>"), "{h}");
     }
 
     #[test]

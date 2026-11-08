@@ -58,11 +58,12 @@
     const c = new Crepe({
       root,
       defaultValue: initial,
-      // what the program can show elsewhere: no tables, formulas, code editor
-      features: { [F.Table]: false, [F.Latex]: false, [F.CodeMirror]: false, [F.TopBar]: false, [F.AI]: false },
+      // tables and code blocks are on (the search index reads their rows and lines as text);
+      // formulas, the top bar and the AI helper are not
+      features: { [F.Latex]: false, [F.TopBar]: false, [F.AI]: false },
       featureConfigs: {
         [F.ImageBlock]: { onUpload: upload, blockOnUpload: upload, inlineOnUpload: upload, proxyDomURL: proxy },
-        [F.Placeholder]: { text: "写点什么……（输入 / 选择标题、列表、引文、图片；可以直接粘贴图片）" },
+        [F.Placeholder]: { text: "写点什么……（输入 / 选择标题、列表、引文、表格、代码、图片；可以直接粘贴图片）" },
       },
     });
     // the editor writes the text its own way when it loads: only a change after that counts
