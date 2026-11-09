@@ -113,6 +113,7 @@ fn main() {
             commands::open_node,
             commands::resolve_node,
             commands::search,
+            commands::random_sentence,
             commands::quick_search,
             commands::prepare_titles,
             commands::citation_command,

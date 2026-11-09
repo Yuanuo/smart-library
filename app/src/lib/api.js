@@ -54,6 +54,7 @@ export const openNode = (lib, bookId, path, query = null, phrase = false) =>
   invoke("open_node", { lib, bookId, path, query, phrase });
 export const resolveNode = (lib, bookId = null, path = null) => invoke("resolve_node", { lib, bookId, path });
 export const search = (args) => invoke("search", args);
+export const randomSentence = (args) => invoke("random_sentence", args);
 export const quickSearch = (query, lib = null, limit = 200, quote = null, within = null) =>
   invoke("quick_search", { query, lib, limit, quote, within });
 export const citationCommand = (text) => invoke("citation_command", { text });

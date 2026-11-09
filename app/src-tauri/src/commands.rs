@@ -1602,6 +1602,150 @@ pub struct SearchDto {
     hits: Vec<HitDto>,
 }
 
+/// The search range list as one range per library (`None`: the whole library).
+fn ranges_of(state: &AppState, withins: Vec<WithinDto>) -> Result<HashMap<String, Option<Within>>, String> {
+    let mut ranges: HashMap<String, Option<Within>> = HashMap::new();
+    for w in withins {
+        let item = if w.whole { None } else { Some(resolve_within(state, &w)?) };
+        match (ranges.get_mut(&w.lib), item) {
+            (Some(None), _) => {}
+            (Some(slot), None) => *slot = None,
+            (Some(Some(have)), Some(more)) => {
+                have.books.extend(more.books);
+                have.paths.extend(more.paths);
+            }
+            (None, item) => {
+                ranges.insert(w.lib.clone(), item);
+            }
+        }
+    }
+    Ok(ranges)
+}
+
+#[derive(Serialize)]
+pub struct RandomDto {
+    lib: String,
+    book_id: Option<String>,
+    title: String,
+    subtitle: String,
+    path: String,
+    lb: String,
+    sentence: String,
+}
+
+fn random_below(n: usize) -> usize {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1);
+    let mut x = (t ^ SEQ.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed).wrapping_mul(0x2545_F491_4F6C_DD1D)) | 1;
+    for _ in 0..3 {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+    }
+    (x % n.max(1) as u64) as usize
+}
+
+/// A random sentence ("I'm feeling lucky"): a random document of the search
+/// range (and filters of the current library), a random sentence of it.
+#[tauri::command]
+pub async fn random_sentence(
+    lib: Option<String>,
+    filters: Option<Vec<FilterDto>>,
+    withins: Option<Vec<WithinDto>>,
+    state: State<'_, AppState>,
+) -> Result<RandomDto, String> {
+    let ranges = ranges_of(&state, withins.unwrap_or_default())?;
+    let mut libs = state.libraries.read().unwrap().clone();
+    if !ranges.is_empty() {
+        libs.retain(|l| ranges.contains_key(&l.id));
+    }
+    if let Some(id) = lib.as_ref().filter(|id| libs.iter().any(|l| &l.id == *id)) {
+        libs.retain(|l| &l.id == id);
+    }
+    let filters: Vec<Filter> = filters
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| !f.values.is_empty() && lib.is_some())
+        .map(|f| Filter { root: f.root, values: f.values })
+        .collect();
+    // several tries: some documents have no sentence of a good length
+    for _ in 0..8 {
+        let mut counts = Vec::new();
+        for l in &libs {
+            if let Some(idx) = state.index(&l.id) {
+                let mut r = SearchRequest::new("");
+                r.within = ranges.get(&l.id).cloned().flatten();
+                r.filters = filters.clone();
+                counts.push((l.clone(), idx.count(&r)?));
+            }
+        }
+        let total: usize = counts.iter().map(|c| c.1).sum();
+        if total == 0 {
+            return Err("范围内没有可搜索的文档（需要先建立索引）".into());
+        }
+        let mut k = random_below(total);
+        let mut chosen = None;
+        for (l, n) in &counts {
+            if k < *n {
+                chosen = Some(l.clone());
+                break;
+            }
+            k -= n;
+        }
+        let l = chosen.ok_or("没有可用的知识库")?;
+        let idx = state.index(&l.id).ok_or("索引不可用")?;
+        let mut req = SearchRequest::new("");
+        req.within = ranges.get(&l.id).cloned().flatten();
+        req.filters = filters.clone();
+        req.limit = 1;
+        req.offset = k;
+        let r = idx.search(&req)?;
+        let Some(h) = r.hits.first() else { continue };
+        let vt = if is_article(&l) {
+            article_of(&state, &l, &h.path, None).map(|a| a.text)
+        } else {
+            state.bookcase_of(&l)?.volume_text(&h.path)
+        };
+        let Ok(vt) = vt else { continue };
+        // sentences: cut after 。？！； of the punctuated text, 8-60 chars, mostly Chinese
+        let mut sentences: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        for c in vt.text.chars() {
+            if c == '\n' {
+                cur.clear();
+                continue;
+            }
+            cur.push(c);
+            if "。？！；".contains(c) {
+                let t = cur.trim().to_string();
+                let len = t.chars().count();
+                let han = t.chars().filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c)).count();
+                if (8..=60).contains(&len) && han * 10 >= len * 7 {
+                    sentences.push(t);
+                }
+                cur.clear();
+            }
+        }
+        if sentences.is_empty() {
+            continue;
+        }
+        let sentence = sentences[random_below(sentences.len())].clone();
+        let lb = locate(&vt, &sentence, MatchMode::Phrase).first().map(|o| o.lb.clone()).unwrap_or_default();
+        let subtitle = if is_article(&l) { String::new() } else { format!("卷{}", smart_library_core::bookcase::chinese_number(h.juan as u32)) };
+        return Ok(RandomDto {
+            lib: l.id.clone(),
+            book_id: if is_article(&l) { None } else { Some(h.book.clone()) },
+            title: h.title.clone(),
+            subtitle,
+            path: h.path.clone(),
+            lb,
+            sentence,
+        });
+    }
+    Err("没有找到合适的句子，请再试一次".into())
+}
+
 /// One facet filter of the search page: one of the `values` of a dimension.
 #[derive(Deserialize, Clone)]
 pub struct FilterDto {
@@ -1638,21 +1782,7 @@ pub async fn search(
     let mut libs = state.libraries.read().unwrap().clone();
     // a search range: those libraries only; per library the union of its
     // items (`None`: the whole library)
-    let mut ranges: HashMap<String, Option<Within>> = HashMap::new();
-    for w in withins.unwrap_or_default() {
-        let item = if w.whole { None } else { Some(resolve_within(&state, &w)?) };
-        match (ranges.get_mut(&w.lib), item) {
-            (Some(None), _) => {}
-            (Some(slot), None) => *slot = None,
-            (Some(Some(have)), Some(more)) => {
-                have.books.extend(more.books);
-                have.paths.extend(more.paths);
-            }
-            (None, item) => {
-                ranges.insert(w.lib.clone(), item);
-            }
-        }
-    }
+    let ranges = ranges_of(&state, withins.unwrap_or_default())?;
     if !ranges.is_empty() {
         libs.retain(|l| ranges.contains_key(&l.id));
     }

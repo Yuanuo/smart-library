@@ -66,6 +66,29 @@
     }
   }
 
+  // ---------------------------------------------------------------- lucky
+  let lucky = $state(null); // a random sentence of the range
+  let luckyBusy = $state(false);
+  async function feelLucky() {
+    luckyBusy = true;
+    error = "";
+    try {
+      const filters = Object.entries(s.filters).filter(([, v]) => v.length).map(([root, values]) => ({ root, values }));
+      lucky = await api.randomSentence({
+        lib: s.lib,
+        filters: filters.length ? filters : null,
+        withins: s.scopes.length ? $state.snapshot(s.scopes) : null,
+      });
+    } catch (e) {
+      error = String(e);
+    } finally {
+      luckyBusy = false;
+    }
+  }
+  function openLucky() {
+    onopen({ lib: lucky.lib, bookId: lucky.book_id, path: lucky.path, lb: lucky.lb || null, query: lucky.sentence, phrase: true });
+  }
+
   function title() {
     const q = s.query.trim();
     return q ? `搜索：${q.length > 12 ? q.slice(0, 12) + "…" : q}` : s.ran ? "搜索：全部" : "全文搜索";
@@ -233,6 +256,7 @@
         title="整句连续出现（忽略标点）">精确</button>
     </span>
     <button class="primary" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
+    <button type="button" disabled={luckyBusy} onclick={feelLucky} title="在当前范围里随机抽一句">随机一句</button>
     {#if onpopout}
       <button type="button" class="link" onclick={onpopout} title="在新窗口打开这个搜索">新窗口</button>
     {/if}
@@ -282,6 +306,17 @@
       ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
 
     <section class="results">
+      {#if lucky}
+        <div class="lucky">
+          <p class="sentence">{lucky.sentence}</p>
+          <div class="src muted">
+            《{lucky.title}》{lucky.subtitle}{lucky.lb ? ` · ${lucky.lb}` : ""}
+            <button class="link" onclick={openLucky}>打开原文</button>
+            <button class="link" onclick={feelLucky} disabled={luckyBusy}>再来一句</button>
+            <button class="link" onclick={() => (lucky = null)} aria-label="关闭">×</button>
+          </div>
+        </div>
+      {/if}
       {#if result && result.libraries.length > 1}
         <div class="libs" role="tablist" aria-label="知识库">
           {#each result.libraries as l}
@@ -388,6 +423,9 @@
   .x { font-size: 16px; color: var(--muted); }
   .clr { margin-top: 6px; }
   .results { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .lucky { margin: 10px 24px 0; padding: 10px 16px; background: var(--accent-soft); border-radius: 8px; }
+  .lucky .sentence { margin: 0 0 4px; font-size: 18px; line-height: 1.8; }
+  .lucky .src { font-size: 13px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
   .libs { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 24px 0; }
   .libs button { border-radius: 14px; font-size: 13px; padding: 2px 12px; }
   .libs button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
