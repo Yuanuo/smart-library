@@ -318,6 +318,22 @@ impl FolderLibrary {
         let path = self.abs(rel)?;
         let name = rel.rsplit('/').next().unwrap_or(rel);
         let ext = ext_of(name);
+        if crate::doctext::is_document(&ext) {
+            // a PDF or office document: its text (when it has none, or cannot be read: what is known of the file)
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            if self.filter.max_mb != 0 && size > self.filter.max_mb * 1024 * 1024 {
+                return Err(format!("{}: 文件太大", rel));
+            }
+            return match crate::doctext::extract(&path, &ext) {
+                Ok(text) if !text.trim().is_empty() => Ok(read_article(&plain_html(&text), "", render)),
+                Ok(_) => Ok(read_article(&info_html(&path, rel, name, &ext), "", render)),
+                Err(e) => {
+                    let mut lines = info_lines(&path, rel, name, &ext);
+                    lines.push(format!("（文字读不出来：{}）", e));
+                    Ok(read_article(&plain_html(&lines.join("\n")), "", render))
+                }
+            };
+        }
         if !TEXT_EXTS.contains(&ext.as_str()) {
             return Ok(read_article(&info_html(&path, rel, name, &ext), "", render));
         }
@@ -990,6 +1006,10 @@ fn plain_html(text: &str) -> String {
 
 /// Name, folders, type, size and date of a file, as a tiny article.
 fn info_html(path: &Path, rel: &str, name: &str, ext: &str) -> String {
+    plain_html(&info_lines(path, rel, name, ext).join("\n"))
+}
+
+fn info_lines(path: &Path, rel: &str, name: &str, ext: &str) -> Vec<String> {
     let meta = std::fs::metadata(path).ok();
     let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
     let date = meta
@@ -1006,7 +1026,7 @@ fn info_html(path: &Path, rel: &str, name: &str, ext: &str) -> String {
     if !date.is_empty() {
         lines.push(format!("修改日期 {}", date));
     }
-    plain_html(&lines.join("\n"))
+    lines
 }
 
 fn human_size(n: u64) -> String {

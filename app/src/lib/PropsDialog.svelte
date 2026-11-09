@@ -48,7 +48,7 @@
       tags = r.tags;
       tags0 = norm(r.tags);
       aliases = [...(r.aliases ?? [])];
-      aliases0 = (r.aliases ?? []).join(""); // the order is kept
+      aliases0 = (r.aliases ?? []).join("\u0001"); // the order is kept
     } catch (e) {
       error = String(e);
     } finally {
@@ -80,7 +80,7 @@
         if (r.own && norm(r.values) !== norm(derived[d] ?? [])) dims[d] = r.values;
       }
       if (norm(tags) !== tags0) await api.nodeTagsSet(lib, bookId, path, title, tags.join(","));
-      const res = await api.propsSet(lib, bookId, path, dims, aliases.join("") !== aliases0 ? aliases : null);
+      const res = await api.propsSet(lib, bookId, path, dims, aliases.join("\u0001") !== aliases0 ? aliases : null);
       onsaved?.(res);
       onclose();
     } catch (e) {
