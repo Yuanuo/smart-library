@@ -276,8 +276,9 @@ impl NotesStore {
             params![parent, title, content, content_type, pos, t],
         )
         .map_err(err)?;
+        let id = c.last_insert_rowid(); // before `bump` writes another table
         bump(&c, &crate::attach::refs(content), 1)?;
-        Ok(c.last_insert_rowid())
+        Ok(id)
     }
 
     pub fn update(&self, id: i64, title: Option<&str>, content: Option<&str>) -> Result<(), String> {
