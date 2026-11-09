@@ -357,7 +357,7 @@ impl TitleIndex {
                     g
                 }
             };
-            let title = f.name.rsplit_once('.').map(|(s, _)| s).filter(|s| !s.is_empty()).unwrap_or(&f.name);
+            let title = crate::folder::title_of(&f.name);
             t.push(
                 TitleEntry { kind: TitleKind::Article, title: title.to_string(), group: g, path: Some(f.rel.clone()), lb: None },
                 title,

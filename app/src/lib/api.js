@@ -7,7 +7,17 @@ export const inspectSource = (path) => invoke("inspect_source", { path });
 export const bindLibraries = (path, cbetaTree, htmlTrees) =>
   invoke("bind_libraries", { path, cbetaTree, htmlTrees });
 export const inspectFolder = (path) => invoke("inspect_folder", { path });
-export const addFolder = (path, title, exts, maxMb) => invoke("add_folder", { path, title, exts, maxMb });
+export const addFolder = (path, title, exts, maxMb, writable = false) => invoke("add_folder", { path, title, exts, maxMb, writable });
+/** Read-write mode of a folder library on or off (ask the user to accept the rules first: writable.js). */
+export const setFolderWritable = (id, writable) => invoke("set_folder_writable", { id, writable });
+/** A new note / mind map / whiteboard file (`kind`: md, mindmap, whiteboard) in a folder (`parent`: path, "" for the top). */
+export const createFolderFile = (lib, parent, kind = "md", title = null) => invoke("create_folder_file", { lib, parent, kind, title });
+/** A new folder inside a folder (`parent`: path, "" for the top) of a read-write folder library. */
+export const createFolderDir = (lib, parent, name) => invoke("create_folder_dir", { lib, parent, name });
+/** The rules for local file names, as text. */
+export const fileNameRules = () => invoke("file_name_rules");
+/** Rejects with the reason when `name` cannot be a local file name. */
+export const checkFileName = (name) => invoke("check_file_name", { name });
 export const folderChildren = (lib, rel) => invoke("folder_children", { lib, rel });
 export const createNotesLibrary = (title) => invoke("create_notes_library", { title });
 export const createNote = (lib, parent, title) => invoke("create_note", { lib, parent, title });

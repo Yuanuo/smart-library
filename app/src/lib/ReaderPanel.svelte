@@ -23,7 +23,9 @@
   let localTarget = $state(null);
   let localNonce = $state(0);
 
-  const isNote = (v) => v?.kind === "notes" && v.content_type !== "mindmap" && v.content_type !== "whiteboard";
+  // `raw` comes only with what can be edited here: the notes of internal
+  // libraries and the editable files of folder libraries in read-write mode
+  const isNote = (v) => v?.raw != null && v.content_type !== "mindmap" && v.content_type !== "whiteboard";
 
   // ---- (re)load when the query of the tab changes; the path never changes
   let draft = $state(""); // the note's Markdown
@@ -83,7 +85,7 @@
     const text = draft;
     try {
       await api.saveNote(p.lib, p.path, text);
-      setLast({ lib: p.lib, id: p.path, title: vol.title }); // the note clippings go to by default
+      if (vol.kind === "notes") setLast({ lib: p.lib, id: p.path, title: vol.title }); // the note clippings go to by default
       status = "已保存";
     } catch (e) {
       dirty = true;

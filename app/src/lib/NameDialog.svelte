@@ -2,11 +2,27 @@
   // A small dialog asking for one line of text (a note title, a library name).
   import { onMount } from "svelte";
 
-  let { title, label = "名称", value = "", okLabel = "确定", onok, onclose } = $props();
+  // `hint`: a rule shown under the box; `validate(text)`: resolves to the reason
+  // the text is not acceptable (or "" when it is), checked as the user types.
+  let { title, label = "名称", value = "", okLabel = "确定", hint = "", validate = null, onok, onclose } = $props();
   let text = $state(value);
   let input = $state();
   let busy = $state(false);
   let error = $state("");
+  let bad = $state("");
+
+  $effect(() => {
+    const t = text.trim();
+    if (!validate || !t) {
+      bad = "";
+      return;
+    }
+    let stale = false;
+    Promise.resolve(validate(t)).then((e) => {
+      if (!stale) bad = e || "";
+    });
+    return () => (stale = true);
+  });
 
   onMount(() => {
     input?.focus();
@@ -15,7 +31,7 @@
 
   async function submit(e) {
     e.preventDefault();
-    if (!text.trim() || busy) return;
+    if (!text.trim() || busy || bad) return;
     busy = true;
     error = "";
     try {
@@ -33,10 +49,11 @@
     onkeydown={(e) => e.key === "Escape" && onclose()}>
     <h2>{title}</h2>
     <label>{label}<input type="text" bind:value={text} bind:this={input} /></label>
-    {#if error}<p class="error">{error}</p>{/if}
+    {#if bad}<p class="error">{bad}</p>{:else if error}<p class="error">{error}</p>{/if}
+    {#if hint}<p class="hint muted">{hint}</p>{/if}
     <div class="actions">
       <button type="button" onclick={onclose}>取消</button>
-      <button class="primary" disabled={!text.trim() || busy}>{okLabel}</button>
+      <button class="primary" disabled={!text.trim() || busy || !!bad}>{okLabel}</button>
     </div>
   </form>
 </div>
@@ -53,5 +70,6 @@
   h2 { margin: 0 0 10px; font-size: 18px; color: var(--accent); }
   label { display: flex; flex-direction: column; gap: 4px; }
   .error { color: var(--hl); font-size: 13px; }
+  .hint { font-size: 12px; margin: 6px 0 0; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 </style>

@@ -34,6 +34,18 @@
     <circle cx="12" cy="12" r="2.6" fill="currentColor" fill-opacity="0.25" /><circle cx="4.5" cy="6" r="1.8" /><circle cx="4.5" cy="18" r="1.8" /><circle cx="19.5" cy="7" r="1.8" /><circle cx="19.5" cy="17" r="1.8" /><path d="M9.5 11 6 7M9.5 13 6 17M14.5 11l3.5-3M14.5 13l3.5 3" />
   {:else if name === "whiteboard"}
     <rect x="3.5" y="4.5" width="17" height="12" rx="1.5" /><path d="M8 20l2-3.5M16 20l-2-3.5M7 13l3-3 2.5 2 3.5-4" />
+  {:else if name === "archive"}
+    <!-- a data package (zip): a box with a lid -->
+    <rect x="3.5" y="4.5" width="17" height="4.5" rx="1" fill="currentColor" fill-opacity="0.25" /><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9" /><path d="M10 13h4" />
+  {:else if name === "folder-lock"}
+    <!-- a local folder, read-only -->
+    <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" /><rect x="9.5" y="13" width="5" height="4.5" rx="0.8" fill="currentColor" fill-opacity="0.3" /><path d="M10.5 13v-1.2a1.5 1.5 0 0 1 3 0V13" />
+  {:else if name === "folder-edit"}
+    <!-- a local folder, read-write -->
+    <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" /><path d="m9.5 17.8.6-2.6 5.2-5.2 2 2-5.2 5.2z" fill="currentColor" fill-opacity="0.3" />
+  {:else if name === "database"}
+    <!-- an internal library (database) -->
+    <ellipse cx="12" cy="6" rx="7" ry="2.8" fill="currentColor" fill-opacity="0.25" /><path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6" /><path d="M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8" />
   {:else if name === "gear"}
     <path d="M12 3.5l1.4 2.2 2.5-.7.9 2.4 2.5.7-.4 2.6L21 12l-1.9 1.3.4 2.6-2.5.7-.9 2.4-2.5-.7L12 20.5l-1.4-2.2-2.5.7-.9-2.4-2.5-.7.4-2.6L3 12l1.9-1.3-.4-2.6 2.5-.7.9-2.4 2.5.7z" /><circle cx="12" cy="12" r="3" />
   {:else if name === "message"}

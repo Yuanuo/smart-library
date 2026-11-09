@@ -56,6 +56,11 @@ pub struct Library {
     pub exts: Vec<String>,
     #[serde(default)]
     pub max_mb: u64,
+    /// folder libraries: linked in read-write mode. Kept here, in the
+    /// settings of this computer, never in the folder: whoever clones the
+    /// folder must accept the rules again (design-spec 6.5).
+    #[serde(default)]
+    pub writable: bool,
 }
 
 pub struct AppState {
@@ -67,6 +72,13 @@ pub struct AppState {
     html: RwLock<HashMap<String, Arc<HtmlTree>>>,
     folders: RwLock<HashMap<String, Arc<FolderLibrary>>>,
     notes: RwLock<HashMap<String, Arc<NotesStore>>>,
+    /// read-write folder libraries: the stamp of each open file as last read or
+    /// saved (`<lib>|<path>`), to notice changes made outside
+    stamps: Mutex<HashMap<String, String>>,
+    /// documents edited since the index was built or last brought up to date
+    /// (folder paths / note ids), per library; the index gets them just
+    /// before a full-text search (`flush_dirty`)
+    dirty: Mutex<HashMap<String, HashSet<String>>>,
     indexes: RwLock<HashMap<String, Arc<SearchIndex>>>,
     /// title quick search, per library (built on first use)
     titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
@@ -90,6 +102,8 @@ impl AppState {
             html: RwLock::new(HashMap::new()),
             folders: RwLock::new(HashMap::new()),
             notes: RwLock::new(HashMap::new()),
+            stamps: Mutex::new(HashMap::new()),
+            dirty: Mutex::new(HashMap::new()),
             indexes: RwLock::new(HashMap::new()),
             titles: RwLock::new(HashMap::new()),
             building: Mutex::new(HashSet::new()),
@@ -137,7 +151,7 @@ impl AppState {
         if let Some(f) = self.folders.read().unwrap().get(&lib.id) {
             return Ok(f.clone());
         }
-        let f = Arc::new(FolderLibrary::open(Path::new(&lib.source), filter_of(lib))?);
+        let f = Arc::new(FolderLibrary::open(Path::new(&lib.source), filter_of(lib))?.with_writable(lib.writable));
         self.folders.write().unwrap().insert(lib.id.clone(), f.clone());
         Ok(f)
     }
@@ -178,6 +192,56 @@ impl AppState {
 
     fn index_dir(&self, id: &str) -> PathBuf {
         self.data_dir.join("repos").join(id).join("index")
+    }
+
+    /// Remember that documents of a library were changed (saved, made, renamed, deleted).
+    fn mark_dirty(&self, lib: &str, paths: impl IntoIterator<Item = String>) {
+        self.dirty.lock().unwrap().entry(lib.to_string()).or_default().extend(paths);
+    }
+
+    /// Bring the indexes of `libs` up to date with the documents edited since:
+    /// those that exist are written again, those that are gone are dropped.
+    /// Done just before a full-text search, so saving a note stays cheap and
+    /// the index only matters when it is used. Failures are left for a rebuild.
+    fn flush_dirty(&self, libs: &[Library]) {
+        for l in libs {
+            let paths: HashSet<String> = match self.dirty.lock().unwrap().get_mut(&l.id) {
+                Some(s) if !s.is_empty() => std::mem::take(s),
+                _ => continue,
+            };
+            let dir = self.index_dir(&l.id);
+            if !dir.join("smart-library-index.json").exists() || self.building.lock().unwrap().contains(&l.id) {
+                continue; // no index to update (a build reads everything anyway)
+            }
+            let result = (|| -> Result<(), String> {
+                let overlay = self.props.overlay(&l.id).unwrap_or_default();
+                let mut removed = Vec::new();
+                let (docs, version): (Vec<_>, Option<String>) = if l.kind == "folder" {
+                    let f = self.folder(l)?;
+                    let mut files = Vec::new();
+                    for p in &paths {
+                        match f.abs(p).ok().and_then(|a| std::fs::metadata(a).ok()).filter(|m| m.is_file()) {
+                            Some(m) => files.push(folder::FolderFile { rel: p.clone(), name: p.rsplit('/').next().unwrap_or(p).to_string(), size: m.len() }),
+                            None => removed.push(p.clone()),
+                        }
+                    }
+                    (f.docs(&files).collect(), None)
+                } else if l.kind == "notes" {
+                    let store = self.notes(l)?;
+                    let rows: Vec<_> = store.rows()?.into_iter().filter(|r| paths.contains(&r.id.to_string())).collect();
+                    removed = paths.iter().filter(|p| !rows.iter().any(|r| &r.id.to_string() == *p)).cloned().collect();
+                    (notes::docs(&rows, &l.title).into_iter().map(Ok).collect(), Some(store.fingerprint()))
+                } else {
+                    return Ok(());
+                };
+                smart_library_core::search::sync_docs(&dir, docs.into_iter(), &removed, version.as_deref(), &overlay)?;
+                self.indexes.write().unwrap().remove(&l.id); // opened again with the new documents
+                Ok(())
+            })();
+            if result.is_err() {
+                self.mark_dirty(&l.id, paths); // try again at the next search
+            }
+        }
     }
 
     fn index(&self, id: &str) -> Option<Arc<SearchIndex>> {
@@ -226,6 +290,7 @@ fn load_registry(config_dir: &Path) -> Vec<Library> {
             tree: "bulei".into(),
             exts: Vec::new(),
             max_mb: 0,
+            writable: false,
         }],
         None => Vec::new(),
     }
@@ -333,6 +398,8 @@ pub struct LibraryDto {
     tree: String,
     exts: Vec<String>,
     max_mb: u64,
+    /// the library can be edited in the program (internal libraries; folders in read-write mode)
+    writable: bool,
     /// the source cannot be opened (moved, deleted …)
     error: Option<String>,
     data_version: Option<String>,
@@ -365,7 +432,9 @@ fn status_of(state: &AppState) -> StatusDto {
                 (bc.as_ref().err().cloned(), bc.as_ref().ok().map(|b| b.data_version()))
             };
             let dir = state.index_dir(&l.id);
+            let writable = l.writable || l.kind == "notes";
             LibraryDto {
+                writable,
                 error,
                 data_version,
                 index_ready: state.index(&l.id).is_some(),
@@ -499,6 +568,7 @@ pub async fn bind_libraries(
                         tree: t.id.clone(),
                         exts: Vec::new(),
                         max_mb: 0,
+                        writable: false,
                     });
                 }
             }
@@ -524,6 +594,7 @@ pub async fn bind_libraries(
                 tree: t.id.clone(),
                 exts: Vec::new(),
                 max_mb: 0,
+                writable: false,
             });
         }
     }
@@ -592,13 +663,15 @@ pub async fn inspect_folder(path: String, state: State<'_, AppState>) -> Result<
 }
 
 /// Link a folder as a library. `exts`: suffixes separated by commas or
-/// spaces; `max_mb`: size limit, 0 for none.
+/// spaces; `max_mb`: size limit, 0 for none; `writable`: read-write mode (the
+/// window has asked the user to accept the rules first).
 #[tauri::command]
 pub async fn add_folder(
     path: String,
     title: Option<String>,
     exts: String,
     max_mb: u64,
+    writable: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<StatusDto, String> {
     let canon = folder::canonical(&path)?;
@@ -622,8 +695,28 @@ pub async fn add_folder(
             tree: String::new(),
             exts,
             max_mb,
+            writable: writable.unwrap_or(false),
         });
     }
+    state.save_registry()?;
+    Ok(status_of(&state))
+}
+
+/// Switch a folder library between read-only and read-write mode (the window
+/// has asked the user to accept the rules before going to read-write).
+#[tauri::command]
+pub async fn set_folder_writable(id: String, writable: bool, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    {
+        let mut libs = state.libraries.write().unwrap();
+        let l = libs.iter_mut().find(|l| l.id == id).ok_or("找不到这个知识库")?;
+        if l.kind != "folder" {
+            return Err("只有外部文件夹可以切换读写模式".into());
+        }
+        l.writable = writable;
+    }
+    state.folders.write().unwrap().remove(&id);
+    state.titles.write().unwrap().remove(&id);
+    state.stamps.lock().unwrap().retain(|k, _| !k.starts_with(&format!("{}|", id)));
     state.save_registry()?;
     Ok(status_of(&state))
 }
@@ -642,7 +735,7 @@ fn add_notes_library(state: &AppState, title: &str) -> Result<Library, String> {
             return Err("已经有同名的知识库".into());
         }
         let id = new_id("notes", &libs);
-        let lib = Library { id, kind: "notes".into(), title, source: String::new(), tree: String::new(), exts: Vec::new(), max_mb: 0 };
+        let lib = Library { id, kind: "notes".into(), title, source: String::new(), tree: String::new(), exts: Vec::new(), max_mb: 0, writable: true };
         libs.push(lib.clone());
         lib
     };
@@ -782,11 +875,9 @@ pub async fn create_note_at(
         "whiteboard" => store.create_typed(parent, &title, &smart_library_core::whiteboard::new_data(), smart_library_core::whiteboard::TYPE)?,
         _ => store.create(parent, &title, "")?,
     };
-    Ok(NewNoteDto {
-        lib: lib.id,
-        chain: store.chain(id)?.iter().map(|i| i.to_string()).collect(),
-        id: id.to_string(),
-    })
+    let chain: Vec<String> = store.chain(id)?.iter().map(|i| i.to_string()).collect();
+    state.mark_dirty(&lib.id, chain.iter().cloned()); // the folders made on the way too
+    Ok(NewNoteDto { lib: lib.id, chain, id: id.to_string() })
 }
 
 #[derive(Serialize)]
@@ -814,6 +905,7 @@ fn diary_note(state: &AppState, date: &str) -> Result<(Arc<NotesStore>, NewNoteD
         None => store.create(parent, &titles[2], "")?,
     };
     let dto = NewNoteDto { lib: lib.id, chain: store.chain(id)?.iter().map(|i| i.to_string()).collect(), id: id.to_string() };
+    state.mark_dirty(&dto.lib, dto.chain.iter().cloned());
     Ok((store, dto))
 }
 
@@ -858,17 +950,118 @@ pub async fn create_note(lib: String, parent: Option<String>, title: String, sta
         Some(p) => Some(note_id(&p)?),
         None => None,
     };
-    Ok(notes_of(&state, &lib)?.create(parent, &title, "")?.to_string())
+    let id = notes_of(&state, &lib)?.create(parent, &title, "")?.to_string();
+    state.mark_dirty(&lib, [id.clone()]);
+    Ok(id)
 }
 
+/// The folder of a library in read-write mode; `None` for internal libraries.
+/// A read-only folder is refused. The title list is out of date afterwards.
+fn rw_folder(state: &AppState, lib: &str) -> Result<Option<Arc<FolderLibrary>>, String> {
+    let l = state.library(lib)?;
+    if l.kind != "folder" {
+        return Ok(None);
+    }
+    if !l.writable {
+        return Err("这个文件夹库是只读的".into());
+    }
+    state.titles.write().unwrap().remove(lib);
+    Ok(Some(state.folder(&l)?))
+}
+
+/// Rename a note. For a file of a folder library `title` is the new file
+/// name without its suffix (the rules are checked here); the result is the
+/// note's id or path, which changes with a file name.
 #[tauri::command]
-pub async fn rename_note(lib: String, id: String, title: String, state: State<'_, AppState>) -> Result<(), String> {
-    notes_of(&state, &lib)?.update(note_id(&id)?, Some(&title), None)
+pub async fn rename_note(lib: String, id: String, title: String, state: State<'_, AppState>) -> Result<String, String> {
+    if let Some(f) = rw_folder(&state, &lib)? {
+        let new_rel = f.rename(&id, &title)?;
+        state.mark_dirty(&lib, [id.clone(), new_rel.clone()]);
+        if new_rel != id {
+            let mut stamps = state.stamps.lock().unwrap();
+            if let Some(s) = stamps.remove(&format!("{}|{}", lib, id)) {
+                stamps.insert(format!("{}|{}", lib, new_rel), s);
+            }
+        }
+        return Ok(new_rel);
+    }
+    let store = notes_of(&state, &lib)?;
+    let nid = note_id(&id)?;
+    store.update(nid, Some(&title), None)?;
+    // the notes below carry its title in their folders
+    state.mark_dirty(&lib, store.descendants(nid).unwrap_or_default().iter().map(|i| i.to_string()));
+    Ok(id)
 }
 
 #[tauri::command]
 pub async fn save_note(lib: String, id: String, content: String, state: State<'_, AppState>) -> Result<(), String> {
-    notes_of(&state, &lib)?.update(note_id(&id)?, None, Some(&content))
+    if let Some(f) = rw_folder(&state, &lib)? {
+        let key = format!("{}|{}", lib, id);
+        let seen = state.stamps.lock().unwrap().get(&key).cloned();
+        let stamp = f.write_edit(&id, &content, seen.as_deref())?;
+        state.stamps.lock().unwrap().insert(key, stamp);
+        state.mark_dirty(&lib, [id]);
+        return Ok(());
+    }
+    notes_of(&state, &lib)?.update(note_id(&id)?, None, Some(&content))?;
+    state.mark_dirty(&lib, [id]);
+    Ok(())
+}
+
+/// Add a Markdown note, mind map or whiteboard (`kind`: `md`, `mindmap`,
+/// `whiteboard`) as a file in the folder `parent` of a read-write folder
+/// library. Without a `title` the file is named `笔记 n` (`脑图 n`, `白板 n`).
+#[tauri::command]
+pub async fn create_folder_file(
+    lib: String,
+    parent: String,
+    kind: Option<String>,
+    title: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<NewNoteDto, String> {
+    let f = rw_folder(&state, &lib)?.ok_or("只有读写模式的外部文件夹可以这样新建")?;
+    let rel = f.create(&parent, title.as_deref(), folder::EditKind::parse(kind.as_deref().unwrap_or("md")))?;
+    state.mark_dirty(&lib, [rel.clone()]);
+    let mut chain = Vec::new();
+    let mut cur = String::new();
+    for part in rel.split('/') {
+        if !cur.is_empty() {
+            cur.push('/');
+        }
+        cur.push_str(part);
+        chain.push(cur.clone());
+    }
+    Ok(NewNoteDto { lib, id: rel, chain })
+}
+
+/// Make a folder inside the folder `parent` (path, "" for the top) of a
+/// read-write folder library, to organize the files. Returns its path.
+#[tauri::command]
+pub async fn create_folder_dir(lib: String, parent: String, name: String, state: State<'_, AppState>) -> Result<NewNoteDto, String> {
+    let f = rw_folder(&state, &lib)?.ok_or("只有读写模式的外部文件夹可以新建文件夹")?;
+    let rel = f.create_dir(&parent, &name)?;
+    let mut chain = Vec::new();
+    let mut cur = String::new();
+    for part in rel.split('/') {
+        if !cur.is_empty() {
+            cur.push('/');
+        }
+        cur.push_str(part);
+        chain.push(cur.clone());
+    }
+    Ok(NewNoteDto { lib, id: rel, chain })
+}
+
+/// The rules for the names of local files, for the boxes that ask for one.
+#[tauri::command]
+pub async fn file_name_rules() -> Result<String, String> {
+    Ok(folder::NAME_RULES.to_string())
+}
+
+/// Whether a name (without its suffix) can be a local file name.
+#[tauri::command]
+pub async fn check_file_name(name: String) -> Result<(), String> {
+    folder::check_name(name.trim())
 }
 
 /// Keep a picture pasted into a note: the request body is the picture, the
@@ -882,7 +1075,11 @@ pub async fn note_attach(request: tauri::ipc::Request<'_>, state: State<'_, AppS
     let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let l = state.library(&header("lib"))?;
     if l.kind != "notes" {
-        return Err("只有自建知识库的笔记可以放图片".into());
+        return Err(if l.kind == "folder" && l.writable {
+            "读写模式的外部文件夹暂时还不能粘贴图片".into()
+        } else {
+            "只有自建知识库的笔记可以放图片".to_string()
+        });
     }
     smart_library_core::attach::store(&state.attachments_dir(&l.id), data, &header("mime"))
 }
@@ -920,22 +1117,35 @@ pub async fn mindmap_add_clip(lib: String, id: String, topic: String, link: Stri
         return Err("这篇笔记不是脑图".into());
     }
     let data = smart_library_core::mindmap::add_clip(&note.content, &topic, &link, &tag)?;
-    store.update(id, None, Some(&data))
+    store.update(id, None, Some(&data))?;
+    state.mark_dirty(&lib, [id.to_string()]);
+    Ok(())
 }
 
 /// Add text at the end of a note.
 #[tauri::command]
 pub async fn note_append(lib: String, id: String, text: String, state: State<'_, AppState>) -> Result<(), String> {
-    notes_of(&state, &lib)?.append(note_id(&id)?, &text)
+    notes_of(&state, &lib)?.append(note_id(&id)?, &text)?;
+    state.mark_dirty(&lib, [id]);
+    Ok(())
 }
 
 /// Delete a note and everything below it; returns the number removed.
 #[tauri::command]
 pub async fn delete_note(lib: String, id: String, state: State<'_, AppState>) -> Result<usize, String> {
+    if let Some(f) = rw_folder(&state, &lib)? {
+        // a file of a folder library goes to the trash inside `.smart-library`
+        f.delete(&id)?;
+        state.mark_dirty(&lib, [id.clone()]);
+        state.stamps.lock().unwrap().remove(&format!("{}|{}", lib, id));
+        let _ = state.props.remove_nodes(&lib, &[id]);
+        return Ok(1);
+    }
     let store = notes_of(&state, &lib)?;
     let nid = note_id(&id)?;
     let gone: Vec<String> = store.descendants(nid).unwrap_or_default().iter().map(|i| i.to_string()).collect();
     let n = store.delete(nid)?;
+    state.mark_dirty(&lib, gone.iter().cloned());
     let _ = state.props.remove_nodes(&lib, &gone);
     Ok(n)
 }
@@ -952,7 +1162,12 @@ pub async fn move_note(
         Some(p) => Some(note_id(&p)?),
         None => None,
     };
-    notes_of(&state, &lib)?.move_to(note_id(&id)?, parent, index)
+    let store = notes_of(&state, &lib)?;
+    let nid = note_id(&id)?;
+    store.move_to(nid, parent, index)?;
+    // the notes below it are in other folders now
+    state.mark_dirty(&lib, store.descendants(nid).unwrap_or_default().iter().map(|i| i.to_string()));
+    Ok(())
 }
 
 // ------------------------------------------------------------ tree
@@ -1052,21 +1267,21 @@ fn note_nodes(n: &NotesStore, parent: Option<i64>) -> Result<Vec<NodeDto>, Strin
 fn folder_nodes(f: &FolderLibrary, rel: &str) -> Result<Vec<NodeDto>, String> {
     Ok(f.children(rel)?
         .into_iter()
-        .map(|e| NodeDto {
-            title: if e.is_dir {
-                e.name.clone()
-            } else {
-                e.name.rsplit_once('.').map(|(s, _)| s.to_string()).filter(|s| !s.is_empty()).unwrap_or(e.name.clone())
-            },
-            book_id: None,
-            start: None,
-            path: if e.is_dir { None } else { Some(e.rel.clone()) },
-            href: None,
-            rel: Some(e.rel),
-            lazy: e.is_dir,
-            mind: false,
-            board: false,
-            children: Vec::new(),
+        .map(|e| {
+            // in read-write mode a map or board shows with its own icon
+            let kind = if !e.is_dir { folder::EditKind::of(&e.name) } else { None };
+            NodeDto {
+                title: if e.is_dir { e.name.clone() } else { folder::title_of(&e.name).to_string() },
+                book_id: None,
+                start: None,
+                path: if e.is_dir { None } else { Some(e.rel.clone()) },
+                href: None,
+                rel: Some(e.rel),
+                lazy: e.is_dir,
+                mind: kind == Some(folder::EditKind::MindMap),
+                board: kind == Some(folder::EditKind::Whiteboard),
+                children: Vec::new(),
+            }
         })
         .collect())
 }
@@ -1297,11 +1512,41 @@ pub async fn open_node(
     if l.kind == "folder" {
         let f = state.folder(&l)?;
         let path = path.ok_or("没有指定文件")?;
+        let name = path.rsplit('/').next().unwrap_or(&path);
+        let edit_kind = if f.writable { folder::EditKind::of(name) } else { None };
+        // an editable file: its text goes to the editor (`raw`), the stamp is kept to notice outside changes
+        let raw = match edit_kind {
+            Some(_) => {
+                let (text, stamp) = f.read_edit(&path)?;
+                state.stamps.lock().unwrap().insert(format!("{}|{}", l.id, path), stamp);
+                Some(text)
+            }
+            None => None,
+        };
+        if matches!(edit_kind, Some(folder::EditKind::MindMap) | Some(folder::EditKind::Whiteboard)) {
+            return Ok(ReaderDto {
+                lib: l.id.clone(),
+                kind: l.kind.clone(),
+                book_id: None,
+                title: folder::title_of(name).to_string(),
+                author: path.rsplit_once('/').map(|(d, _)| d.replace('/', " / ")).unwrap_or_default(),
+                path: path.clone(),
+                juan: 0,
+                label: String::new(),
+                volumes: Vec::new(),
+                chapters: Vec::new(),
+                lines: Vec::new(),
+                html: String::new(),
+                hits: 0,
+                first_hit_lb: None,
+                raw,
+                content_type: edit_kind.unwrap().content_type().into(),
+            });
+        }
         let plain = f.article(&path, None)?;
         let (ranges, hits, first_hit_lb) = hits_of(&plain.text, query.as_deref(), phrase);
         let a = f.article(&path, Some(&RenderOptions { highlights: ranges.clone(), asset_prefix }))?;
-        let name = path.rsplit('/').next().unwrap_or(&path);
-        let title = name.rsplit_once('.').map(|(s, _)| s).filter(|s| !s.is_empty()).unwrap_or(name).to_string();
+        let title = folder::title_of(name).to_string();
         let dir = path.rsplit_once('/').map(|(d, _)| d.replace('/', " / ")).unwrap_or_default();
         return Ok(ReaderDto {
             lib: l.id.clone(),
@@ -1318,7 +1563,7 @@ pub async fn open_node(
                 .enumerate()
                 .map(|(i, s)| VolumeItemDto {
                     idx: i as u16 + 1,
-                    label: s.name.rsplit_once('.').map(|(a, _)| a.to_string()).unwrap_or(s.name.clone()),
+                    label: folder::title_of(&s.name).to_string(),
                     path: s.rel.clone(),
                     exists: true,
                 })
@@ -1337,7 +1582,7 @@ pub async fn open_node(
             html: a.html.unwrap_or_default(),
             hits,
             first_hit_lb,
-            raw: None,
+            raw,
             content_type: String::new(),
         });
     }
@@ -1473,7 +1718,7 @@ pub async fn resolve_node(
             tab: format!("{}|{}", l.id, path),
             lib: l.id.clone(),
             book_id: None,
-            title: name.rsplit_once('.').map(|(s, _)| s).filter(|s| !s.is_empty()).unwrap_or(name).to_string(),
+            title: folder::title_of(name).to_string(),
             path,
         });
     }
@@ -1799,6 +2044,8 @@ pub async fn search(
     if !ranges.is_empty() {
         libs.retain(|l| ranges.contains_key(&l.id));
     }
+    // notes edited since the last search join the index now
+    state.flush_dirty(&libs);
     // counts per library ignore the filters (those belong to one library)
     let mut counts = Vec::new();
     for l in &libs {
@@ -2140,6 +2387,7 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
     }
     let dir = state.index_dir(&lib);
     let overlay = state.props.overlay(&lib).unwrap_or_default();
+    state.dirty.lock().unwrap().remove(&lib); // the build reads everything
     // drop the open index before deleting its files
     state.indexes.write().unwrap().remove(&lib);
     std::thread::spawn(move || {

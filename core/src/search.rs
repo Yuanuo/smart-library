@@ -493,6 +493,21 @@ pub fn update_docs(
     docs: impl Iterator<Item = Result<IndexDoc, String>>,
     overlay: &Overlay,
 ) -> Result<usize, String> {
+    sync_docs(dir, docs, &[], None, overlay)
+}
+
+/// Bring an existing index up to date with edited documents: `docs` replace
+/// (or add) the documents of the same `path`, the documents at `removed`
+/// paths are dropped, and `data_version` (when given) is recorded as the
+/// version of the data the index now matches. The index must be opened again
+/// afterwards. Returns the number of documents written.
+pub fn sync_docs(
+    dir: &Path,
+    docs: impl Iterator<Item = Result<IndexDoc, String>>,
+    removed: &[String],
+    data_version: Option<&str>,
+    overlay: &Overlay,
+) -> Result<usize, String> {
     let meta_text = std::fs::read_to_string(dir.join(META_FILE)).map_err(|_| format!("no index in {}", dir.display()))?;
     let mut meta: serde_json::Value = serde_json::from_str(&meta_text).map_err(|e| e.to_string())?;
     if meta["index_version"].as_u64() != Some(INDEX_VERSION as u64) {
@@ -504,6 +519,9 @@ pub fn update_docs(
     let mut writer = index.writer::<TantivyDocument>(200_000_000).map_err(|e| e.to_string())?;
     let mut tops: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut n = 0;
+    for p in removed {
+        writer.delete_term(Term::from_field_text(f.path, p));
+    }
     for d in docs {
         let Ok(mut d) = d else { continue };
         overlay.apply(&mut d);
@@ -524,6 +542,9 @@ pub fn update_docs(
         all.entry(k).or_default().extend(v);
     }
     meta["facet_tops"] = serde_json::json!(all);
+    if let Some(v) = data_version {
+        meta["data_version"] = serde_json::json!(v);
+    }
     std::fs::write(dir.join(META_FILE), serde_json::to_string_pretty(&meta).unwrap()).map_err(|e| e.to_string())?;
     Ok(n)
 }
@@ -1047,6 +1068,20 @@ mod tests {
         assert_eq!(with(&idx, "/bulei", "新部"), 2);
         assert_eq!(with(&idx, "/bulei", "法華部類"), 0);
         assert_eq!(with(&idx, "/bulei", "阿含部類"), 1); // the other book keeps its own
+    }
+
+    #[test]
+    fn sync_drops_documents_and_records_the_version() {
+        let bc = fixture();
+        let d = tempdir::Dir::new();
+        SearchIndex::build(&bc, d.path(), &Overlay::default(), |_, _| {}).unwrap();
+        let before = SearchIndex::open(d.path()).unwrap().search(&SearchRequest::new("")).unwrap().total_volumes;
+        let gone = "XML/T/T01/T01n0001_001.xml".to_string();
+        let n = sync_docs(d.path(), std::iter::empty(), &[gone], Some("v2"), &Overlay::default()).unwrap();
+        assert_eq!(n, 0);
+        let after = SearchIndex::open(d.path()).unwrap().search(&SearchRequest::new("")).unwrap().total_volumes;
+        assert_eq!(after, before - 1);
+        assert_eq!(SearchIndex::data_version(d.path()).as_deref(), Some("v2"));
     }
 
     #[test]

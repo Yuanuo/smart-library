@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import * as api from "./api.js";
+  import { confirmWritable } from "./writable.js";
 
   let { initialPath = "", onclose, onbound } = $props();
 
@@ -15,7 +16,7 @@
   const KINDS = [
     { id: "cbeta", name: "CBETA 数据包", desc: "bookcase.zip 或解压后的目录，由其中的菜单关联数据（只读）", ready: true },
     { id: "zim", name: "Wikipedia 离线包（ZIM）", desc: "只做标题与全文索引，不展开目录（只读）。尚未开发。", ready: false },
-    { id: "folder", name: "外部文件夹", desc: "链接本机文件夹，可按后缀、大小筛选并建全文索引（只读）", ready: true },
+    { id: "folder", name: "本地文件夹", desc: "链接本机文件夹，可按后缀、大小筛选并建全文索引（可控读写）", ready: true },
     { id: "notes", name: "自建知识库", desc: "内容由你手动添加和编辑，默认 Markdown（读写）", ready: true },
   ];
   let notesTitle = $state("");
@@ -24,6 +25,7 @@
   let folderTitle = $state("");
   let exts = $state("txt, md, html, htm");
   let maxMb = $state(50);
+  let writable = $state(false); // read-write mode: the user must accept the rules (confirmWritable)
   let path = $state("");
   let src = $state(null);
   let error = $state("");
@@ -102,7 +104,8 @@
         return;
       }
       if (kind === "folder") {
-        const st = await api.addFolder(folder.path, folderTitle, exts, Math.max(0, Math.floor(Number(maxMb) || 0)));
+        if (writable && !(await confirmWritable(folderTitle || folder.name))) return;
+        const st = await api.addFolder(folder.path, folderTitle, exts, Math.max(0, Math.floor(Number(maxMb) || 0)), writable);
         onbound(st);
         return;
       }
@@ -133,7 +136,7 @@
       <label class="field">名称 <input type="text" bind:value={notesTitle} placeholder="例如：读书笔记" /></label>
       {#if error}<p class="error">{error}</p>{/if}
     {:else if kind === "folder"}
-      <p class="muted">链接一个本机文件夹。Smart Library 只读取其中的文件，不会修改它；子目录会按真实结构显示在目录树里。</p>
+      <p class="muted">链接一个本机文件夹，子目录会按真实结构显示在目录树里。默认只读，Smart Library 不会修改其中的文件；也可以选择读写模式，直接编辑里面的笔记。</p>
       <div class="row">
         <input type="text" readonly value={folder ? folder.path : ""} placeholder="尚未选择文件夹" aria-label="文件夹" />
         <button type="button" onclick={pickLibFolder}>选择文件夹…</button>
@@ -147,6 +150,16 @@
           <label class="field">文件后缀（逗号或空格分隔）<input type="text" bind:value={exts} /></label>
           <p class="hint muted">txt、md、html 等文本读取全文；其他后缀（mp3、mp4、pdf 等）暂时只用文件名、类型、大小、日期作为内容。</p>
           <label class="field">单个文件最大 <input type="number" min="0" class="num" bind:value={maxMb} /> MB（0 为不限制）</label>
+        </fieldset>
+        <fieldset>
+          <legend>读写模式</legend>
+          <label class="opt">
+            <input type="checkbox" bind:checked={writable} />
+            允许在软件里编辑这个文件夹里的笔记（.md、脑图 .map.json、白板 .wbd.json）
+          </label>
+          <p class="hint muted">
+            {writable ? "点「绑定」时会先说明规则和风险，需要你确认。之后也可以在知识库的右键菜单里随时切换。" : "不勾选则保持只读：不会新建、修改或删除任何文件。"}
+          </p>
         </fieldset>
       {/if}
     {:else}

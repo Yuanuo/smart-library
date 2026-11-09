@@ -13,6 +13,7 @@
   import { fullPath } from "./paths.js";
   import { monthPath, localDate } from "./diary.js";
   import { startScopeDrag } from "./scopeDrag.js";
+  import { confirmWritable, isEditableName } from "./writable.js";
 
   let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
 
@@ -112,7 +113,76 @@
   let selected = $state(null); // { lib, key }: the last note opened from the tree
 
   const isNotes = (id) => libraries.find((l) => l.id === id)?.kind === "notes";
+  /** Notes can be edited: internal libraries, and external folders in read-write mode. */
+  const isEditable = (id) => {
+    const l = libraries.find((x) => x.id === id);
+    return l?.kind === "notes" || (l?.kind === "folder" && !!l.writable);
+  };
+  const isRwFolder = (id) => {
+    const l = libraries.find((x) => x.id === id);
+    return l?.kind === "folder" && !!l.writable;
+  };
   const parentKey = (key) => key.slice(0, key.lastIndexOf("/"));
+
+  /** The icon and the name of the kind of a library: data package, local folder (read-only / read-write), internal. */
+  const kindIcon = (l) => (l.kind === "notes" ? "database" : l.kind === "folder" ? (l.writable ? "folder-edit" : "folder-lock") : "archive");
+  const kindLabel = (l) =>
+    l.kind === "notes" ? "内部知识库（数据库，可编辑）" : l.kind === "folder" ? (l.writable ? "本地文件夹（读写）" : "本地文件夹（只读）") : "数据包（只读）";
+
+  /** The folder a new file or folder goes into for the node at `key`: the node itself when it is a folder, else its folder. */
+  function dirOf(lib, key) {
+    const n = key ? nodeAt(lib, key) : null;
+    return !n ? "" : n.path == null ? n.rel : n.rel.split("/").slice(0, -1).join("/");
+  }
+
+  /** Make a folder in a read-write local folder (the library's top when `key` is null). */
+  function newFolder(lib, key) {
+    nameDlg = {
+      title: "新建文件夹",
+      label: "文件夹名称",
+      value: "",
+      okLabel: "新建",
+      hint: nameRules,
+      validate: checkName,
+      onok: guard(lib, async (name) => {
+        const r = await api.createFolderDir(lib, dirOf(lib, key), name);
+        await showNew(r);
+      }),
+    };
+  }
+
+  /** The rules for local file names, shown under the box that asks for one. */
+  let nameRules = "";
+  api.fileNameRules().then((t) => (nameRules = t)).catch(() => {});
+  const checkName = async (t) => {
+    try {
+      await api.checkFileName(t);
+      return "";
+    } catch (e) {
+      return String(e);
+    }
+  };
+
+  /** Switch an external folder between read-only and read-write mode. Going to
+   * read-write needs the user to accept the rules first. */
+  async function setWritable(l, on) {
+    try {
+      if (on && !(await confirmWritable(l.title))) return;
+      if (!on) {
+        await workspace.closeLibrary(l.id); // their editors save on closing
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      await api.setFolderWritable(l.id, on);
+      await onlibs?.();
+      if (open[l.id]) {
+        delete nodes[l.id];
+        expanded[l.id] = {};
+        await load(l.id);
+      }
+    } catch (e) {
+      errors[l.id] = String(e);
+    }
+  }
 
   /** Reload one level of a library (`key` null: its top), keeping what was
    * loaded below the notes that are still there. */
@@ -174,7 +244,13 @@
    * (`笔记 1`, …) that can be changed any time, and open it. */
   async function createNote(lib, key, kind = "md") {
     try {
-      const r = await api.createNoteAt(lib, key ? pathOf(lib, key) : "", null, kind);
+      let r;
+      if (lib && isRwFolder(lib)) {
+        // a file in a folder of the library: inside the folder at `key`, next to the file at `key`
+        r = await api.createFolderFile(lib, dirOf(lib, key), kind);
+      } else {
+        r = await api.createNoteAt(lib, key ? pathOf(lib, key) : "", null, kind);
+      }
       onlibs?.(); // a first note makes its library
       await tick();
       await showNew(r);
@@ -209,7 +285,7 @@
 
   /** From the add menu: below the selected note, else in the library of the last one. */
   function addNoteHere(kind) {
-    const sel = selected && isNotes(selected.lib) ? selected : null;
+    const sel = selected && isEditable(selected.lib) ? selected : null;
     createNote(sel?.lib ?? null, sel?.key ?? null, kind);
   }
 
@@ -227,27 +303,41 @@
   }
 
   function renameNote(lib, node, key) {
+    const file = isRwFolder(lib); // a file name: strict rules, and the path changes with it
     nameDlg = {
       title: "重命名笔记",
-      label: "标题",
+      label: file ? "文件名（不含后缀）" : "标题",
       value: node.title,
       okLabel: "确定",
+      hint: file ? nameRules : "",
+      validate: file ? checkName : null,
       onok: guard(lib, async (title) => {
-        await api.renameNote(lib, node.rel, title);
-        workspace.retitle(lib, node.rel, title);
+        const rel = await api.renameNote(lib, node.rel, title);
+        if (file && rel !== node.rel) {
+          // the tab of the file belongs to its old path: open it again under the new one
+          const wasOpen = workspace.ws.current?.lib === lib && workspace.ws.current?.path === node.rel;
+          workspace.closeDocument(lib, node.rel);
+          if (wasOpen) workspace.openVolume({ lib, path: rel });
+        } else workspace.retitle(lib, node.rel, title);
         await refresh(lib, parentKey(key) || null);
       }),
     };
   }
 
   async function deleteNote(lib, node, key) {
-    const more = node.lazy || node.children.length ? "\n它下面的笔记会一起删除。" : "";
-    const ok = await ask(`删除笔记「${node.title}」？${more}\n删除后不能恢复。`, {
-      title: "删除笔记",
-      kind: "warning",
-      okLabel: "删除",
-      cancelLabel: "取消",
-    });
+    const file = isRwFolder(lib);
+    const more = file ? "" : node.lazy || node.children.length ? "\n它下面的笔记会一起删除。" : "";
+    const ok = await ask(
+      file
+        ? `删除文件「${node.rel}」？\n它会被移到文件夹里的 .smart-library/trash，不会彻底删除。`
+        : `删除笔记「${node.title}」？${more}\n删除后不能恢复。`,
+      {
+        title: file ? "删除文件" : "删除笔记",
+        kind: "warning",
+        okLabel: "删除",
+        cancelLabel: "取消",
+      },
+    );
     if (!ok) return;
     try {
       await api.deleteNote(lib, node.rel);
@@ -360,13 +450,17 @@
   /** Items of a node's menu, grouped: new, edit, copy, search, tags, import / export. */
   function nodeItems(l, node, key) {
     const notes = l.kind === "notes";
+    // read-write folders: new files go into a folder (or next to a file); only the files the program edits can be renamed or deleted
+    const rw = l.kind === "folder" && l.writable;
+    const rwFile = rw && node.path != null && isEditableName(node.rel);
     const label = `${l.title} › ${node.title}`;
     return sections(
-      notes
+      notes || rw
         ? [
             { label: "新建笔记", action: () => createNote(l.id, key, "md") },
             { label: "新建脑图", action: () => createNote(l.id, key, "mindmap") },
             { label: "新建白板", action: () => createNote(l.id, key, "whiteboard") },
+            ...(rw ? [{ label: "新建文件夹…", action: () => newFolder(l.id, key) }] : []),
           ]
         : [],
       notes
@@ -376,7 +470,15 @@
             { label: "下移", action: () => shiftNote(l.id, node, key, 1), disabled: !canShift(l.id, node, key, 1) },
             { label: "删除…", action: () => deleteNote(l.id, node, key) },
           ]
-        : [],
+        : rwFile
+          ? [
+              { label: "重命名…（F2）", action: () => renameNote(l.id, node, key) },
+              // files are ordered by name, there is no moving up or down
+              { label: "上移", action: () => {}, disabled: true },
+              { label: "下移", action: () => {}, disabled: true },
+              { label: "删除…", action: () => deleteNote(l.id, node, key) },
+            ]
+          : [],
       [
         ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(filePath(l, node)) }]),
         { label: "复制目录树路径", action: () => oncopy(titleChain(l, key).join(" › ")) },
@@ -627,14 +729,18 @@
       y: e.clientY,
       items: sections(
         [{ label: open[l.id] ? "收起" : "展开", action: () => toggle(l) }],
-        notes
+        notes || (l.kind === "folder" && l.writable)
           ? [
               { label: "新建笔记", action: () => createNote(l.id, null, "md") },
               { label: "新建脑图", action: () => createNote(l.id, null, "mindmap") },
               { label: "新建白板", action: () => createNote(l.id, null, "whiteboard") },
+              ...(l.kind === "folder" ? [{ label: "新建文件夹…", action: () => newFolder(l.id, null) }] : []),
             ]
           : [],
         [{ label: "重命名…（F2）", action: () => renameLibrary(l) }],
+        l.kind === "folder"
+          ? [l.writable ? { label: "改为只读模式", action: () => setWritable(l, false), disabled: building } : { label: "改为读写模式…", action: () => setWritable(l, true), disabled: building }]
+          : [],
         [
           ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
           { label: "复制目录树路径", action: () => oncopy(l.title) },
@@ -681,9 +787,10 @@
       e.preventDefault();
       return renameLibrary(lib);
     }
-    const at = lib && key ? { lib: lib.id, key } : selected && isNotes(selected.lib) ? selected : null;
+    const at = lib && key ? { lib: lib.id, key } : selected && isEditable(selected.lib) ? selected : null;
     const node = at ? nodeAt(at.lib, at.key) : null;
-    if (node && isNotes(at.lib)) {
+    // in a read-write folder only the files the program edits can be renamed
+    if (node && (isNotes(at.lib) || (isRwFolder(at.lib) && node.path != null && isEditableName(node.rel)))) {
       e.preventDefault();
       renameNote(at.lib, node, at.key);
     }
@@ -708,8 +815,8 @@
         <button class="twisty" onclick={() => toggle(l)} tabindex="-1" aria-hidden="true">
           <Icon name={open[l.id] ? "chevron-down" : "chevron-right"} size={14} />
         </button>
-        <span class="libicon"><Icon name="library" size={18} /></span>
-        <button class="title" onclick={() => toggle(l)} tabindex="-1" title={`${l.title}\n${l.source}`}>{l.title}</button>
+        <span class="libicon" title={kindLabel(l)}><Icon name={kindIcon(l)} size={18} /></span>
+        <button class="title" onclick={() => toggle(l)} tabindex="-1" title={`${l.title}\n${l.source}${l.kind === "folder" && l.writable ? "\n读写模式" : ""}`}>{l.title}</button>
         {#if b?.index}
           <button class="badge warn link" tabindex="-1" title="点击建立索引" onclick={(e) => (e.stopPropagation(), onindex(l.id))}>{b.text}</button>
         {:else if b}<span class="badge" class:warn={b.warn}>{b.text}</span>{/if}
