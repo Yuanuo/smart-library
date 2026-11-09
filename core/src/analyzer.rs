@@ -29,6 +29,9 @@ use unicode_normalization::UnicodeNormalization;
 /// Traditional -> simplified pairs, from fast2s (MIT, see data/t2s.LICENSE.md).
 /// All of them are inside U+3400..U+9FFF, and no target is itself a source.
 const T2S: &str = include_str!("../../data/t2s.txt");
+/// Variant forms -> the form they are folded with (`異 正`): the target goes through the table above,
+/// so 説, 說 and 说 are one.
+const VARIANTS: &str = include_str!("../../data/variants.txt");
 const T2S_FIRST: u32 = 0x3400;
 const T2S_LAST: u32 = 0x9FFF;
 
@@ -42,6 +45,15 @@ fn t2s_table() -> &'static [char] {
                 let u = a as u32;
                 if (T2S_FIRST..=T2S_LAST).contains(&u) {
                     t[(u - T2S_FIRST) as usize] = b;
+                }
+            }
+        }
+        for line in VARIANTS.lines().filter(|l| !l.starts_with('#')) {
+            let mut it = line.chars();
+            if let (Some(a), Some(' '), Some(b)) = (it.next(), it.next(), it.next()) {
+                let (ua, ub) = (a as u32, b as u32);
+                if (T2S_FIRST..=T2S_LAST).contains(&ua) && (T2S_FIRST..=T2S_LAST).contains(&ub) {
+                    t[(ua - T2S_FIRST) as usize] = t[(ub - T2S_FIRST) as usize];
                 }
             }
         }
@@ -324,6 +336,20 @@ mod tests {
     fn keeps_missing_glyphs_in_runs() {
         // CBETA PUA glyph between ideographs
         assert_eq!(texts(&terms("波羅\u{F00B2}國")), vec!["波罗", "罗\u{F00B2}", "\u{F00B2}国"]);
+    }
+
+    #[test]
+    fn folds_variants_with_their_standard_form() {
+        let f = |t: &str| {
+            let mut o = String::new();
+            t.chars().for_each(|c| fold(c, &mut o));
+            o
+        };
+        assert_eq!(f("説"), f("說"));
+        assert_eq!(f("説"), f("说"));
+        assert_eq!(f("経観"), f("經觀"));
+        assert_eq!(f("蹟"), f("跡"));
+        assert_ne!(f("說"), f("經"));
     }
 
     #[test]
