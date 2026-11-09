@@ -23,6 +23,8 @@ const DEFAULTS = {
   readerSize: 19, // px
   readerLine: 2, // line height
   quickLimit: 200, // title quick search: results per batch
+  dailyOn: true, // the sentence of the day
+  dailySources: [], // its sources (search range items); none = every library
 };
 
 function load() {

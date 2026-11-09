@@ -14,6 +14,8 @@
   import AboutDialog from "./lib/AboutDialog.svelte";
   import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
   import { localDate, localTime } from "./lib/diary.js";
+  import { settings, update as updateSettings } from "./lib/settings.svelte.js";
+  import { daily, check as checkDaily, again as dailyAgain, markSeen as dailySeen } from "./lib/daily.svelte.js";
   import { openPanelWindow } from "./lib/panels.js";
   import { fullPath } from "./lib/paths.js";
   import ClipDialog from "./lib/ClipDialog.svelte";
@@ -311,6 +313,12 @@
       quickScope = scope;
       openQuickSearch(scope);
     } else if (kind === "scope-add") workspace.addSearchScopes([rangeItem(scope)]);
+    else if (kind === "daily-add") {
+      const it = rangeItem(scope);
+      const have = settings.dailySources.some((x) => x.lib === it.lib && x.label === it.label);
+      if (!have) updateSettings({ dailySources: [...settings.dailySources, it] });
+      notice = have ? `已经是每日一句的来源：${it.label}` : `已加入每日一句来源：${it.label}`;
+    }
     else openSearch(scope);
   }
   function openMarks() {
@@ -437,6 +445,52 @@
   });
 
   // the full-text search pages are tabs of the workspace (lib/SearchPage.svelte)
+
+  // ---- sentence of the day (lib/daily.svelte.js): checked on a timer, since the program stays open
+  let dailyShown = $state(false);
+  let dailyHover = false;
+  let dailyTimer = null;
+  function showDaily() {
+    dailyShown = true;
+    dailySeen();
+    clearTimeout(dailyTimer);
+    const hide = () => (dailyHover ? (dailyTimer = setTimeout(hide, 3000)) : (dailyShown = false));
+    dailyTimer = setTimeout(hide, 12000);
+  }
+  async function openDaily() {
+    if (!daily.item) {
+      await checkDaily(libraries);
+      if (!daily.item) {
+        notice = "今天的句子还没有：需要先为知识库建立索引。";
+        return;
+      }
+    }
+    showDaily();
+  }
+  async function anotherDaily() {
+    try {
+      await dailyAgain();
+      showDaily();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+  function openDailySource() {
+    const d = daily.item;
+    workspace
+      .openVolume({ lib: d.lib, bookId: d.book_id, path: d.path, lb: d.lb || null, query: d.sentence, phrase: true })
+      .catch((e) => (error = String(e)));
+    dailyShown = false;
+  }
+  $effect(() => {
+    // first check a little after start (indexes need to be open), then every 30 minutes
+    const first = setTimeout(() => checkDaily(libraries), 15000);
+    const every = setInterval(() => checkDaily(libraries), 30 * 60 * 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  });
   onMount(() => {
     refresh().then(() => st?.libraries.length && api.prepareTitles().catch(() => {}));
     const offKeys = installShortcuts((type) => shortcut(type, readerSelection()));
@@ -605,6 +659,11 @@
       <div class="side-foot">
         <span class="muted building">{buildingText}</span>
         <span class="tools">
+          {#if settings.dailyOn}
+            <button class="icon" onclick={openDaily} title="每日一句" aria-label="每日一句">
+              <Icon name="speaker" size={18} />{#if daily.item && !daily.seen}<span class="badge">1</span>{/if}
+            </button>
+          {/if}
           <button class="icon" onclick={() => (settingsBox = true)} title="设置（Ctrl+,）" aria-label="设置"><Icon name="gear" size={18} /></button>
           <button class="icon" onclick={() => (showLog = !showLog)} title="本次运行期间的消息" aria-label="消息">
             <Icon name="message" size={18} />{#if log.length}<span class="badge">{log.length}</span>{/if}
@@ -620,6 +679,19 @@
     <main class="content" bind:this={wsEl}></main>
   </div>
 </div>
+
+{#if dailyShown && daily.item}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="daily" role="status" onmouseenter={() => (dailyHover = true)} onmouseleave={() => (dailyHover = false)}>
+    <p class="sentence">{daily.item.sentence}</p>
+    <div class="src muted">
+      《{daily.item.title}》{daily.item.subtitle}{daily.item.lb ? ` · ${daily.item.lb}` : ""}
+      <button class="link" onclick={openDailySource}>打开原文</button>
+      <button class="link" onclick={anotherDaily}>换一句</button>
+      <button class="link" onclick={() => (dailyShown = false)} aria-label="关闭">×</button>
+    </div>
+  </div>
+{/if}
 
 {#if toast}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -701,6 +773,13 @@
     border-top: 1px solid var(--line); font-size: 12px; min-height: 32px;
   }
   .building { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .daily {
+    position: fixed; left: 12px; bottom: 44px; z-index: 995; width: min(460px, calc(100vw - 32px));
+    padding: 12px 16px; border-radius: 8px; background: var(--paper); border: 1px solid var(--accent);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+  }
+  .daily .sentence { margin: 0 0 6px; font-size: 18px; line-height: 1.8; }
+  .daily .src { font-size: 13px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
   .toast {
     position: fixed; right: 16px; bottom: 16px; z-index: 1000; max-width: min(520px, calc(100vw - 32px));
     display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 8px;

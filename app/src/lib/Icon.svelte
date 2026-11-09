@@ -38,6 +38,8 @@
     <path d="M12 3.5l1.4 2.2 2.5-.7.9 2.4 2.5.7-.4 2.6L21 12l-1.9 1.3.4 2.6-2.5.7-.9 2.4-2.5-.7L12 20.5l-1.4-2.2-2.5.7-.9-2.4-2.5-.7.4-2.6L3 12l1.9-1.3-.4-2.6 2.5-.7.9-2.4 2.5.7z" /><circle cx="12" cy="12" r="3" />
   {:else if name === "message"}
     <path d="M4 5h16v11H10l-4.5 4v-4H4z" /><path d="M8 9.5h8M8 12.5h5" />
+  {:else if name === "speaker"}
+    <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" fill-opacity="0.2" /><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" />
   {:else if name === "info"}
     <circle cx="12" cy="12" r="8.5" /><path d="M12 11v5.5" /><circle cx="12" cy="7.8" r="0.9" fill="currentColor" />
   {:else if name === "locate"}

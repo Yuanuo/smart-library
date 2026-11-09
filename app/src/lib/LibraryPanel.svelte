@@ -95,6 +95,7 @@
         { label: "从所选节点搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label, within: withinMany(l, list) }) },
         { label: "从所选节点搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinMany(l, list) }) },
         { label: "加入搜索范围", action: () => list.forEach(({ key, node }) => onsearchfrom("scope-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) })) },
+        { label: "加入每日一句来源", action: () => list.forEach(({ key, node }) => onsearchfrom("daily-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) })) },
         "separator",
         {
           label: "导出所选…",
@@ -384,6 +385,7 @@
         { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label, within: withinOf(l, node) }) },
         { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinOf(l, node) }) },
         { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) }) },
+        { label: "加入每日一句来源", action: () => onsearchfrom("daily-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) }) },
       ],
       node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node) }] : [],
       [
@@ -636,6 +638,7 @@
           { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: l.title, within: null }) },
           { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
           { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { lib: l.id, label: l.title, within: null }), disabled: !l.index_ready },
+          { label: "加入每日一句来源", action: () => onsearchfrom("daily-add", { lib: l.id, label: l.title, within: null }), disabled: !l.index_ready },
           { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
         ],
         [

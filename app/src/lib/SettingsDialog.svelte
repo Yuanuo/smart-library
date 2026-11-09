@@ -104,6 +104,28 @@
       <p class="muted hint">标题快搜先显示这么多条，列表滚到底（或用键盘走到末尾）时自动再加载一批。</p>
     </fieldset>
 
+    <fieldset>
+      <legend>每日一句</legend>
+      <label class="row">
+        <input type="checkbox" checked={settings.dailyOn} onchange={(e) => update({ dailyOn: e.currentTarget.checked })} />
+        <span class="wide">每天从知识库里随机抽一句，在目录树下方的喇叭按钮上提示</span>
+      </label>
+      <div class="row">
+        <span>来源</span>
+        <div class="sources">
+          {#each settings.dailySources as src, i}
+            <div class="src" title={src.label}>
+              <span class="lab">{src.label}</span>
+              <button class="link" onclick={() => update({ dailySources: settings.dailySources.filter((_, j) => j !== i) })} aria-label="移除">×</button>
+            </div>
+          {:else}
+            <span class="muted">全部知识库</span>
+          {/each}
+        </div>
+      </div>
+      <p class="muted hint">在目录树里右键知识库或节点，选「加入每日一句来源」；没有来源时从全部已建索引的知识库里抽。</p>
+    </fieldset>
+
     <div class="actions">
       <button onclick={reset}>恢复默认</button>
       <button class="primary" onclick={onclose}>完成</button>
@@ -138,6 +160,10 @@
     margin: 8px 0 0; padding: 10px 14px; background: var(--bg); border-radius: 6px;
     font-family: var(--reader-font, inherit); font-size: var(--reader-size, 19px); line-height: var(--reader-line, 2);
   }
+  .wide { width: auto !important; flex: 1; }
+  .sources { flex: 1; min-width: 0; }
+  .src { display: flex; align-items: center; gap: 6px; padding: 2px 0; border-bottom: 1px dashed var(--line); }
+  .src .lab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hint { margin: 0 0 6px; font-size: 13px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 </style>
