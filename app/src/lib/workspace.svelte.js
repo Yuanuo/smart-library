@@ -558,6 +558,23 @@ export function closeDocument(lib, path) {
   scheduleSave();
 }
 
+/**
+ * Close the tabs of a file or of the files below a folder (before it is renamed
+ * or moved: their editors save while closing). Resolves to the paths that were
+ * open, and the one that was active, once the saves have had time to finish.
+ */
+export async function closeUnder(lib, path) {
+  const open = (dv?.panels || []).filter((p) => p.params?.lib === lib && (p.params.path === path || p.params.path?.startsWith(path + "/")));
+  const active = ws.current?.lib === lib ? ws.current.path : null;
+  const paths = open.map((p) => p.params.path);
+  open.forEach((p) => p.api.close());
+  if (open.length) {
+    scheduleSave();
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return { paths, active: active && paths.includes(active) ? active : null };
+}
+
 /** Show a new title on the tab of a document (a renamed note). */
 export function retitle(lib, path, title) {
   dv?.getPanel(`${lib}|${path}`)?.api.setTitle(title);

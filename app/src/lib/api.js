@@ -14,6 +14,10 @@ export const setFolderWritable = (id, writable) => invoke("set_folder_writable",
 export const createFolderFile = (lib, parent, kind = "md", title = null) => invoke("create_folder_file", { lib, parent, kind, title });
 /** A new folder inside a folder (`parent`: path, "" for the top) of a read-write folder library. */
 export const createFolderDir = (lib, parent, name) => invoke("create_folder_dir", { lib, parent, name });
+/** Move a file or folder into another folder ("" for the top); resolves to its new path. */
+export const moveFolderNode = (lib, rel, parent) => invoke("move_folder_node", { lib, rel, parent });
+/** Every folder of a read-write folder library (paths). */
+export const folderDirs = (lib) => invoke("folder_dirs", { lib });
 /** The rules for local file names, as text. */
 export const fileNameRules = () => invoke("file_name_rules");
 /** Rejects with the reason when `name` cannot be a local file name. */

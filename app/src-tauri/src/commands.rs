@@ -194,6 +194,30 @@ impl AppState {
         self.data_dir.join("repos").join(id).join("index")
     }
 
+    /// A file or folder of a library got another path: what is kept by path
+    /// (properties, marks, history, the stamps of open files) follows it, and
+    /// the index must see the old documents gone and the new ones there.
+    /// `before`: the files it stands for, by their old paths; `title`: the new
+    /// title of a renamed file.
+    fn after_move(&self, lib: &str, from: &str, to: &str, before: &[String], title: Option<&str>) {
+        if from == to {
+            return;
+        }
+        let swap = |p: &str| if p == from { to.to_string() } else { format!("{}{}", to, &p[from.len()..]) };
+        let _ = self.props.rekey(lib, from, to);
+        let _ = self.marks.rekey(lib, from, to, title);
+        let _ = self.history.rekey(lib, from, to, title);
+        {
+            let mut stamps = self.stamps.lock().unwrap();
+            for b in before {
+                if let Some(s) = stamps.remove(&format!("{}|{}", lib, b)) {
+                    stamps.insert(format!("{}|{}", lib, swap(b)), s);
+                }
+            }
+        }
+        self.mark_dirty(lib, before.iter().cloned().chain(before.iter().map(|b| swap(b))));
+    }
+
     /// Remember that documents of a library were changed (saved, made, renamed, deleted).
     fn mark_dirty(&self, lib: &str, paths: impl IntoIterator<Item = String>) {
         self.dirty.lock().unwrap().entry(lib.to_string()).or_default().extend(paths);
@@ -955,6 +979,34 @@ pub async fn create_note(lib: String, parent: Option<String>, title: String, sta
     Ok(id)
 }
 
+/// The files a path stands for: itself for a file, the files below it for a folder.
+fn files_under(f: &FolderLibrary, rel: &str) -> Vec<String> {
+    if f.abs(rel).map(|p| p.is_dir()).unwrap_or(false) {
+        let prefix = format!("{}/", rel);
+        f.files().into_iter().filter(|x| x.rel.starts_with(&prefix)).map(|x| x.rel).collect()
+    } else {
+        vec![rel.to_string()]
+    }
+}
+
+/// Move a file or a folder of a read-write folder library into the folder
+/// `parent` ("" for the top). Returns the new path.
+#[tauri::command]
+pub async fn move_folder_node(lib: String, rel: String, parent: String, state: State<'_, AppState>) -> Result<String, String> {
+    let f = rw_folder(&state, &lib)?.ok_or("只有读写模式的外部文件夹可以这样移动")?;
+    let before = files_under(&f, &rel);
+    let new_rel = f.move_to(&rel, &parent)?;
+    state.after_move(&lib, &rel, &new_rel, &before, None);
+    Ok(new_rel)
+}
+
+/// Every folder of a read-write folder library (paths), to pick where to move something.
+#[tauri::command]
+pub async fn folder_dirs(lib: String, state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let l = state.library(&lib)?;
+    Ok(state.folder(&l)?.dirs())
+}
+
 /// The folder of a library in read-write mode; `None` for internal libraries.
 /// A read-only folder is refused. The title list is out of date afterwards.
 fn rw_folder(state: &AppState, lib: &str) -> Result<Option<Arc<FolderLibrary>>, String> {
@@ -975,14 +1027,10 @@ fn rw_folder(state: &AppState, lib: &str) -> Result<Option<Arc<FolderLibrary>>, 
 #[tauri::command]
 pub async fn rename_note(lib: String, id: String, title: String, state: State<'_, AppState>) -> Result<String, String> {
     if let Some(f) = rw_folder(&state, &lib)? {
+        let before = files_under(&f, &id);
         let new_rel = f.rename(&id, &title)?;
-        state.mark_dirty(&lib, [id.clone(), new_rel.clone()]);
-        if new_rel != id {
-            let mut stamps = state.stamps.lock().unwrap();
-            if let Some(s) = stamps.remove(&format!("{}|{}", lib, id)) {
-                stamps.insert(format!("{}|{}", lib, new_rel), s);
-            }
-        }
+        let is_file = before.len() == 1 && before[0] == id;
+        state.after_move(&lib, &id, &new_rel, &before, if is_file { Some(title.trim()) } else { None });
         return Ok(new_rel);
     }
     let store = notes_of(&state, &lib)?;

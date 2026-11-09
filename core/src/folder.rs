@@ -443,8 +443,86 @@ impl FolderLibrary {
         Ok(if parent.is_empty() { name.to_string() } else { format!("{}/{}", parent, name) })
     }
 
-    /// Give an editable file another name (the suffix stays); returns its new path.
+    /// Give a folder another name; returns its new path.
+    fn rename_dir(&self, rel: &str, name: &str) -> Result<String, String> {
+        let name = name.trim();
+        check_name(name)?;
+        let path = self.abs(rel)?;
+        let parent = rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        let old_name = rel.rsplit('/').next().unwrap_or(rel);
+        if old_name == name {
+            return Ok(rel.to_string());
+        }
+        if old_name.to_lowercase() != name.to_lowercase() && Self::taken(path.parent().unwrap_or(&self.root), name) {
+            return Err(format!("这里已经有叫「{}」的文件或文件夹", name));
+        }
+        let new_rel = if parent.is_empty() { name.to_string() } else { format!("{}/{}", parent, name) };
+        std::fs::rename(&path, self.abs(&new_rel)?).map_err(|e| format!("{}: {}", rel, e))?;
+        Ok(new_rel)
+    }
+
+    /// Move an editable file or a folder into the folder `parent` ("" for the
+    /// top); returns its new path. A folder cannot go into itself.
+    pub fn move_to(&self, rel: &str, parent: &str) -> Result<String, String> {
+        self.need_writable()?;
+        if rel.is_empty() {
+            return Err("不能移动整个知识库".into());
+        }
+        let path = self.abs(rel)?;
+        if path.is_dir() {
+            if parent == rel || parent.starts_with(&format!("{}/", rel)) {
+                return Err("不能把文件夹移到它自己里面".into());
+            }
+        } else {
+            self.editable(rel)?;
+        }
+        if parent.split('/').any(|p| p.starts_with('.')) {
+            return Err(format!("不能移到这里：{}", parent));
+        }
+        let dest = self.abs(parent)?;
+        if !dest.is_dir() {
+            return Err(format!("文件夹不存在：{}", parent));
+        }
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        let here = rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        if here == parent {
+            return Ok(rel.to_string());
+        }
+        if Self::taken(&dest, name) {
+            return Err(format!("目标文件夹里已经有叫「{}」的文件或文件夹", name));
+        }
+        std::fs::rename(&path, dest.join(name)).map_err(|e| format!("{}: {}", rel, e))?;
+        Ok(if parent.is_empty() { name.to_string() } else { format!("{}/{}", parent, name) })
+    }
+
+    /// Every folder below the root, as paths, in order (to pick a place to move to).
+    pub fn dirs(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        fn walk(lib: &FolderLibrary, rel: &str, out: &mut Vec<String>) {
+            let Ok(list) = lib.children(rel) else { return };
+            for e in list.into_iter().filter(|e| e.is_dir) {
+                out.push(e.rel.clone());
+                if out.len() < 5000 {
+                    walk(lib, &e.rel, out);
+                }
+            }
+        }
+        walk(self, "", &mut out);
+        out
+    }
+
+    /// Where the pictures of the notes are kept (read-write libraries).
+    pub fn attach_dir(&self) -> PathBuf {
+        self.root.join(SIDECAR_DIR).join("attachments")
+    }
+
+    /// Give an editable file or a folder another name (a file keeps its
+    /// suffix); returns its new path.
     pub fn rename(&self, rel: &str, main: &str) -> Result<String, String> {
+        self.need_writable()?;
+        if !rel.is_empty() && self.abs(rel)?.is_dir() {
+            return self.rename_dir(rel, main);
+        }
         let (path, kind) = self.editable(rel)?;
         let main = main.trim();
         check_name(main)?;
@@ -517,6 +595,44 @@ impl FolderLibrary {
             })
         })
     }
+}
+
+/// The Markdown of a note as the editor gets it: a picture kept by the
+/// program (`](../.smart-library/attachments/<name>)`) is `![](attach:<name>)`.
+pub fn to_editor(content: &str) -> String {
+    const KEY: &str = ".smart-library/attachments/";
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(at) = rest.find(KEY) {
+        let before = &rest[..at];
+        let after = &rest[at + KEY.len()..];
+        let end = after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '.')).unwrap_or(after.len());
+        let name = &after[..end];
+        let stem = before.trim_end_matches("../");
+        if crate::attach::is_name(name) && stem.ends_with("](") {
+            out.push_str(stem);
+            out.push_str("attach:");
+        } else {
+            out.push_str(before);
+            out.push_str(KEY);
+        }
+        out.push_str(name);
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The Markdown of a note as it is written to its file (`note_rel`: its path
+/// in the library): `attach:<name>` becomes a relative link to the picture, so
+/// other programs show it too.
+pub fn from_editor(content: &str, note_rel: &str) -> String {
+    let prefix = "../".repeat(note_rel.matches('/').count());
+    let mut out = content.to_string();
+    for name in crate::attach::refs(content) {
+        out = out.replace(&format!("attach:{}", name), &format!("{}{}/attachments/{}", prefix, SIDECAR_DIR, name));
+    }
+    out
 }
 
 /// The folders above a file and the file, as nodes that can carry properties.
@@ -796,6 +912,51 @@ mod tests {
         assert!(lib.children("").unwrap().iter().all(|e| !e.rel.starts_with('.')));
         assert!(lib.files().iter().all(|f| !f.rel.contains(SIDECAR_DIR)));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn renames_and_moves_folders_and_files() {
+        let d = tmp("mv");
+        let lib = FolderLibrary::open(&d, FolderFilter::default()).unwrap().with_writable(true);
+        lib.create_dir("", "甲").unwrap();
+        lib.create_dir("", "乙").unwrap();
+        lib.create_dir("甲", "内").unwrap();
+        lib.create("甲/内", Some("文"), EditKind::Markdown).unwrap();
+        // rename a folder: what is inside follows
+        assert_eq!(lib.rename("甲", "丙").unwrap(), "丙");
+        assert!(lib.rename("丙", "乙").is_err());
+        assert!(lib.rename("丙", "a/b").is_err());
+        assert!(d.join("丙/内/文.md").is_file());
+        assert_eq!(lib.rename("丙", "丙").unwrap(), "丙");
+        // move a file and a folder
+        assert_eq!(lib.move_to("丙/内/文.md", "乙").unwrap(), "乙/文.md");
+        assert_eq!(lib.move_to("丙/内", "乙").unwrap(), "乙/内");
+        assert!(lib.move_to("乙", "乙/内").is_err()); // into itself
+        assert!(lib.move_to("乙", "乙").is_err());
+        assert!(lib.move_to("乙/文.md", "不存在").is_err());
+        assert!(lib.move_to("乙/文.md", ".smart-library").is_err());
+        assert_eq!(lib.move_to("乙/文.md", "乙").unwrap(), "乙/文.md"); // already there
+        lib.create("丙", Some("文"), EditKind::Markdown).unwrap();
+        assert!(lib.move_to("丙/文.md", "乙").is_err()); // name taken
+        std::fs::write(d.join("x.txt"), "t").unwrap();
+        assert!(lib.move_to("x.txt", "乙").is_err()); // not a file of the program
+        assert_eq!(lib.dirs(), vec!["丙", "乙", "乙/内"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn pictures_are_relative_links_in_the_file() {
+        let name = "0123456789abcdef0123456789abcdef.png";
+        let editor = format!("前 ![](attach:{}) 后 ![x](http://a/b.png)", name);
+        let file = from_editor(&editor, "笔记.md");
+        assert_eq!(file, format!("前 ![](.smart-library/attachments/{}) 后 ![x](http://a/b.png)", name));
+        assert_eq!(to_editor(&file), editor);
+        let deep = from_editor(&editor, "a/b/笔记.md");
+        assert!(deep.contains(&format!("](../../.smart-library/attachments/{})", name)));
+        assert_eq!(to_editor(&deep), editor);
+        // not ours: left alone
+        let other = "![](pics/.smart-library/attachments/zz.png)";
+        assert_eq!(to_editor(other), other);
     }
 
     #[test]

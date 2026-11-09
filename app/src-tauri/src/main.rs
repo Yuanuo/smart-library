@@ -77,6 +77,8 @@ fn main() {
             commands::set_folder_writable,
             commands::create_folder_file,
             commands::create_folder_dir,
+            commands::move_folder_node,
+            commands::folder_dirs,
             commands::file_name_rules,
             commands::check_file_name,
             commands::folder_children,

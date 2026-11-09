@@ -7,6 +7,7 @@
   import Tree from "./Tree.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import NameDialog from "./NameDialog.svelte";
+  import MoveDialog from "./MoveDialog.svelte";
   import Icon from "./Icon.svelte";
   import * as workspace from "./workspace.svelte.js";
   import { ask } from "@tauri-apps/plugin-dialog";
@@ -110,6 +111,7 @@
   }
 
   let nameDlg = $state(null); // { title, label, value, okLabel, onok }
+  let moveDlg = $state(null); // { from, dirs, onok }
   let selected = $state(null); // { lib, key }: the last note opened from the tree
 
   const isNotes = (id) => libraries.find((l) => l.id === id)?.kind === "notes";
@@ -303,25 +305,59 @@
   }
 
   function renameNote(lib, node, key) {
-    const file = isRwFolder(lib); // a file name: strict rules, and the path changes with it
+    const file = isRwFolder(lib); // a file or folder name: strict rules, and the path changes with it
+    const dir = file && node.path == null;
     nameDlg = {
-      title: "重命名笔记",
-      label: file ? "文件名（不含后缀）" : "标题",
+      title: dir ? "重命名文件夹" : "重命名笔记",
+      label: dir ? "文件夹名称" : file ? "文件名（不含后缀）" : "标题",
       value: node.title,
       okLabel: "确定",
       hint: file ? nameRules : "",
       validate: file ? checkName : null,
       onok: guard(lib, async (title) => {
-        const rel = await api.renameNote(lib, node.rel, title);
-        if (file && rel !== node.rel) {
-          // the tab of the file belongs to its old path: open it again under the new one
-          const wasOpen = workspace.ws.current?.lib === lib && workspace.ws.current?.path === node.rel;
-          workspace.closeDocument(lib, node.rel);
-          if (wasOpen) workspace.openVolume({ lib, path: rel });
-        } else workspace.retitle(lib, node.rel, title);
+        if (!file) {
+          await api.renameNote(lib, node.rel, title);
+          workspace.retitle(lib, node.rel, title);
+        } else {
+          await relocate(lib, node, () => api.renameNote(lib, node.rel, title));
+        }
         await refresh(lib, parentKey(key) || null);
       }),
     };
+  }
+
+  /** Change the path of a file or folder of a read-write folder (`change` resolves to the new path): the
+   * tabs of what is inside are closed first (their editors save), and the active one opens again under the new path. */
+  async function relocate(lib, node, change) {
+    const { active } = await workspace.closeUnder(lib, node.rel);
+    let rel;
+    try {
+      rel = await change();
+    } catch (e) {
+      if (active) workspace.openVolume({ lib, path: active });
+      throw e;
+    }
+    if (active) workspace.openVolume({ lib, path: rel + active.slice(node.rel.length) });
+    return rel;
+  }
+
+  const chainOf = (rel) => rel.split("/").map((_, i, a) => a.slice(0, i + 1).join("/"));
+
+  /** Pick a folder and move a file or folder of a read-write folder into it. */
+  async function moveNode(lib, node, key) {
+    try {
+      moveDlg = {
+        from: node.rel,
+        dirs: await api.folderDirs(lib),
+        onok: guard(lib, async (parent) => {
+          const rel = await relocate(lib, node, () => api.moveFolderNode(lib, node.rel, parent));
+          await refresh(lib, parentKey(key) || null);
+          await showNew({ lib, id: rel, chain: chainOf(rel) });
+        }),
+      };
+    } catch (e) {
+      errors[lib] = String(e);
+    }
   }
 
   async function deleteNote(lib, node, key) {
@@ -473,12 +509,18 @@
         : rwFile
           ? [
               { label: "重命名…（F2）", action: () => renameNote(l.id, node, key) },
+              { label: "移动到…", action: () => moveNode(l.id, node, key) },
               // files are ordered by name, there is no moving up or down
               { label: "上移", action: () => {}, disabled: true },
               { label: "下移", action: () => {}, disabled: true },
               { label: "删除…", action: () => deleteNote(l.id, node, key) },
             ]
-          : [],
+          : rw && node.path == null
+            ? [
+                { label: "重命名…（F2）", action: () => renameNote(l.id, node, key) },
+                { label: "移动到…", action: () => moveNode(l.id, node, key) },
+              ]
+            : [],
       [
         ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(filePath(l, node)) }]),
         { label: "复制目录树路径", action: () => oncopy(titleChain(l, key).join(" › ")) },
@@ -790,7 +832,7 @@
     const at = lib && key ? { lib: lib.id, key } : selected && isEditable(selected.lib) ? selected : null;
     const node = at ? nodeAt(at.lib, at.key) : null;
     // in a read-write folder only the files the program edits can be renamed
-    if (node && (isNotes(at.lib) || (isRwFolder(at.lib) && node.path != null && isEditableName(node.rel)))) {
+    if (node && (isNotes(at.lib) || (isRwFolder(at.lib) && (node.path == null || isEditableName(node.rel))))) {
       e.preventDefault();
       renameNote(at.lib, node, at.key);
     }
@@ -859,6 +901,10 @@
 
 {#if nameDlg}
   <NameDialog {...nameDlg} onclose={() => (nameDlg = null)} />
+{/if}
+
+{#if moveDlg}
+  <MoveDialog {...moveDlg} onclose={() => (moveDlg = null)} />
 {/if}
 
 {#if menu}

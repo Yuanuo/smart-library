@@ -292,6 +292,45 @@ impl Marks {
         Ok(rows)
     }
 
+    /// A document or folder was renamed or moved (`from`, `to`: paths in the
+    /// library): its marks, and those of everything below it, follow. `title`
+    /// is the new title of the document itself.
+    pub fn rekey(&self, lib: &str, from: &str, to: &str, title: Option<&str>) -> Result<(), String> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "UPDATE OR REPLACE marks SET path = ?3 || substr(path, ?4)
+             WHERE lib = ?1 AND (path = ?2 OR path LIKE ?5 ESCAPE '\\')",
+            params![lib, from, to, from.chars().count() as i64 + 1, crate::props::like_below(from)],
+        )
+        .map_err(err)?;
+        if let Some(t) = title {
+            c.execute("UPDATE marks SET doc_title = ?3 WHERE lib = ?1 AND path = ?2", params![lib, to, t]).map_err(err)?;
+        }
+        Ok(())
+    }
+
+    /// Every mark of a library (with its tags).
+    pub fn export_lib(&self, lib: &str) -> Result<Vec<Mark>, String> {
+        self.list(&MarkFilter { lib: Some(lib.to_string()), ..Default::default() }, 1_000_000)
+    }
+
+    /// Replace all the marks of a library by `marks` (their ids are not kept).
+    pub fn replace_lib(&self, lib: &str, marks: &[Mark]) -> Result<(), String> {
+        let c = self.conn.lock().unwrap();
+        c.execute("DELETE FROM marks WHERE lib = ?1", params![lib]).map_err(err)?;
+        for m in marks {
+            c.execute(
+                "INSERT OR IGNORE INTO marks (kind, lib, path, book_id, lb, quote, note, doc_title, lib_title, author, created)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![m.kind, lib, m.path, m.book_id, m.lb, m.quote, m.note, m.doc_title, m.lib_title, m.author, m.created],
+            )
+            .map_err(err)?;
+            let id = c.last_insert_rowid();
+            Self::put_tags(&c, id, &m.tags)?;
+        }
+        Ok(())
+    }
+
     /// Every tag with the number of marks that have it.
     pub fn tags(&self) -> Result<Vec<(String, i64)>, String> {
         let c = self.conn.lock().unwrap();
@@ -354,6 +393,47 @@ mod tests {
         assert_eq!(r[0].tags, vec!["校对"]);
         m.delete(a).unwrap();
         assert!(m.tags().unwrap().is_empty()); // tags go with the mark
+    }
+
+    #[test]
+    fn marks_props_and_history_follow_a_moved_path() {
+        let m = Marks::memory().unwrap();
+        let mut b = clip("dir", "甲/内/文.md", "3", "引文");
+        b.book_id = None;
+        m.add(&b, &["旧".to_string()]).unwrap();
+        m.set_node_tags("dir", None, "甲/内", "内", "库", &["夹".to_string()]).unwrap();
+        m.set_node_tags("dir", None, "甲_内", "别的", "库", &["别".to_string()]).unwrap(); // not below 甲/内
+        m.rekey("dir", "甲/内", "乙/内", None).unwrap();
+        m.rekey("dir", "乙/内/文.md", "乙/内/新名.md", Some("新名")).unwrap();
+        let all = m.export_lib("dir").unwrap();
+        assert!(all.iter().any(|x| x.path == "乙/内/新名.md" && x.doc_title == "新名" && x.tags == vec!["旧"]));
+        assert_eq!(m.node_tags("dir", None, "乙/内").unwrap(), vec!["夹"]);
+        assert_eq!(m.node_tags("dir", None, "甲_内").unwrap(), vec!["别"]);
+        // the library file replaces everything the library has
+        m.replace_lib("dir", &all[..1]).unwrap();
+        assert_eq!(m.export_lib("dir").unwrap().len(), 1);
+
+        let p = crate::props::Props::memory().unwrap();
+        let mut d = crate::props::Dims::new();
+        d.insert("period".to_string(), vec!["唐".to_string()]);
+        p.set("dir", None, "甲/内/文.md", &d).unwrap();
+        p.set("dir", None, "甲", &d).unwrap();
+        p.rekey("dir", "甲", "丙").unwrap();
+        assert_eq!(p.get("dir", None, "丙/内/文.md").unwrap(), d);
+        assert_eq!(p.get("dir", None, "丙").unwrap(), d);
+        assert!(p.get("dir", None, "甲").unwrap().is_empty());
+        let all = p.all("dir").unwrap();
+        p.replace_lib("dir", &[]).unwrap();
+        assert!(p.all("dir").unwrap().is_empty());
+        p.replace_lib("dir", &all).unwrap();
+        assert_eq!(p.all("dir").unwrap().len(), 2);
+
+        let h = crate::history::History::memory().unwrap();
+        h.touch("dir", "甲/文.md", None, "文").unwrap();
+        h.rekey("dir", "甲", "丙", None).unwrap();
+        h.rekey("dir", "丙/文.md", "丙/新.md", Some("新")).unwrap();
+        let l = h.list("", 10).unwrap();
+        assert_eq!((l[0].path.as_str(), l[0].title.as_str()), ("丙/新.md", "新"));
     }
 
     #[test]

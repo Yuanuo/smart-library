@@ -100,6 +100,11 @@ pub struct Props {
     conn: Mutex<Connection>,
 }
 
+/// `LIKE` pattern of everything below the folder `path` (`path/%`).
+pub fn like_below(path: &str) -> String {
+    format!("{}/%", path.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"))
+}
+
 impl Props {
     pub fn open(path: &Path) -> Result<Props, String> {
         Self::init(Connection::open(path).map_err(err)?)
@@ -188,6 +193,28 @@ impl Props {
         let c = self.conn.lock().unwrap();
         for p in paths {
             c.execute("DELETE FROM node_props WHERE lib = ?1 AND book_id = '' AND path = ?2", params![lib, p]).map_err(err)?;
+        }
+        Ok(())
+    }
+
+    /// A document or folder was renamed or moved (`from`, `to`: paths in the
+    /// library): its properties, and those of everything below it, follow.
+    pub fn rekey(&self, lib: &str, from: &str, to: &str) -> Result<(), String> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "UPDATE OR REPLACE node_props SET path = ?3 || substr(path, ?4)
+             WHERE lib = ?1 AND book_id = '' AND (path = ?2 OR path LIKE ?5 ESCAPE '\\')",
+            params![lib, from, to, from.chars().count() as i64 + 1, like_below(from)],
+        )
+        .map_err(err)?;
+        Ok(())
+    }
+
+    /// Replace everything a library has by `entries` (book id, path, dims).
+    pub fn replace_lib(&self, lib: &str, entries: &[(String, String, Dims)]) -> Result<(), String> {
+        self.remove_lib(lib)?;
+        for (b, p, d) in entries {
+            self.set(lib, Some(b.as_str()).filter(|b| !b.is_empty()), p, d)?;
         }
         Ok(())
     }

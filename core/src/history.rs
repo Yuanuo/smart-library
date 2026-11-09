@@ -132,6 +132,22 @@ impl History {
         Ok(())
     }
 
+    /// A document or folder was renamed or moved: its entries follow, and the
+    /// document itself gets `title`.
+    pub fn rekey(&self, lib: &str, from: &str, to: &str, title: Option<&str>) -> Result<(), String> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "UPDATE OR REPLACE history SET path = ?3 || substr(path, ?4)
+             WHERE lib = ?1 AND (path = ?2 OR path LIKE ?5 ESCAPE '\\')",
+            params![lib, from, to, from.chars().count() as i64 + 1, crate::props::like_below(from)],
+        )
+        .map_err(err)?;
+        if let Some(t) = title {
+            c.execute("UPDATE history SET title = ?3 WHERE lib = ?1 AND path = ?2", params![lib, to, t]).map_err(err)?;
+        }
+        Ok(())
+    }
+
     /// Forget a whole library (when it is unbound).
     pub fn remove_lib(&self, lib: &str) -> Result<(), String> {
         let c = self.conn.lock().unwrap();
