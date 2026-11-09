@@ -24,6 +24,8 @@ export const deleteFolderDir = (lib, rel) => invoke("delete_folder_dir", { lib, 
 export const checkFilePath = (path) => invoke("check_file_path", { path });
 /** Read again the file that travels with a read-write folder when it was changed outside; resolves to true when it was. */
 export const sidecarRefresh = () => invoke("sidecar_refresh");
+/** Empty the trash of read-write local folders and delete pictures no note refers to; resolves to a sentence. */
+export const clearCache = () => invoke("clear_cache");
 /** The rules for local file names, as text. */
 export const fileNameRules = () => invoke("file_name_rules");
 /** Rejects with the reason when `name` cannot be a local file name. */

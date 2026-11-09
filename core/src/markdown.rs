@@ -209,7 +209,9 @@ pub fn to_html(md: &str) -> String {
             }
             continue;
         }
-        let t = line.trim_start();
+        // `<br>` is a line break of HTML in Markdown (the visual editor writes it for an empty line): a space here
+        let no_br = without_br(line);
+        let t = no_br.trim_start();
         if t.is_empty() {
             close_list(&mut out, &mut list);
             continue;
@@ -258,6 +260,30 @@ pub fn to_html(md: &str) -> String {
     out
 }
 
+/// The line without `<br>`, `<br/>` and `<br />` (any case): each one is a space.
+fn without_br(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find('<') {
+        let tail = &rest[at..];
+        let lower: String = tail.chars().take(6).collect::<String>().to_ascii_lowercase();
+        let len = ["<br />", "<br/>", "<br>"].iter().find(|p| lower.starts_with(*p)).map(|p| p.len());
+        match len {
+            Some(n) => {
+                out.push_str(&rest[..at]);
+                out.push(' ');
+                rest = &tail[n..];
+            }
+            None => {
+                out.push_str(&rest[..at + 1]);
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `12. text` -> `text`
 fn numbered(t: &str) -> Option<&str> {
     let n = t.chars().take_while(|c| c.is_ascii_digit()).count();
@@ -279,6 +305,14 @@ mod tests {
         assert!(h.contains("<ul><li>一</li><li>二</li></ul>"));
         assert!(h.contains("<ol><li>甲</li></ol>"));
         assert!(h.contains("<blockquote>引用</blockquote>") && h.contains("<p>code</p>"));
+    }
+
+    #[test]
+    fn br_is_a_line_break_not_text() {
+        let h = to_html("text is ok\n\n<br />\n\n* 1\n* 2\n\n<br>\n甲<BR/>乙 a<b");
+        assert!(!h.contains("&lt;br") && !h.contains("&lt;BR"), "{h}");
+        assert!(h.contains("<p>text is ok</p>") && h.contains("<ul><li>1</li><li>2</li></ul>"), "{h}");
+        assert!(h.contains("<p>甲 乙 a&lt;b</p>"), "{h}");
     }
 
     #[test]

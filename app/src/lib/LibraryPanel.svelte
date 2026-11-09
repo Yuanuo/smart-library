@@ -2,7 +2,7 @@
   // The tree panel: one root per bound knowledge library, its tree loaded
   // when first opened. Right-click a library for its actions, or the empty
   // panel to bind a library.
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import * as api from "./api.js";
   import Tree from "./Tree.svelte";
   import ContextMenu from "./ContextMenu.svelte";
@@ -493,6 +493,21 @@
     }
     errors[l.id] = fails.join("\n");
   }
+
+  // The highlight of the node that was opened or revealed last gives way when another reading tab
+  // becomes the active one (the active tab's own node is shown by `activeKey`): a node whose tab was
+  // closed must not keep its background.
+  let lastTab = "";
+  $effect(() => {
+    const c = workspace.ws.current;
+    const id = c ? `${c.lib}|${c.bookId ?? ""}|${c.path ?? ""}` : "";
+    untrack(() => {
+      if (id !== lastTab) {
+        lastTab = id;
+        current = null;
+      }
+    });
+  });
 
   // ---- keeping the tree of a local folder in step with the disk (like an IDE): when the window gets the
   // focus again, and whenever a folder is opened, what is shown is compared with the folder; nodes that are

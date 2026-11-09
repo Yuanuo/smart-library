@@ -1091,6 +1091,67 @@ pub async fn delete_folder_dir(lib: String, rel: String, state: State<'_, AppSta
     Ok(before.len())
 }
 
+/// Clean up what the program leaves behind: in every read-write local folder the trash
+/// (`.smart-library/trash`) and the pictures no note refers to; in every internal library the
+/// pictures no note refers to (those from the last minute are spared). Returns a sentence about what was removed.
+#[tauri::command]
+pub async fn clear_cache(state: State<'_, AppState>) -> Result<String, String> {
+    let libs: Vec<Library> = state.libraries.read().unwrap().clone();
+    let (mut trash, mut trash_bytes, mut pics, mut pic_bytes) = (0usize, 0u64, 0usize, 0u64);
+    let mut failed = Vec::new();
+    for l in libs {
+        if l.kind == "folder" && l.writable {
+            match state.folder(&l).and_then(|f| f.clean()) {
+                Ok(r) => {
+                    trash += r.trash_files;
+                    trash_bytes += r.trash_bytes;
+                    pics += r.pictures;
+                    pic_bytes += r.picture_bytes;
+                }
+                Err(e) => failed.push(format!("{}：{}", l.title, e)),
+            }
+        } else if l.kind == "notes" {
+            let result = (|| -> Result<(), String> {
+                let used: HashSet<String> = state.notes(&l)?.rows()?.iter().flat_map(|r| smart_library_core::attach::refs(&r.content)).collect();
+                let dir = state.attachments_dir(&l.id);
+                let recent = std::time::Duration::from_secs(60);
+                for e in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    let fresh = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a < recent);
+                    if smart_library_core::attach::is_name(&n) && !used.contains(&n) && !fresh {
+                        pics += 1;
+                        pic_bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
+                        let _ = std::fs::remove_file(e.path());
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(e) = result {
+                if dir_exists(&state.attachments_dir(&l.id)) {
+                    failed.push(format!("{}：{}", l.title, e));
+                }
+            }
+        }
+    }
+    let mb = |b: u64| format!("{:.1} MB", b as f64 / 1_048_576.0);
+    let mut msg = format!(
+        "已清理：回收站 {} 个文件（{}），没有笔记引用的图片 {} 张（{}）。",
+        trash,
+        mb(trash_bytes),
+        pics,
+        mb(pic_bytes)
+    );
+    if !failed.is_empty() {
+        msg.push_str(&format!("
+没有清理成功：{}", failed.join("；")));
+    }
+    Ok(msg)
+}
+
+fn dir_exists(p: &Path) -> bool {
+    p.is_dir()
+}
+
 /// The file that travels with a read-write folder was changed outside (git pull, a
 /// synchronised copy): read it again. True when something was read.
 #[tauri::command]

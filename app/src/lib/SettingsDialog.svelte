@@ -3,9 +3,27 @@
   // height. Changes apply at once and are kept.
   import { onMount } from "svelte";
   import * as api from "./api.js";
+  import { ask } from "@tauri-apps/plugin-dialog";
   import { settings, update, reset, FONTS } from "./settings.svelte.js";
 
   let { onclose } = $props();
+
+  // clearing what the program leaves behind (trash of local folders, pictures nothing refers to)
+  let cleaning = $state(false);
+  let cleanMsg = $state("");
+  async function clean() {
+    const note = "会清空读写模式本地文件夹里的 .smart-library/trash（删除的文件和文件夹），并删除没有任何笔记引用的图片。";
+    if (!(await ask(`清理缓存？\n${note}\n清空后不能再从回收站找回。`, { title: "清理缓存", kind: "warning", okLabel: "清理", cancelLabel: "取消" }))) return;
+    cleaning = true;
+    cleanMsg = "";
+    try {
+      cleanMsg = await api.clearCache();
+    } catch (e) {
+      cleanMsg = String(e);
+    } finally {
+      cleaning = false;
+    }
+  }
 
   // the fonts installed on this computer (from the program, not the browser)
   let cjk = $state([]);
@@ -124,6 +142,15 @@
         </div>
       </div>
       <p class="muted hint">在目录树里右键知识库或节点，选「加入每日一句来源」；没有来源时从全部已建索引的知识库里抽。</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>清理</legend>
+      <div class="row">
+        <button onclick={clean} disabled={cleaning}>{cleaning ? "清理中…" : "清理缓存"}</button>
+        <span class="muted hint wide">清空本地文件夹（读写模式）里的回收站 .smart-library/trash，并删除没有笔记引用的图片（内部知识库也一样）。</span>
+      </div>
+      {#if cleanMsg}<p class="hint" style="white-space: pre-line">{cleanMsg}</p>{/if}
     </fieldset>
 
     <div class="actions">

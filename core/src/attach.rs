@@ -72,6 +72,17 @@ pub fn store(dir: &Path, bytes: &[u8], mime: &str) -> Result<String, String> {
     Ok(name)
 }
 
+/// The folders a name is spread over: `5c/99/` for `5c990784….png`, so one folder does
+/// not collect all the pictures of a library.
+pub fn shard_of(name: &str) -> Option<String> {
+    is_name(name).then(|| format!("{}/{}/", &name[..2], &name[2..4]))
+}
+
+/// The file of a name inside `dir`, in the spread folders (`dir/5c/99/<name>`).
+pub fn sharded(dir: &Path, name: &str) -> Option<PathBuf> {
+    shard_of(name).map(|s| dir.join(s).join(name))
+}
+
 /// The file of a name (only names made by [`store`]).
 pub fn path_of(dir: &Path, name: &str) -> Option<PathBuf> {
     is_name(name).then(|| dir.join(name))
