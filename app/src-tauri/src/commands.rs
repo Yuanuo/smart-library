@@ -152,6 +152,9 @@ impl AppState {
             return Ok(f.clone());
         }
         let f = Arc::new(FolderLibrary::open(Path::new(&lib.source), filter_of(lib))?.with_writable(lib.writable));
+        if lib.writable {
+            let _ = self.sidecar_load(lib); // a bad file leaves what we have
+        }
         self.folders.write().unwrap().insert(lib.id.clone(), f.clone());
         Ok(f)
     }
@@ -190,6 +193,16 @@ impl AppState {
         self.data_dir.join("repos").join(lib).join("attachments")
     }
 
+    /// Where the pictures of the notes of a library are kept: the data folder
+    /// for internal libraries, `.smart-library/attachments` for read-write folders.
+    fn pictures_dir(&self, lib: &Library) -> Result<PathBuf, String> {
+        match lib.kind.as_str() {
+            "notes" => Ok(self.attachments_dir(&lib.id)),
+            "folder" if lib.writable => Ok(self.folder(lib)?.attach_dir()),
+            _ => Err("这个知识库的笔记不能放图片".into()),
+        }
+    }
+
     fn index_dir(&self, id: &str) -> PathBuf {
         self.data_dir.join("repos").join(id).join("index")
     }
@@ -207,6 +220,7 @@ impl AppState {
         let _ = self.props.rekey(lib, from, to);
         let _ = self.marks.rekey(lib, from, to, title);
         let _ = self.history.rekey(lib, from, to, title);
+        self.sidecar_sync();
         {
             let mut stamps = self.stamps.lock().unwrap();
             for b in before {
@@ -216,6 +230,48 @@ impl AppState {
             }
         }
         self.mark_dirty(lib, before.iter().cloned().chain(before.iter().map(|b| swap(b))));
+    }
+
+    /// Write the properties and marks of every read-write folder library into
+    /// its `.smart-library/meta.json` (only when they differ from the file).
+    /// Called after each change; a failure (a folder on a read-only disk …)
+    /// does not stop the change, the data stays in our own files.
+    fn sidecar_sync(&self) {
+        let libs: Vec<Library> = self.libraries.read().unwrap().iter().filter(|l| l.kind == "folder" && l.writable).cloned().collect();
+        for l in libs {
+            let _ = self.sidecar_write(&l);
+        }
+    }
+
+    fn sidecar_write(&self, l: &Library) -> Result<bool, String> {
+        let props = self.props.all(&l.id)?.into_iter().filter(|(b, _, _)| b.is_empty()).map(|(_, p, d)| (p, d)).collect();
+        let marks = self.marks.export_lib(&l.id)?;
+        smart_library_core::sidecar::write(Path::new(&l.source), &smart_library_core::sidecar::Sidecar { props, marks })
+    }
+
+    /// The file of a read-write folder replaces what we keep for the library
+    /// (it is the copy that travels with the folder).
+    fn sidecar_load(&self, l: &Library) -> Result<(), String> {
+        let Some(sc) = smart_library_core::sidecar::read(Path::new(&l.source), &l.id)? else { return Ok(()) };
+        let props: Vec<(String, String, Dims)> = sc.props.into_iter().map(|(p, d)| (String::new(), p, d)).collect();
+        self.props.replace_lib(&l.id, &props)?;
+        let marks: Vec<_> = sc.marks.into_iter().map(|mut m| { m.lib_title = l.title.clone(); m }).collect();
+        self.marks.replace_lib(&l.id, &marks)
+    }
+
+    /// A folder library has just become read-write: what its file has and what
+    /// we kept so far are put together, and the file is written.
+    fn sidecar_enable(&self, l: &Library) -> Result<(), String> {
+        if let Some(sc) = smart_library_core::sidecar::read(Path::new(&l.source), &l.id)? {
+            for (p, d) in sc.props {
+                if self.props.get(&l.id, None, &p)?.is_empty() {
+                    self.props.set(&l.id, None, &p, &d)?;
+                }
+            }
+            let marks: Vec<_> = sc.marks.into_iter().map(|mut m| { m.lib_title = l.title.clone(); m }).collect();
+            self.marks.merge_lib(&l.id, &marks)?;
+        }
+        self.sidecar_write(l).map(|_| ())
     }
 
     /// Remember that documents of a library were changed (saved, made, renamed, deleted).
@@ -375,10 +431,10 @@ pub fn asset(state: &AppState, url_path: &str) -> Option<(Vec<u8>, &'static str)
     let decoded = percent_decode(url_path);
     let (lib, path) = decoded.split_once('/')?;
     let lib = state.library(lib).ok()?;
-    if lib.kind == "notes" {
+    if lib.kind == "notes" || (lib.kind == "folder" && lib.writable) {
         // a picture pasted into a note
         let name = path.strip_prefix("attachments/")?;
-        let file = smart_library_core::attach::path_of(&state.attachments_dir(&lib.id), name)?;
+        let file = smart_library_core::attach::path_of(&state.pictures_dir(&lib).ok()?, name)?;
         return Some((std::fs::read(file).ok()?, smart_library_core::attach::mime_of(name)));
     }
     let bytes = state.bookcase_of(&lib).ok()?.asset(path)?;
@@ -738,6 +794,11 @@ pub async fn set_folder_writable(id: String, writable: bool, state: State<'_, Ap
         }
         l.writable = writable;
     }
+    if writable {
+        // what the folder's own file has and what we kept are put together
+        let l = state.library(&id)?;
+        state.sidecar_enable(&l)?;
+    }
     state.folders.write().unwrap().remove(&id);
     state.titles.write().unwrap().remove(&id);
     state.stamps.lock().unwrap().retain(|k, _| !k.starts_with(&format!("{}|", id)));
@@ -1046,6 +1107,8 @@ pub async fn save_note(lib: String, id: String, content: String, state: State<'_
     if let Some(f) = rw_folder(&state, &lib)? {
         let key = format!("{}|{}", lib, id);
         let seen = state.stamps.lock().unwrap().get(&key).cloned();
+        // a Markdown note keeps its pictures as relative links (other programs show them too)
+        let content = if folder::EditKind::of(&id) == Some(folder::EditKind::Markdown) { folder::from_editor(&content, &id) } else { content };
         let stamp = f.write_edit(&id, &content, seen.as_deref())?;
         state.stamps.lock().unwrap().insert(key, stamp);
         state.mark_dirty(&lib, [id]);
@@ -1122,14 +1185,8 @@ pub async fn note_attach(request: tauri::ipc::Request<'_>, state: State<'_, AppS
     };
     let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let l = state.library(&header("lib"))?;
-    if l.kind != "notes" {
-        return Err(if l.kind == "folder" && l.writable {
-            "读写模式的外部文件夹暂时还不能粘贴图片".into()
-        } else {
-            "只有自建知识库的笔记可以放图片".to_string()
-        });
-    }
-    smart_library_core::attach::store(&state.attachments_dir(&l.id), data, &header("mime"))
+    let dir = state.pictures_dir(&l).map_err(|_| "只有自建知识库和读写模式的本地文件夹里的笔记可以放图片".to_string())?;
+    smart_library_core::attach::store(&dir, data, &header("mime"))
 }
 
 /// Write bytes to a file the user chose (the request body is the content,
@@ -1150,7 +1207,7 @@ pub async fn save_bytes(request: tauri::ipc::Request<'_>) -> Result<(), String> 
 #[tauri::command]
 pub async fn note_picture(lib: String, name: String, state: State<'_, AppState>) -> Result<tauri::ipc::Response, String> {
     let l = state.library(&lib)?;
-    let file = smart_library_core::attach::path_of(&state.attachments_dir(&l.id), &name).ok_or("图片名不对")?;
+    let file = smart_library_core::attach::path_of(&state.pictures_dir(&l)?, &name).ok_or("图片名不对")?;
     Ok(tauri::ipc::Response::new(std::fs::read(file).map_err(|e| e.to_string())?))
 }
 
@@ -1187,6 +1244,7 @@ pub async fn delete_note(lib: String, id: String, state: State<'_, AppState>) ->
         state.mark_dirty(&lib, [id.clone()]);
         state.stamps.lock().unwrap().remove(&format!("{}|{}", lib, id));
         let _ = state.props.remove_nodes(&lib, &[id]);
+        state.sidecar_sync();
         return Ok(1);
     }
     let store = notes_of(&state, &lib)?;
@@ -1567,7 +1625,7 @@ pub async fn open_node(
             Some(_) => {
                 let (text, stamp) = f.read_edit(&path)?;
                 state.stamps.lock().unwrap().insert(format!("{}|{}", l.id, path), stamp);
-                Some(text)
+                Some(if edit_kind == Some(folder::EditKind::Markdown) { folder::to_editor(&text) } else { text })
             }
             None => None,
         };
@@ -2565,20 +2623,26 @@ pub async fn mark_add(
     state: State<'_, AppState>,
 ) -> Result<i64, String> {
     let lib_title = state.library(&lib)?.title;
-    state.marks.add(
+    let id = state.marks.add(
         &MarkNew { kind, lib, path, book_id, lb, quote, note, doc_title, lib_title, author },
         &parse_tags(&tags),
-    )
+    )?;
+    state.sidecar_sync();
+    Ok(id)
 }
 
 #[tauri::command]
 pub async fn mark_update(id: i64, note: Option<String>, tags: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
-    state.marks.update(id, note.as_deref(), tags.map(|t| parse_tags(&t)).as_deref())
+    state.marks.update(id, note.as_deref(), tags.map(|t| parse_tags(&t)).as_deref())?;
+    state.sidecar_sync();
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn mark_delete(id: i64, state: State<'_, AppState>) -> Result<(), String> {
-    state.marks.delete(id)
+    state.marks.delete(id)?;
+    state.sidecar_sync();
+    Ok(())
 }
 
 #[tauri::command]
@@ -2649,7 +2713,9 @@ pub async fn node_tags_set(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let lib_title = state.library(&lib)?.title;
-    state.marks.set_node_tags(&lib, book_id.as_deref(), &path, &doc_title, &lib_title, &parse_tags(&tags))
+    state.marks.set_node_tags(&lib, book_id.as_deref(), &path, &doc_title, &lib_title, &parse_tags(&tags))?;
+    state.sidecar_sync();
+    Ok(())
 }
 
 // ------------------------------------------------------------ properties
@@ -2729,6 +2795,7 @@ pub async fn props_set(
 ) -> Result<PropsSaved, String> {
     let l = state.library(&lib)?;
     state.props.set(&lib, book_id.as_deref(), &path, &dims)?;
+    state.sidecar_sync();
     let dir = state.index_dir(&lib);
     if !dir.join("smart-library-index.json").exists() {
         return Ok(PropsSaved { updating: 0 });

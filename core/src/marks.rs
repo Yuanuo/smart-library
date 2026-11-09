@@ -33,7 +33,7 @@ pub struct MarkNew {
     pub author: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Mark {
     pub id: i64,
     pub kind: String,
@@ -314,19 +314,41 @@ impl Marks {
         self.list(&MarkFilter { lib: Some(lib.to_string()), ..Default::default() }, 1_000_000)
     }
 
+    /// Add the marks of `marks` that the library does not have yet (same kind,
+    /// place and text); returns how many were added.
+    pub fn merge_lib(&self, lib: &str, marks: &[Mark]) -> Result<usize, String> {
+        let have: std::collections::HashSet<(String, String, Option<String>, String)> =
+            self.export_lib(lib)?.into_iter().map(|m| (m.kind, m.path, m.lb, m.quote)).collect();
+        let new: Vec<Mark> = marks
+            .iter()
+            .filter(|m| !have.contains(&(m.kind.clone(), m.path.clone(), m.lb.clone(), m.quote.clone())))
+            .cloned()
+            .collect();
+        let c = self.conn.lock().unwrap();
+        Self::insert_marks(&c, lib, &new)?;
+        Ok(new.len())
+    }
+
     /// Replace all the marks of a library by `marks` (their ids are not kept).
     pub fn replace_lib(&self, lib: &str, marks: &[Mark]) -> Result<(), String> {
         let c = self.conn.lock().unwrap();
         c.execute("DELETE FROM marks WHERE lib = ?1", params![lib]).map_err(err)?;
+        Self::insert_marks(&c, lib, marks)
+    }
+
+    fn insert_marks(c: &Connection, lib: &str, marks: &[Mark]) -> Result<(), String> {
         for m in marks {
-            c.execute(
-                "INSERT OR IGNORE INTO marks (kind, lib, path, book_id, lb, quote, note, doc_title, lib_title, author, created)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![m.kind, lib, m.path, m.book_id, m.lb, m.quote, m.note, m.doc_title, m.lib_title, m.author, m.created],
-            )
-            .map_err(err)?;
-            let id = c.last_insert_rowid();
-            Self::put_tags(&c, id, &m.tags)?;
+            let added = c
+                .execute(
+                    "INSERT OR IGNORE INTO marks (kind, lib, path, book_id, lb, quote, note, doc_title, lib_title, author, created)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![m.kind, lib, m.path, m.book_id, m.lb, m.quote, m.note, m.doc_title, m.lib_title, m.author, m.created],
+                )
+                .map_err(err)?;
+            if added == 0 {
+                continue; // a tag target that is already there
+            }
+            Self::put_tags(c, c.last_insert_rowid(), &m.tags)?;
         }
         Ok(())
     }
