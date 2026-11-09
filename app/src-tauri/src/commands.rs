@@ -193,16 +193,6 @@ impl AppState {
         self.data_dir.join("repos").join(lib).join("attachments")
     }
 
-    /// Where the pictures of the notes of a library are kept: the data folder
-    /// for internal libraries, `.smart-library/attachments` for read-write folders.
-    fn pictures_dir(&self, lib: &Library) -> Result<PathBuf, String> {
-        match lib.kind.as_str() {
-            "notes" => Ok(self.attachments_dir(&lib.id)),
-            "folder" if lib.writable => Ok(self.folder(lib)?.attach_dir()),
-            _ => Err("这个知识库的笔记不能放图片".into()),
-        }
-    }
-
     fn index_dir(&self, id: &str) -> PathBuf {
         self.data_dir.join("repos").join(id).join("index")
     }
@@ -431,10 +421,14 @@ pub fn asset(state: &AppState, url_path: &str) -> Option<(Vec<u8>, &'static str)
     let decoded = percent_decode(url_path);
     let (lib, path) = decoded.split_once('/')?;
     let lib = state.library(lib).ok()?;
-    if lib.kind == "notes" || (lib.kind == "folder" && lib.writable) {
+    if lib.kind == "notes" || lib.kind == "folder" {
         // a picture pasted into a note
         let name = path.strip_prefix("attachments/")?;
-        let file = smart_library_core::attach::path_of(&state.pictures_dir(&lib).ok()?, name)?;
+        let file = if lib.kind == "folder" {
+            state.folder(&lib).ok()?.find_picture(name)?
+        } else {
+            smart_library_core::attach::path_of(&state.attachments_dir(&lib.id), name)?
+        };
         return Some((std::fs::read(file).ok()?, smart_library_core::attach::mime_of(name)));
     }
     let bytes = state.bookcase_of(&lib).ok()?.asset(path)?;
@@ -1061,6 +1055,27 @@ pub async fn move_folder_node(lib: String, rel: String, parent: String, state: S
     Ok(new_rel)
 }
 
+/// Delete a folder of a read-write folder library with everything in it: it goes to
+/// `.smart-library/trash`. Returns the number of documents that were in it.
+#[tauri::command]
+pub async fn delete_folder_dir(lib: String, rel: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let f = rw_folder(&state, &lib)?.ok_or("只有读写模式的外部文件夹可以这样删除")?;
+    let before = files_under(&f, &rel);
+    f.delete_dir(&rel)?;
+    let prefix = format!("{}/", rel);
+    {
+        let mut stamps = state.stamps.lock().unwrap();
+        stamps.retain(|k, _| !k.starts_with(&format!("{}|{}", lib, prefix)));
+    }
+    state.mark_dirty(&lib, before.iter().cloned());
+    let _ = state.props.remove_nodes(&lib, &[rel.clone()]);
+    for p in &before {
+        let _ = state.props.remove_nodes(&lib, &[p.clone()]);
+    }
+    state.sidecar_sync();
+    Ok(before.len())
+}
+
 /// Every folder of a read-write folder library (paths), to pick where to move something.
 #[tauri::command]
 pub async fn folder_dirs(lib: String, state: State<'_, AppState>) -> Result<Vec<String>, String> {
@@ -1107,8 +1122,8 @@ pub async fn save_note(lib: String, id: String, content: String, state: State<'_
     if let Some(f) = rw_folder(&state, &lib)? {
         let key = format!("{}|{}", lib, id);
         let seen = state.stamps.lock().unwrap().get(&key).cloned();
-        // a Markdown note keeps its pictures as relative links (other programs show them too)
-        let content = if folder::EditKind::of(&id) == Some(folder::EditKind::Markdown) { folder::from_editor(&content, &id) } else { content };
+        // pictures: kept in the note's own folder, a Markdown note links to them (other programs show them too)
+        let content = f.prepare_save(&id, &content)?;
         let stamp = f.write_edit(&id, &content, seen.as_deref())?;
         state.stamps.lock().unwrap().insert(key, stamp);
         state.mark_dirty(&lib, [id]);
@@ -1169,6 +1184,12 @@ pub async fn file_name_rules() -> Result<String, String> {
     Ok(folder::NAME_RULES.to_string())
 }
 
+/// Whether a path of folders typed in a box (`a/b\c`) is made of good names.
+#[tauri::command]
+pub async fn check_file_path(path: String) -> Result<(), String> {
+    folder::split_path(&path).map(|_| ())
+}
+
 /// Whether a name (without its suffix) can be a local file name.
 #[tauri::command]
 pub async fn check_file_name(name: String) -> Result<(), String> {
@@ -1185,8 +1206,15 @@ pub async fn note_attach(request: tauri::ipc::Request<'_>, state: State<'_, AppS
     };
     let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let l = state.library(&header("lib"))?;
-    let dir = state.pictures_dir(&l).map_err(|_| "只有自建知识库和读写模式的本地文件夹里的笔记可以放图片".to_string())?;
-    smart_library_core::attach::store(&dir, data, &header("mime"))
+    if l.kind == "folder" && l.writable {
+        // kept in the folder of the note (the header `path` says which note)
+        let note = percent_decode(&header("path"));
+        return state.folder(&l)?.store_picture(&note, data, &header("mime"));
+    }
+    if l.kind != "notes" {
+        return Err("只有自建知识库和读写模式的本地文件夹里的笔记可以放图片".into());
+    }
+    smart_library_core::attach::store(&state.attachments_dir(&l.id), data, &header("mime"))
 }
 
 /// Write bytes to a file the user chose (the request body is the content,
@@ -1207,7 +1235,12 @@ pub async fn save_bytes(request: tauri::ipc::Request<'_>) -> Result<(), String> 
 #[tauri::command]
 pub async fn note_picture(lib: String, name: String, state: State<'_, AppState>) -> Result<tauri::ipc::Response, String> {
     let l = state.library(&lib)?;
-    let file = smart_library_core::attach::path_of(&state.pictures_dir(&l)?, &name).ok_or("图片名不对")?;
+    let file = if l.kind == "folder" {
+        state.folder(&l)?.find_picture(&name)
+    } else {
+        smart_library_core::attach::path_of(&state.attachments_dir(&l.id), &name)
+    }
+    .ok_or("图片名不对")?;
     Ok(tauri::ipc::Response::new(std::fs::read(file).map_err(|e| e.to_string())?))
 }
 

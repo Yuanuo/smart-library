@@ -129,7 +129,7 @@
       localStorage.setItem("note.editor", v ? "visual" : "source");
     } catch {}
   }
-  const keepPicture = async (file) => api.noteAttach(p.lib, await file.arrayBuffer(), file.type);
+  const keepPicture = async (file) => api.noteAttach(p.lib, await file.arrayBuffer(), file.type, p.path);
 
   /** Pictures pasted or dropped into the source editor are kept and shown as `![](attach:…)`. */
   let editorEl = $state();

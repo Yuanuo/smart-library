@@ -79,6 +79,8 @@ fn main() {
             commands::create_folder_dir,
             commands::move_folder_node,
             commands::folder_dirs,
+            commands::delete_folder_dir,
+            commands::check_file_path,
             commands::file_name_rules,
             commands::check_file_name,
             commands::folder_children,

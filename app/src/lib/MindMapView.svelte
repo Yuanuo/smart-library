@@ -58,7 +58,7 @@
       return;
     }
     try {
-      const name = await api.noteAttach(lib, await file.arrayBuffer(), file.type);
+      const name = await api.noteAttach(lib, await file.arrayBuffer(), file.type, path);
       const bmp = await createImageBitmap(file);
       const width = Math.min(bmp.width, 240);
       const height = Math.max(1, Math.round((bmp.height * width) / bmp.width));

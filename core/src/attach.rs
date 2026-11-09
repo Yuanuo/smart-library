@@ -47,18 +47,23 @@ fn fnv(bytes: &[u8], basis: u64) -> u64 {
     h
 }
 
-/// Keep a picture in `dir`; returns its name.
-pub fn store(dir: &Path, bytes: &[u8], mime: &str) -> Result<String, String> {
+/// The name a picture is kept under: its content decides.
+pub fn name_for(bytes: &[u8], mime: &str) -> Result<String, String> {
     let ext = ext_of_mime(mime).ok_or_else(|| format!("不支持的图片类型：{}", mime))?;
     if bytes.is_empty() {
         return Err("图片是空的".into());
     }
-    let name = format!(
+    Ok(format!(
         "{:016x}{:016x}.{}",
         fnv(bytes, 0xcbf29ce484222325),
         fnv(bytes, 0x84222325cbf29ce4 ^ bytes.len() as u64),
         ext
-    );
+    ))
+}
+
+/// Keep a picture in `dir`; returns its name.
+pub fn store(dir: &Path, bytes: &[u8], mime: &str) -> Result<String, String> {
+    let name = name_for(bytes, mime)?;
     let path = dir.join(&name);
     if !path.exists() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;

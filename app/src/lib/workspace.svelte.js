@@ -575,6 +575,27 @@ export async function closeUnder(lib, path) {
   return { paths, active: active && paths.includes(active) ? active : null };
 }
 
+/**
+ * Close the reading tabs of a library, run `change` (a change of its mode: the
+ * readers differ), and open the same documents again (the active one last).
+ */
+export async function reopenLibrary(lib, change) {
+  const open = (dv?.panels || []).filter((p) => p.params?.lib === lib && p.params.path != null);
+  const active = ws.current?.lib === lib ? ws.current.path : null;
+  const paths = open.map((p) => p.params.path);
+  open.forEach((p) => p.api.close()); // their editors save while closing
+  if (open.length) {
+    scheduleSave();
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  try {
+    await change();
+  } finally {
+    for (const path of paths.filter((x) => x !== active)) await openVolume({ lib, path }).catch(() => {});
+    if (active) await openVolume({ lib, path: active }).catch(() => {});
+  }
+}
+
 /** Show a new title on the tab of a document (a renamed note). */
 export function retitle(lib, path, title) {
   dv?.getPanel(`${lib}|${path}`)?.api.setTitle(title);

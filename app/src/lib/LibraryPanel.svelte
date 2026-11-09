@@ -144,8 +144,8 @@
       label: "文件夹名称",
       value: "",
       okLabel: "新建",
-      hint: nameRules,
-      validate: checkName,
+      hint: `${nameRules}\n可以用 / 或 \\ 分隔，一次建立多级文件夹（例如 资料/读书/2026）。`,
+      validate: checkPath,
       onok: guard(lib, async (name) => {
         const r = await api.createFolderDir(lib, dirOf(lib, key), name);
         await showNew(r);
@@ -156,6 +156,14 @@
   /** The rules for local file names, shown under the box that asks for one. */
   let nameRules = "";
   api.fileNameRules().then((t) => (nameRules = t)).catch(() => {});
+  const checkPath = async (t) => {
+    try {
+      await api.checkFilePath(t);
+      return "";
+    } catch (e) {
+      return String(e);
+    }
+  };
   const checkName = async (t) => {
     try {
       await api.checkFileName(t);
@@ -170,17 +178,11 @@
   async function setWritable(l, on) {
     try {
       if (on && !(await confirmWritable(l.title))) return;
-      if (!on) {
-        await workspace.closeLibrary(l.id); // their editors save on closing
-        await new Promise((r) => setTimeout(r, 400));
-      }
-      await api.setFolderWritable(l.id, on);
-      await onlibs?.();
-      if (open[l.id]) {
-        delete nodes[l.id];
-        expanded[l.id] = {};
-        await load(l.id);
-      }
+      // the tree stays as it is (the mode is only a state of the library); the open readers differ, so they are opened again
+      await workspace.reopenLibrary(l.id, async () => {
+        await api.setFolderWritable(l.id, on);
+        await onlibs?.();
+      });
     } catch (e) {
       errors[l.id] = String(e);
     }
@@ -362,13 +364,16 @@
 
   async function deleteNote(lib, node, key) {
     const file = isRwFolder(lib);
+    const dir = file && node.path == null;
     const more = file ? "" : node.lazy || node.children.length ? "\n它下面的笔记会一起删除。" : "";
     const ok = await ask(
-      file
+      dir
+        ? `删除文件夹「${node.rel}」？\n里面的所有文件和子文件夹会一起被移到文件夹里的 .smart-library/trash，不会彻底删除。`
+        : file
         ? `删除文件「${node.rel}」？\n它会被移到文件夹里的 .smart-library/trash，不会彻底删除。`
         : `删除笔记「${node.title}」？${more}\n删除后不能恢复。`,
       {
-        title: file ? "删除文件" : "删除笔记",
+        title: dir ? "删除文件夹" : file ? "删除文件" : "删除笔记",
         kind: "warning",
         okLabel: "删除",
         cancelLabel: "取消",
@@ -376,8 +381,13 @@
     );
     if (!ok) return;
     try {
-      await api.deleteNote(lib, node.rel);
-      workspace.closeDocument(lib, node.rel);
+      if (dir) {
+        await workspace.closeUnder(lib, node.rel); // the editors of what is inside save first
+        await api.deleteFolderDir(lib, node.rel);
+      } else {
+        await api.deleteNote(lib, node.rel);
+        workspace.closeDocument(lib, node.rel);
+      }
       if (selected?.lib === lib && selected.key.startsWith(key)) selected = null;
       await refresh(lib, parentKey(key) || null);
     } catch (e) {
@@ -519,6 +529,7 @@
             ? [
                 { label: "重命名…（F2）", action: () => renameNote(l.id, node, key) },
                 { label: "移动到…", action: () => moveNode(l.id, node, key) },
+                { label: "删除文件夹…", action: () => deleteNote(l.id, node, key) },
               ]
             : [],
       [
@@ -780,9 +791,6 @@
             ]
           : [],
         [{ label: "重命名…（F2）", action: () => renameLibrary(l) }],
-        l.kind === "folder"
-          ? [l.writable ? { label: "改为只读模式", action: () => setWritable(l, false), disabled: building } : { label: "改为读写模式…", action: () => setWritable(l, true), disabled: building }]
-          : [],
         [
           ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
           { label: "复制目录树路径", action: () => oncopy(l.title) },
@@ -797,6 +805,9 @@
         [
           ...(notes ? [{ label: "导入到此知识库…", action: () => onimport({ lib: l.id, parent: null, key: null }) }] : []),
           { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title, l.title) },
+          ...(l.kind === "folder"
+            ? [l.writable ? { label: "锁定知识库（改为只读）", action: () => setWritable(l, false), disabled: building } : { label: "解锁知识库（可读写）…", action: () => setWritable(l, true), disabled: building }]
+            : []),
           ...(l.kind === "folder" ? [] : [{ label: "绑定知识库…", action: () => onrebind(l) }]),
           { label: notes ? "删除知识库…" : "解除绑定", action: () => onunbind(l), disabled: building },
         ],
@@ -885,6 +896,7 @@
             ondrag={(node, key, e) => dragNode(l, node, key, e)}
             onopen={(node, key) => {
               selected = { lib: l.id, key };
+              current = { lib: l.id, key }; // the highlight follows what was opened last
               onopen(l, node);
             }} />
         {/if}

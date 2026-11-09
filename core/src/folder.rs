@@ -79,9 +79,31 @@ fn stem_of(name: &str) -> &str {
     name.rsplit_once('.').map(|(s, _)| s).filter(|s| !s.is_empty()).unwrap_or(name)
 }
 
+/// The levels of a path typed in a box (`/` or `\` between them); each one must be a good file name.
+pub fn split_path(path: &str) -> Result<Vec<String>, String> {
+    let parts: Vec<String> = path.split(['/', '\\']).map(|p| p.trim().to_string()).collect();
+    for p in &parts {
+        check_name(p)?; // an empty level (`a//b`) is refused too
+    }
+    Ok(parts)
+}
+
 /// The name of a file as the tree shows it: without the suffix (`a.map.json` -> `a`).
 pub fn title_of(name: &str) -> &str {
     stem_of(name)
+}
+
+/// The folder next to a note that holds its pictures: `<file name>.assets`
+/// (`笔记 1.md.assets`).
+pub const ASSETS_SUFFIX: &str = ".assets";
+
+fn is_assets_dir(name: &str) -> bool {
+    name.strip_suffix(ASSETS_SUFFIX).is_some_and(|n| EditKind::of(n).is_some())
+}
+
+/// A file name as it is written in a Markdown link (spaces and brackets encoded).
+fn link_name(name: &str) -> String {
+    name.replace(' ', "%20").replace('(', "%28").replace(')', "%29")
 }
 
 /// What an editable file is, told by its suffix.
@@ -235,6 +257,9 @@ impl FolderLibrary {
             let Ok(ft) = e.file_type() else { continue };
             let child = if rel.is_empty() { name.clone() } else { format!("{}/{}", rel, name) };
             if ft.is_dir() {
+                if is_assets_dir(&name) {
+                    continue; // the pictures of a note, kept next to it
+                }
                 dirs.push(FolderEntry { name, rel: child, is_dir: true });
             } else if ft.is_file() {
                 let size = e.metadata().map(|m| m.len()).unwrap_or(0);
@@ -317,7 +342,8 @@ impl FolderLibrary {
         let html = if HTML_EXTS.contains(&ext.as_str()) {
             text
         } else if ext == "md" || ext == "markdown" {
-            crate::markdown::to_html(&text)
+            // the pictures of the note (links to its .assets folder) show as the notes' own pictures
+            crate::markdown::to_html(&to_editor(&text))
         } else {
             plain_html(&text)
         };
@@ -427,20 +453,34 @@ impl FolderLibrary {
         Ok(if parent.is_empty() { file } else { format!("{}/{}", parent, file) })
     }
 
-    /// A new sub-folder in the folder `parent`; returns its path below the root.
-    pub fn create_dir(&self, parent: &str, name: &str) -> Result<String, String> {
+    /// New folders in the folder `parent`; `path` may name several levels
+    /// (`甲/乙/丙` or `甲\乙`), the missing ones are made. Returns the path of the
+    /// last one, below the root.
+    pub fn create_dir(&self, parent: &str, path: &str) -> Result<String, String> {
         self.need_writable()?;
-        let dir = self.abs(parent)?;
-        if !dir.is_dir() {
-            return Err(format!("文件夹不存在：{}", parent));
+        let parts = split_path(path)?;
+        let mut rel = parent.to_string();
+        let mut made = false;
+        for part in parts {
+            let dir = self.abs(&rel)?;
+            if !dir.is_dir() {
+                return Err(format!("文件夹不存在：{}", rel));
+            }
+            let next = if rel.is_empty() { part.clone() } else { format!("{}/{}", rel, part) };
+            if Self::taken(&dir, &part) {
+                if !self.abs(&next)?.is_dir() {
+                    return Err(format!("这里已经有叫「{}」的文件", part));
+                }
+            } else {
+                std::fs::create_dir(dir.join(&part)).map_err(|e| format!("{}: {}", part, e))?;
+                made = true;
+            }
+            rel = next;
         }
-        let name = name.trim();
-        check_name(name)?;
-        if Self::taken(&dir, name) {
-            return Err(format!("这里已经有叫「{}」的文件或文件夹", name));
+        if !made {
+            return Err(format!("这里已经有叫「{}」的文件夹", path.trim()));
         }
-        std::fs::create_dir(dir.join(name)).map_err(|e| format!("{}: {}", name, e))?;
-        Ok(if parent.is_empty() { name.to_string() } else { format!("{}/{}", parent, name) })
+        Ok(rel)
     }
 
     /// Give a folder another name; returns its new path.
@@ -491,7 +531,16 @@ impl FolderLibrary {
         if Self::taken(&dest, name) {
             return Err(format!("目标文件夹里已经有叫「{}」的文件或文件夹", name));
         }
+        // a note's pictures go with it (they stay next to it, so its links stay right)
+        let assets = if path.is_dir() { None } else { Some(self.assets_of(rel)?).filter(|a| a.is_dir()) };
+        let dest_assets = dest.join(format!("{}{}", name, ASSETS_SUFFIX));
+        if assets.is_some() && dest_assets.exists() {
+            return Err(format!("目标文件夹里已经有叫「{}{}」的文件夹", name, ASSETS_SUFFIX));
+        }
         std::fs::rename(&path, dest.join(name)).map_err(|e| format!("{}: {}", rel, e))?;
+        if let Some(a) = assets {
+            std::fs::rename(&a, &dest_assets).map_err(|e| format!("{}: {}", a.display(), e))?;
+        }
         Ok(if parent.is_empty() { name.to_string() } else { format!("{}/{}", parent, name) })
     }
 
@@ -537,25 +586,194 @@ impl FolderLibrary {
         if old_name.to_lowercase() != file.to_lowercase() && Self::taken(path.parent().unwrap_or(&self.root), &file) {
             return Err(format!("这里已经有叫「{}」的文件", file));
         }
+        // the pictures of the note are in a folder named after the file: it is renamed too
+        let old_assets = self.assets_of(rel)?;
+        let new_assets = self.assets_of(&new_rel)?;
+        let has_assets = old_assets.is_dir();
+        if has_assets && new_assets.exists() && old_name.to_lowercase() != file.to_lowercase() {
+            return Err(format!("这里已经有叫「{}{}」的文件夹", file, ASSETS_SUFFIX));
+        }
         std::fs::rename(&path, self.abs(&new_rel)?).map_err(|e| format!("{}: {}", rel, e))?;
+        if has_assets {
+            std::fs::rename(&old_assets, &new_assets).map_err(|e| format!("{}: {}", old_assets.display(), e))?;
+            if kind == EditKind::Markdown {
+                // the links in the note name the folder
+                let abs = self.abs(&new_rel)?;
+                if let Ok(bytes) = std::fs::read(&abs) {
+                    let text = decode_auto(&bytes);
+                    let from = format!("{}{}/", link_name(old_name), ASSETS_SUFFIX);
+                    let to = format!("{}{}/", link_name(&file), ASSETS_SUFFIX);
+                    if text.contains(&from) {
+                        let _ = std::fs::write(&abs, text.replace(&from, &to).as_bytes());
+                    }
+                }
+            }
+        }
         Ok(new_rel)
     }
 
     /// Take an editable file out of the folder: it is moved into
     /// `.smart-library/trash/` (not deleted for good).
+    /// Its pictures go with it.
     pub fn delete(&self, rel: &str) -> Result<(), String> {
         let (path, _) = self.editable(rel)?;
+        let assets = self.assets_of(rel)?;
+        let mut names = Vec::new();
+        collect_pictures(&assets, true, &mut names);
+        self.to_trash(&path)?;
+        if assets.is_dir() {
+            self.to_trash(&assets)?;
+        }
+        self.forget_pool(&names);
+        Ok(())
+    }
+
+    /// Take a folder with everything in it out of the library (into the trash).
+    pub fn delete_dir(&self, rel: &str) -> Result<(), String> {
+        self.need_writable()?;
+        if rel.is_empty() || rel.split('/').any(|p| p.starts_with('.')) {
+            return Err("不能删除这个文件夹".into());
+        }
+        let path = self.abs(rel)?;
+        if !path.is_dir() {
+            return Err(format!("文件夹不存在：{}", rel));
+        }
+        let mut names = Vec::new();
+        collect_pictures(&path, false, &mut names);
+        self.to_trash(&path)?;
+        self.forget_pool(&names);
+        Ok(())
+    }
+
+    fn to_trash(&self, path: &Path) -> Result<(), String> {
         let trash = self.root.join(SIDECAR_DIR).join("trash");
         std::fs::create_dir_all(&trash).map_err(|e| format!("{}: {}", trash.display(), e))?;
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let name = rel.rsplit('/').next().unwrap_or(rel);
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let mut target = trash.join(format!("{}-{}", secs, name));
         let mut n = 1;
         while target.exists() {
             n += 1;
             target = trash.join(format!("{}-{}-{}", secs, n, name));
         }
-        std::fs::rename(&path, &target).map_err(|e| format!("{}: {}", rel, e))
+        std::fs::rename(path, &target).map_err(|e| format!("{}: {}", path.display(), e))
+    }
+
+    // ------------------------------------------------------------ pictures
+
+    /// The folder holding the pictures of a note: `<file>.assets` beside it.
+    fn assets_of(&self, rel: &str) -> Result<PathBuf, String> {
+        let mut s = self.abs(rel)?.into_os_string();
+        s.push(ASSETS_SUFFIX);
+        Ok(PathBuf::from(s))
+    }
+
+    /// A picture pasted into a note: a file in the note's own `.assets` folder
+    /// (so it goes when the note goes). The same picture in several notes is one
+    /// file on disk: the first copy is also kept in `.smart-library/attachments`
+    /// (the pool) and the other notes get hard links to it. Returns its name.
+    pub fn store_picture(&self, note_rel: &str, bytes: &[u8], mime: &str) -> Result<String, String> {
+        self.editable(note_rel)?;
+        let name = crate::attach::name_for(bytes, mime)?;
+        let doc_dir = self.assets_of(note_rel)?;
+        let doc_file = doc_dir.join(&name);
+        if doc_file.exists() {
+            return Ok(name);
+        }
+        std::fs::create_dir_all(&doc_dir).map_err(|e| format!("{}: {}", doc_dir.display(), e))?;
+        let pool = self.attach_dir();
+        let pooled = pool.join(&name);
+        if pooled.exists() {
+            link_or_copy(&pooled, &doc_file)?;
+        } else {
+            std::fs::write(&doc_file, bytes).map_err(|e| format!("{}: {}", doc_file.display(), e))?;
+            if std::fs::create_dir_all(&pool).is_ok() {
+                let _ = std::fs::hard_link(&doc_file, &pooled);
+            }
+        }
+        Ok(name)
+    }
+
+    /// The file of a picture, wherever a note of the library keeps it.
+    pub fn find_picture(&self, name: &str) -> Option<PathBuf> {
+        if !crate::attach::is_name(name) {
+            return None;
+        }
+        let pooled = self.attach_dir().join(name);
+        if pooled.is_file() {
+            return Some(pooled);
+        }
+        let found = self.find_in_assets(&self.root, name)?;
+        if std::fs::create_dir_all(self.attach_dir()).is_ok() {
+            let _ = std::fs::hard_link(&found, &pooled); // the pool is kept up again
+        }
+        Some(found)
+    }
+
+    fn find_in_assets(&self, dir: &Path, name: &str) -> Option<PathBuf> {
+        for e in std::fs::read_dir(dir).ok()?.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with('.') || !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let p = e.path();
+            if is_assets_dir(&n) {
+                if p.join(name).is_file() {
+                    return Some(p.join(name));
+                }
+            } else if let Some(f) = self.find_in_assets(&p, name) {
+                return Some(f);
+            }
+        }
+        None
+    }
+
+    /// Pictures nobody refers to any more leave the pool.
+    fn forget_pool(&self, names: &[String]) {
+        for n in names {
+            if self.find_in_assets(&self.root, n).is_none() {
+                let _ = std::fs::remove_file(self.attach_dir().join(n));
+            }
+        }
+    }
+
+    /// The text of an editable file as it is written to disk. The pictures it
+    /// refers to are made sure to be in the note's `.assets` folder, those it no
+    /// longer refers to go to the trash; a Markdown note gets relative links
+    /// (`![](笔记.md.assets/<名>.png)`, so other programs show them), the data of
+    /// a map or board keeps `attach:<名>`.
+    pub fn prepare_save(&self, rel: &str, content: &str) -> Result<String, String> {
+        let (_, kind) = self.editable(rel)?;
+        let names = crate::attach::refs(content);
+        let doc_dir = self.assets_of(rel)?;
+        for n in &names {
+            let f = doc_dir.join(n);
+            if !f.exists() {
+                if let Some(src) = self.find_picture(n) {
+                    std::fs::create_dir_all(&doc_dir).map_err(|e| format!("{}: {}", doc_dir.display(), e))?;
+                    link_or_copy(&src, &f)?;
+                }
+            }
+        }
+        let mut gone = Vec::new();
+        if doc_dir.is_dir() {
+            let recent = std::time::Duration::from_secs(60);
+            for e in std::fs::read_dir(&doc_dir).map_err(|e| e.to_string())?.flatten() {
+                let n = e.file_name().to_string_lossy().into_owned();
+                // a picture that was just pasted may not be in the text yet
+                let fresh = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < recent);
+                if crate::attach::is_name(&n) && !names.contains(&n) && !fresh {
+                    self.to_trash(&e.path())?;
+                    gone.push(n);
+                }
+            }
+            if std::fs::read_dir(&doc_dir).map(|mut d| d.next().is_none()).unwrap_or(false) {
+                let _ = std::fs::remove_dir(&doc_dir);
+            }
+        }
+        self.forget_pool(&gone);
+        let file_name = rel.rsplit('/').next().unwrap_or(rel);
+        Ok(if kind == EditKind::Markdown { attach_to_links(content, file_name) } else { content.to_string() })
     }
 
     /// Index documents for every file.
@@ -597,9 +815,78 @@ impl FolderLibrary {
     }
 }
 
-/// The Markdown of a note as the editor gets it: a picture kept by the
-/// program (`](../.smart-library/attachments/<name>)`) is `![](attach:<name>)`.
+/// Make a link of a file for another path: hard link when possible, else a copy.
+fn link_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
+    if std::fs::hard_link(src, dst).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(src, dst).map(|_| ()).map_err(|e| format!("{}: {}", dst.display(), e))
+}
+
+/// The names of the pictures in `dir`; `is_assets`: `dir` is a `.assets` folder
+/// itself, else the `.assets` folders below it are looked at.
+fn collect_pictures(dir: &Path, is_assets: bool, out: &mut Vec<String>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_assets {
+            if crate::attach::is_name(&n) {
+                out.push(n);
+            }
+        } else if is_dir {
+            collect_pictures(&e.path(), is_assets_dir(&n), out);
+        }
+    }
+}
+
+/// `attach:<name>` of a note's Markdown -> a link relative to the note
+/// (`笔记%201.md.assets/<name>`).
+fn attach_to_links(content: &str, file_name: &str) -> String {
+    let mut out = content.to_string();
+    for name in crate::attach::refs(content) {
+        out = out.replace(&format!("attach:{}", name), &format!("{}{}/{}", link_name(file_name), ASSETS_SUFFIX, name));
+    }
+    out
+}
+
+/// `](<anything>.assets/<name>)` -> `](attach:<name>)` (a link to a picture of
+/// a note, as `attach_to_links` writes it).
+fn links_to_attach(content: &str) -> String {
+    const KEY: &str = ".assets/";
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(at) = rest.find(KEY) {
+        let after = &rest[at + KEY.len()..];
+        let end = after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '.')).unwrap_or(after.len());
+        let name = &after[..end];
+        let start = rest[..at].rfind("](");
+        let linked = start.filter(|&s| !rest[s + 2..at].contains([')', '\n', ' ', '<']));
+        match linked {
+            Some(s) if crate::attach::is_name(name) => {
+                out.push_str(&rest[..s + 2]);
+                out.push_str("attach:");
+                out.push_str(name);
+                rest = &after[end..];
+            }
+            _ => {
+                out.push_str(&rest[..at + KEY.len()]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The Markdown of a note as the editor gets it: the links to its pictures
+/// are `![](attach:<name>)`.
 pub fn to_editor(content: &str) -> String {
+    links_to_attach(&legacy_links_to_attach(content))
+}
+
+/// The links the first version wrote (`](../.smart-library/attachments/<name>)`).
+fn legacy_links_to_attach(content: &str) -> String {
     const KEY: &str = ".smart-library/attachments/";
     let mut out = String::with_capacity(content.len());
     let mut rest = content;
@@ -620,18 +907,6 @@ pub fn to_editor(content: &str) -> String {
         rest = &after[end..];
     }
     out.push_str(rest);
-    out
-}
-
-/// The Markdown of a note as it is written to its file (`note_rel`: its path
-/// in the library): `attach:<name>` becomes a relative link to the picture, so
-/// other programs show it too.
-pub fn from_editor(content: &str, note_rel: &str) -> String {
-    let prefix = "../".repeat(note_rel.matches('/').count());
-    let mut out = content.to_string();
-    for name in crate::attach::refs(content) {
-        out = out.replace(&format!("attach:{}", name), &format!("{}{}/attachments/{}", prefix, SIDECAR_DIR, name));
-    }
     out
 }
 
@@ -796,6 +1071,10 @@ mod tests {
         assert!(one.text.contains("一時佛在"));
         let song = docs.iter().find(|d| d.path == "a/song.mp3").unwrap();
         assert!(song.text.contains("song") && song.text.contains("2.0 KB"));
+        // a Markdown file is shown rendered, not as its source
+        let two = lib.article("a/two.md", Some(&RenderOptions { highlights: vec![], asset_prefix: String::new() })).unwrap();
+        let html = two.html.unwrap_or_default();
+        assert!(html.contains("head h1") && !html.contains("# 标题"), "{html}");
         assert!(lib.article("../x", None).is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -870,6 +1149,12 @@ mod tests {
         assert_eq!(lib.create_dir("资料", "二级").unwrap(), "资料/二级");
         assert!(lib.create_dir("", "资料").is_err());
         assert!(lib.create_dir("", "ZIDIAO:x").is_err());
+        // several levels at once, the existing ones are reused
+        assert_eq!(lib.create_dir("资料", "三/四\\五").unwrap(), "资料/三/四/五");
+        assert_eq!(lib.create_dir("", "资料/三/六").unwrap(), "资料/三/六");
+        assert!(lib.create_dir("", "资料/三").is_err()); // nothing new
+        assert!(lib.create_dir("", "资料//七").is_err());
+        assert!(lib.create_dir("", "资料/a:b").is_err());
         assert!(lib.create_dir("无", "x").is_err());
         assert_eq!(lib.create("资料/二级", None, EditKind::Markdown).unwrap(), "资料/二级/笔记 1.md");
         let t: Vec<_> = lib.children("").unwrap().into_iter().map(|e| e.rel).collect();
@@ -945,18 +1230,80 @@ mod tests {
     }
 
     #[test]
-    fn pictures_are_relative_links_in_the_file() {
+    fn pictures_are_links_to_the_notes_own_folder() {
         let name = "0123456789abcdef0123456789abcdef.png";
         let editor = format!("前 ![](attach:{}) 后 ![x](http://a/b.png)", name);
-        let file = from_editor(&editor, "笔记.md");
-        assert_eq!(file, format!("前 ![](.smart-library/attachments/{}) 后 ![x](http://a/b.png)", name));
+        let file = attach_to_links(&editor, "笔记 1.md");
+        assert_eq!(file, format!("前 ![](笔记%201.md.assets/{}) 后 ![x](http://a/b.png)", name));
         assert_eq!(to_editor(&file), editor);
-        let deep = from_editor(&editor, "a/b/笔记.md");
-        assert!(deep.contains(&format!("](../../.smart-library/attachments/{})", name)));
-        assert_eq!(to_editor(&deep), editor);
+        // the links of the first version are read too
+        let old = format!("![](../.smart-library/attachments/{})", name);
+        assert_eq!(to_editor(&old), format!("![](attach:{})", name));
         // not ours: left alone
-        let other = "![](pics/.smart-library/attachments/zz.png)";
+        let other = "![](pics/x.assets/zz.png) [a](b.assets/c)";
         assert_eq!(to_editor(other), other);
+    }
+
+    #[test]
+    fn pictures_follow_their_note_and_are_cleaned_up() {
+        let d = tmp("pic");
+        let lib = FolderLibrary::open(&d, FolderFilter::default()).unwrap().with_writable(true);
+        let a = lib.create("", Some("甲 乙"), EditKind::Markdown).unwrap();
+        let b = lib.create("", Some("丙"), EditKind::Markdown).unwrap();
+        let png = [137u8, 80, 78, 71, 1, 2, 3];
+        let n = lib.store_picture(&a, &png, "image/png").unwrap();
+        // the same picture in another note is one file on disk
+        assert_eq!(lib.store_picture(&b, &png, "image/png").unwrap(), n);
+        assert!(d.join(format!("甲 乙.md.assets/{}", n)).is_file());
+        assert!(d.join(format!("丙.md.assets/{}", n)).is_file());
+        assert!(d.join(format!(".smart-library/attachments/{}", n)).is_file());
+        // the folders of pictures are not part of the tree
+        let top: Vec<_> = lib.children("").unwrap().into_iter().map(|e| e.rel).collect();
+        assert_eq!(top, vec!["丙.md", "甲 乙.md"]);
+        assert_eq!(lib.find_picture(&n).unwrap().file_name().unwrap().to_string_lossy(), n);
+        assert!(lib.find_picture("../x.png").is_none());
+
+        // saving: the text gets the relative link, and a picture it no longer has goes
+        let text = lib.prepare_save(&a, &format!("![](attach:{})", n)).unwrap();
+        assert_eq!(text, format!("![](甲%20乙.md.assets/{})", n));
+        assert_eq!(to_editor(&text), format!("![](attach:{})", n));
+
+        // renaming the note renames its folder and the links in it
+        lib.write_edit(&a, &text, None).unwrap();
+        let a2 = lib.rename(&a, "新 名").unwrap();
+        assert!(d.join(format!("新 名.md.assets/{}", n)).is_file());
+        let (t, _) = lib.read_edit(&a2).unwrap();
+        assert!(t.contains(&format!("新%20名.md.assets/{}", n)), "{t}");
+        // moving it takes the folder along
+        lib.create_dir("", "目录").unwrap();
+        let a3 = lib.move_to(&a2, "目录").unwrap();
+        assert!(d.join(format!("目录/新 名.md.assets/{}", n)).is_file());
+        assert!(!d.join(format!("新 名.md.assets")).exists());
+
+        // a picture older than a minute that the text does not name is taken away; the pool keeps
+        // what the other note uses
+        let old = d.join(format!("丙.md.assets/{}", n));
+        let _ = old; // (age check: a new file is spared)
+        assert_eq!(lib.prepare_save(&b, "无图").unwrap(), "无图");
+        assert!(d.join(format!("丙.md.assets/{}", n)).is_file(), "a picture pasted a moment ago stays");
+
+        // deleting the note takes its pictures; the last copy leaves the pool
+        lib.delete(&b).unwrap();
+        assert!(!d.join("丙.md.assets").exists());
+        assert!(lib.find_picture(&n).is_some()); // still in 新 名's folder
+        lib.delete(&a3).unwrap();
+        assert!(lib.find_picture(&n).is_none());
+        assert!(!d.join(format!(".smart-library/attachments/{}", n)).exists());
+        // deleting a folder takes what is in it
+        lib.create_dir("", "夹").unwrap();
+        let c = lib.create("夹", Some("文"), EditKind::Markdown).unwrap();
+        let n2 = lib.store_picture(&c, &[9, 9, 9], "image/png").unwrap();
+        lib.delete_dir("夹").unwrap();
+        assert!(!d.join("夹").exists());
+        assert!(lib.find_picture(&n2).is_none());
+        assert!(lib.delete_dir("").is_err());
+        assert!(lib.delete_dir(".smart-library").is_err());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

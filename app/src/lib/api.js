@@ -18,6 +18,10 @@ export const createFolderDir = (lib, parent, name) => invoke("create_folder_dir"
 export const moveFolderNode = (lib, rel, parent) => invoke("move_folder_node", { lib, rel, parent });
 /** Every folder of a read-write folder library (paths). */
 export const folderDirs = (lib) => invoke("folder_dirs", { lib });
+/** Delete a folder with everything in it (to the trash inside .smart-library); resolves to the number of documents in it. */
+export const deleteFolderDir = (lib, rel) => invoke("delete_folder_dir", { lib, rel });
+/** Rejects with the reason when a path of folders (`a/b`) has a bad name in it. */
+export const checkFilePath = (path) => invoke("check_file_path", { path });
 /** The rules for local file names, as text. */
 export const fileNameRules = () => invoke("file_name_rules");
 /** Rejects with the reason when `name` cannot be a local file name. */
@@ -55,7 +59,8 @@ export const exportLibrary = (req) => invoke("export_library", { req });
 export const importPackage = (path, lib = null, parent = null) => invoke("import_package", { path, lib, parent });
 export const renameNote = (lib, id, title) => invoke("rename_note", { lib, id, title });
 /** Keep a picture (an ArrayBuffer) for the notes of a library; resolves to its name. */
-export const noteAttach = (lib, bytes, mime) => invoke("note_attach", bytes, { headers: { lib, mime } });
+/** Keep a picture for a note; `path`: the note (a file of a local folder keeps its pictures beside it). */
+export const noteAttach = (lib, bytes, mime, path = "") => invoke("note_attach", bytes, { headers: { lib, mime, path: encodeURIComponent(path) } });
 /** Write bytes (a Uint8Array) to a file the user chose. */
 export const saveBytes = (path, bytes) => invoke("save_bytes", bytes, { headers: { path: encodeURIComponent(path) } });
 /** The bytes (an ArrayBuffer) of a picture of a library's notes. */

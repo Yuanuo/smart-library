@@ -70,6 +70,6 @@
   h2 { margin: 0 0 10px; font-size: 18px; color: var(--accent); }
   label { display: flex; flex-direction: column; gap: 4px; }
   .error { color: var(--hl); font-size: 13px; }
-  .hint { font-size: 12px; margin: 6px 0 0; }
+  .hint { font-size: 12px; margin: 6px 0 0; white-space: pre-line; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 </style>

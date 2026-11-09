@@ -14,10 +14,10 @@
   // (bind more from the same bookcase) skips step 1.
   let kind = $state(initialPath ? "cbeta" : "");
   const KINDS = [
+    { id: "notes", name: "内部知识库", desc: "笔记存在程序自己的数据库里，不依赖文件夹：适合大量笔记和日记，保存与搜索都快；Markdown、脑图、白板，可整体导出备份（读写）", ready: true },
+    { id: "folder", name: "本地文件夹", desc: "直接使用磁盘上的文件夹和文件：可用 git 或网盘同步备份，别的软件也能打开；默认只读，可解锁后编辑 Markdown、脑图、白板（可控读写）", ready: true },
     { id: "cbeta", name: "CBETA 数据包", desc: "bookcase.zip 或解压后的目录，由其中的菜单关联数据（只读）", ready: true },
     { id: "zim", name: "Wikipedia 离线包（ZIM）", desc: "只做标题与全文索引，不展开目录（只读）。尚未开发。", ready: false },
-    { id: "folder", name: "本地文件夹", desc: "链接本机文件夹，可按后缀、大小筛选并建全文索引（可控读写）", ready: true },
-    { id: "notes", name: "自建知识库", desc: "内容由你手动添加和编辑，默认 Markdown（读写）", ready: true },
   ];
   let notesTitle = $state("");
   // external folder
