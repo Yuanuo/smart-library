@@ -32,6 +32,9 @@ pub const FORMAT: &str = "smart-library-export";
 struct Conv {
     out: String,
     notes: Vec<String>,
+    /// old-format articles: pictures embedded as base64 and `note` marks are kept
+    legacy: bool,
+    pictures: Vec<(String, Vec<u8>)>,
 }
 
 fn has_class(e: &Element, c: &str) -> bool {
@@ -60,6 +63,19 @@ impl Conv {
         format!("[^{}]", self.notes.len())
     }
 
+    /// A picture of a legacy article (`src="data:image/png;base64,…"`) kept as an attachment.
+    fn picture(&mut self, e: &Element) -> Option<String> {
+        if !self.legacy {
+            return None;
+        }
+        let (mime, bytes) = data_uri(e.attr("src")?)?;
+        let name = crate::attach::name_for(&bytes, &mime).ok()?;
+        if !self.pictures.iter().any(|(n, _)| *n == name) {
+            self.pictures.push((name.clone(), bytes));
+        }
+        Some(name)
+    }
+
     fn inline(&mut self, e: &Element, out: &mut String) {
         for n in &e.children {
             match n {
@@ -72,7 +88,28 @@ impl Conv {
     fn inline_el(&mut self, e: &Element, out: &mut String) {
         match e.name.as_str() {
             "br" => out.push_str("  \n"),
-            "img" => out.push_str("[图]"),
+            "img" => match self.picture(e) {
+                Some(name) => out.push_str(&format!("\n![](attach:{})\n", name)),
+                None => out.push_str("[图]"),
+            },
+            "a" if self.legacy && (e.attr("data-note").is_some() || e.attr("note").is_some()) => {
+                let key = e.attr("data-note").or(e.attr("note")).unwrap_or("");
+                self.inline(e, out);
+                // "@1": the old program kept only the number of the note in the file
+                let text = if key.starts_with('@') { format!("标注 {}", key) } else { key.to_string() };
+                out.push_str(&self.note(&text));
+            }
+            "a" if self.legacy && e.attr("href").is_some_and(|h| h.starts_with("http://") || h.starts_with("https://")) => {
+                let mut t = String::new();
+                self.inline(e, &mut t);
+                let t = t.replace(['[', ']'], "");
+                let href = e.attr("href").unwrap_or("").replace(' ', "%20").replace(')', "%29");
+                if t.trim().is_empty() {
+                    out.push_str(&href);
+                } else {
+                    out.push_str(&format!("[{}]({})", t, href));
+                }
+            }
             "b" | "strong" => {
                 out.push_str("**");
                 self.inline(e, out);
@@ -208,9 +245,16 @@ impl Conv {
 
 /// Rendered article / volume HTML to Markdown (see the module comment).
 pub fn html_to_md(html: &str) -> String {
+    convert(html, false).0
+}
+
+type Pictures = Vec<(String, Vec<u8>)>;
+
+/// Markdown, the pictures (name, bytes), and the `<meta name=value>` pairs of the head.
+fn convert(html: &str, legacy: bool) -> (String, Pictures, Vec<(String, String)>) {
     let root = markup::parse(html);
     let body = root.find_descendant("body").unwrap_or(&root);
-    let mut c = Conv::default();
+    let mut c = Conv { legacy, ..Conv::default() };
     c.blocks(body);
     let mut s = c.out.trim().to_string();
     if !c.notes.is_empty() {
@@ -219,7 +263,149 @@ pub fn html_to_md(html: &str) -> String {
             s.push_str(&format!("[^{}]: {}\n", i + 1, n));
         }
     }
-    s
+    let metas = root
+        .find_descendant("head")
+        .map(|h| h.all("meta").filter_map(|m| m.attrs.iter().find(|(k, _)| k != "charset").map(|(k, v)| (k.clone(), v.clone()))).collect())
+        .unwrap_or_default();
+    (s, c.pictures, metas)
+}
+
+/// The properties an old file's meta data gives: `library` = 藏经, `catalog` (+ `album`
+/// below it) = 部类, `period` = 时域, `author` = 人物. Other keys (id, searchable …) are dropped.
+fn legacy_dims(metas: &[(String, String)]) -> Vec<(String, String)> {
+    let first = |k: &str| metas.iter().find(|(n, v)| n == k && !v.trim().is_empty()).map(|(_, v)| v.trim().to_string());
+    let mut out = Vec::new();
+    for (k, v) in metas {
+        let dim = match k.as_str() {
+            "library" => "canon",
+            "period" => "period",
+            "author" => "person",
+            _ => continue,
+        };
+        out.push((dim.to_string(), v.clone()));
+    }
+    if let Some(c) = first("catalog") {
+        out.push(("bulei".into(), match first("album") { Some(a) => format!("{}/{}", c, a), None => c }));
+    }
+    out
+}
+
+/// `data:image/png;base64,AAAA` -> (mime, bytes)
+fn data_uri(src: &str) -> Option<(String, Vec<u8>)> {
+    let rest = src.trim().strip_prefix("data:")?;
+    let (head, data) = rest.split_once(',')?;
+    if !head.contains(";base64") {
+        return None;
+    }
+    let mime = head.split(';').next().unwrap_or("").to_string();
+    Some((mime, base64_decode(data)?))
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for b in s.bytes() {
+        let v = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            b'=' | b' ' | b'\r' | b'\n' | b'\t' => continue,
+            _ => return None,
+        };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
+/// A KeepMinding / KityMinder file (`.kmind` of the old program) as the data of a Mind-Elixir
+/// map, and the pictures (embedded as base64) it had.
+pub fn kmind_to_mindmap(text: &str) -> Result<(String, Pictures, Vec<(String, String)>), String> {
+    struct Ctx {
+        next: u64,
+        pictures: Pictures,
+    }
+    fn node(n: &Value, ctx: &mut Ctx) -> Value {
+        let d = &n["data"];
+        ctx.next += 1;
+        let mut out = json!({ "id": format!("k{:x}", ctx.next), "topic": d["text"].as_str().unwrap_or("") });
+        let mut tags: Vec<String> = d["resource"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+        if let Some(p) = d["priority"].as_u64() {
+            tags.push(format!("优先级{}", p));
+        }
+        if let Some(p) = d["progress"].as_u64() {
+            tags.push(format!("进度{}", p));
+        }
+        if !tags.is_empty() {
+            out["tags"] = json!(tags);
+        }
+        if let Some(l) = d["hyperlink"].as_str().filter(|l| !l.is_empty()) {
+            out["hyperLink"] = json!(l);
+        }
+        if let Some(src) = d["image"].as_str() {
+            if let Some((mime, bytes)) = data_uri(src) {
+                if let Ok(name) = crate::attach::name_for(&bytes, &mime) {
+                    let size = &d["imageSize"];
+                    out["image"] = json!({
+                        "url": format!("attach:{}", name),
+                        "width": size["width"].as_u64().unwrap_or(120),
+                        "height": size["height"].as_u64().unwrap_or(90),
+                    });
+                    if !ctx.pictures.iter().any(|(n, _)| *n == name) {
+                        ctx.pictures.push((name, bytes));
+                    }
+                }
+            } else if src.starts_with("http") {
+                out["image"] = json!({ "url": src, "width": 120, "height": 90 });
+            }
+        }
+        let mut kids: Vec<Value> = n["children"].as_array().map(|a| a.iter().map(|c| node(c, ctx)).collect()).unwrap_or_default();
+        // the note of a node becomes a first child that says so
+        if let Some(note) = d["note"].as_str().filter(|t| !t.trim().is_empty()) {
+            ctx.next += 1;
+            kids.insert(0, json!({ "id": format!("k{:x}", ctx.next), "topic": format!("注：{}", note.trim()) }));
+        }
+        if !kids.is_empty() {
+            out["children"] = json!(kids);
+        }
+        out
+    }
+    let v: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| format!("脑图文件不对：{}", e))?;
+    if !v["root"].is_object() {
+        return Err("脑图文件不对：没有 root".into());
+    }
+    let mut ctx = Ctx { next: 0, pictures: Vec::new() };
+    let mut root = node(&v["root"], &mut ctx);
+    root["id"] = json!("root");
+    root["root"] = json!(true);
+    // template "right": all branches on the right side
+    if v["template"].as_str() == Some("right") {
+        if let Some(kids) = root["children"].as_array_mut() {
+            for k in kids {
+                k["direction"] = json!(1);
+            }
+        }
+    }
+    // the file's `metadata`: {"library": ["…"], "catalog": ["…"], …}
+    let mut metas = Vec::new();
+    if let Some(m) = v["metadata"].as_object() {
+        for (k, val) in m {
+            let list: Vec<&str> = match val {
+                Value::Array(a) => a.iter().filter_map(|x| x.as_str()).collect(),
+                Value::String(t) => vec![t.as_str()],
+                _ => vec![],
+            };
+            metas.extend(list.into_iter().map(|t| (k.clone(), t.to_string())));
+        }
+    }
+    Ok((json!({ "nodeData": root }).to_string(), ctx.pictures, metas))
 }
 
 // ------------------------------------------------------------ the package
@@ -294,6 +480,102 @@ pub fn manifest(library_title: &str, kind: &str, source: &str, scope: &str, node
     })
 }
 
+/// `数据包-慧灯文集-20220517_160633.smartlib` -> `慧灯文集`
+fn package_title(path: &Path) -> String {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let s = stem.strip_prefix("数据包-").unwrap_or(stem);
+    // a time stamp `-YYYYMMDD_HHMMSS` at the end
+    let b = s.as_bytes();
+    let cut = if b.len() > 16 {
+        let t = &b[b.len() - 16..];
+        let ok = t[0] == b'-' && t[9] == b'_' && t.iter().enumerate().all(|(i, c)| i == 0 || i == 9 || c.is_ascii_digit());
+        if ok { b.len() - 16 } else { b.len() }
+    } else {
+        b.len()
+    };
+    let s = s[..cut].trim();
+    if s.is_empty() { "导入的知识库".to_string() } else { s.to_string() }
+}
+
+/// A manifest made from the folders and files of an old package: `.html` documents
+/// (`legacy_html`), `.kmind` mind maps (`legacy_kmind`) and `.md` / `.txt` notes. A
+/// single folder at the top is the library itself. `None` when there is nothing to import.
+fn legacy_manifest(names: &[String], title: &str) -> Option<Value> {
+    #[derive(Default)]
+    struct Dir {
+        order: Vec<String>, // first appearance of each entry
+        dirs: std::collections::HashMap<String, Dir>,
+        files: std::collections::HashMap<String, (String, String)>, // title -> (kind, path)
+    }
+    fn to_json(d: &Dir) -> Vec<Value> {
+        d.order
+            .iter()
+            .map(|k| match d.dirs.get(k) {
+                Some(sub) => json!({ "title": k, "children": to_json(sub) }),
+                None => {
+                    let (kind, path) = &d.files[k];
+                    match kind.as_str() {
+                        "md" => json!({ "title": k, "file": path }),
+                        _ => json!({ "title": k, "legacy": kind, "file": path }),
+                    }
+                }
+            })
+            .collect()
+    }
+    let mut root = Dir::default();
+    let mut found = 0;
+    for name in names {
+        let parts: Vec<&str> = name.split('/').filter(|p| !p.is_empty() && *p != "__MACOSX").collect();
+        let Some((last, dirs)) = parts.split_last() else { continue };
+        let is_dir = name.ends_with('/');
+        let mut cur = &mut root;
+        for d in dirs.iter().copied().chain(is_dir.then_some(*last)) {
+            if !cur.dirs.contains_key(d) {
+                cur.order.push(d.to_string());
+                cur.dirs.insert(d.to_string(), Dir::default());
+            }
+            cur = cur.dirs.get_mut(d).unwrap();
+        }
+        if is_dir {
+            continue;
+        }
+        let (stem, ext) = match last.rsplit_once('.') {
+            Some((s, e)) if !s.is_empty() => (s, e.to_ascii_lowercase()),
+            _ => continue,
+        };
+        let kind = match ext.as_str() {
+            "html" | "htm" => "html",
+            "kmind" => "kmind",
+            "md" | "txt" => "md",
+            _ => continue,
+        };
+        found += 1;
+        // `a.html` next to `a.kmind`: the second one is told apart by its extension
+        let mut t = stem.to_string();
+        if cur.files.contains_key(&t) || cur.dirs.contains_key(&t) {
+            t = format!("{}.{}", stem, ext);
+        }
+        cur.order.push(t.clone());
+        cur.files.insert(t, (kind.to_string(), name.clone()));
+    }
+    if found == 0 {
+        return None;
+    }
+    let mut title = title.to_string();
+    let top = if root.dirs.len() == 1 && root.files.is_empty() {
+        let (name, only) = root.dirs.iter().next().unwrap();
+        title = name.clone();
+        to_json(only)
+    } else {
+        to_json(&root)
+    };
+    Some(json!({
+        "format": FORMAT, "version": 1, "legacy": true, "scope": "library",
+        "library": { "title": title, "kind": "legacy", "source": "" },
+        "nodes": top,
+    }))
+}
+
 pub struct Package {
     archive: zip::ZipArchive<std::fs::File>,
     pub manifest: Value,
@@ -303,11 +585,21 @@ impl Package {
     pub fn open(path: &Path) -> Result<Package, String> {
         let f = std::fs::File::open(path).map_err(|e| format!("{}: {}", path.display(), e))?;
         let mut archive = zip::ZipArchive::new(f).map_err(|_| "这不是知识库导出包（不是 ZIP 文件）".to_string())?;
-        let manifest: Value = {
-            let mut m = archive.by_name("manifest.json").map_err(|_| "这不是知识库导出包（没有 manifest.json）".to_string())?;
-            let mut s = String::new();
-            m.read_to_string(&mut s).map_err(zerr)?;
-            serde_json::from_str(&s).map_err(|e| format!("manifest.json 不对：{}", e))?
+        let text = match archive.by_name("manifest.json") {
+            Ok(mut m) => {
+                let mut s = String::new();
+                m.read_to_string(&mut s).map_err(zerr)?;
+                Some(s)
+            }
+            Err(_) => None,
+        };
+        let manifest: Value = match text {
+            Some(s) => serde_json::from_str(&s).map_err(|e| format!("manifest.json 不对：{}", e))?,
+            // the old (Java) program: no manifest, only folders and files
+            None => {
+                let names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
+                legacy_manifest(&names, &package_title(path)).ok_or("这不是知识库导出包（没有 manifest.json，也没有旧版的 html / kmind 文件）")?
+            }
         };
         if manifest["format"] != FORMAT {
             return Err("这不是知识库导出包".into());
@@ -361,12 +653,23 @@ pub fn import_into(
     }
     let nodes = pkg.manifest["nodes"].as_array().cloned().unwrap_or_default();
     let mut n = 0;
-    let mut parent = parent;
-    if wrap {
-        parent = Some(store.create(parent, &pkg.title(), "")?);
-        n += 1;
+    // thousands of notes (old packages): one transaction instead of one disk write each
+    store.begin()?;
+    let done = (|| {
+        let mut parent = parent;
+        if wrap {
+            parent = Some(store.create(parent, &pkg.title(), "")?);
+            n += 1;
+        }
+        import_nodes(store, pkg, parent, &nodes, &mut n, attach, props)
+    })();
+    match done {
+        Ok(()) => store.commit()?,
+        Err(e) => {
+            store.rollback();
+            return Err(e);
+        }
     }
-    import_nodes(store, pkg, parent, &nodes, &mut n, props)?;
     Ok(n)
 }
 
@@ -388,13 +691,43 @@ fn import_nodes(
     parent: Option<i64>,
     nodes: &[Value],
     n: &mut usize,
+    attach: &mut dyn FnMut(&str, Vec<u8>) -> Result<(), String>,
     props: &mut dyn FnMut(i64, &Dims),
 ) -> Result<(), String> {
     for node in nodes {
         let title = node["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).unwrap_or("（无标题）");
-        let mut content = match node["file"].as_str() {
-            Some(f) => pkg.read_text(f)?,
-            None => String::new(),
+        let mut own = props_of(node);
+        let mut legacy_map: Option<String> = None;
+        let mut content = match (node["legacy"].as_str(), node["file"].as_str()) {
+            (Some("html"), Some(f)) => {
+                let html = String::from_utf8_lossy(&pkg.read_bytes(f)?).into_owned();
+                let (md, pictures, metas) = convert(&html, true);
+                for (name, bytes) in pictures {
+                    attach(&name, bytes)?;
+                }
+                for (dim, value) in legacy_dims(&metas) {
+                    own.entry(dim).or_default().push(value);
+                }
+                md
+            }
+            (Some("kmind"), Some(f)) => {
+                let text = String::from_utf8_lossy(&pkg.read_bytes(f)?).into_owned();
+                match kmind_to_mindmap(&text) {
+                    Ok((data, pictures, metas)) => {
+                        for (name, bytes) in pictures {
+                            attach(&name, bytes)?;
+                        }
+                        for (dim, value) in legacy_dims(&metas) {
+                            own.entry(dim).or_default().push(value);
+                        }
+                        legacy_map = Some(data);
+                        String::new()
+                    }
+                    Err(e) => format!("（这个脑图文件读不了：{}）", e),
+                }
+            }
+            (_, Some(f)) => pkg.read_text(f)?,
+            _ => String::new(),
         };
         // the heading with the title that the export put first is the note's title
         let first = format!("# {}", title);
@@ -405,17 +738,18 @@ fn import_nodes(
         }
         // a mind map comes with its data (the Markdown file is only its outline)
         let id = match (node["mindmap"].as_str(), node["whiteboard"].as_str()) {
+            _ if legacy_map.is_some() => store.create_typed(parent, title, legacy_map.as_deref().unwrap_or(""), crate::mindmap::TYPE)?,
             (Some(f), _) => store.create_typed(parent, title, &pkg.read_text(f)?, crate::mindmap::TYPE)?,
             (_, Some(f)) => store.create_typed(parent, title, &pkg.read_text(f)?, crate::whiteboard::TYPE)?,
             _ => store.create(parent, title, &content)?,
         };
         *n += 1;
-        let own = props_of(node);
+        let own = crate::props::clean(&own);
         if !own.is_empty() {
             props(id, &own);
         }
         let children = node["children"].as_array().cloned().unwrap_or_default();
-        import_nodes(store, pkg, Some(id), &children, n, props)?;
+        import_nodes(store, pkg, Some(id), &children, n, attach, props)?;
     }
     Ok(())
 }
@@ -454,6 +788,70 @@ mod tests {
         // and the notes reader shows them again as hover notes
         let h = markdown::to_html(&md);
         assert!(h.contains("data-note=") && !h.contains("[^1]"), "{h}");
+    }
+
+    #[test]
+    fn imports_an_old_package_without_manifest() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("sl-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("数据包-旧库-20220517_160633.smartlib");
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        let html = format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><meta period=\"现代\"><meta author=\"甲\"><meta author=\"乙\"><meta library=\"旧库\"><meta catalog=\"目\"><meta album=\"辑一\"></head><body>             <h1 id=\"a1\">文章</h1><p id=\"a2\">人<a data-note=\"@1\" id=\"x\"></a>有三种<a id=\"a-3\"></a>，<a note=\"自写的标注\">见</a>。</p>             <p><img style=\"width:10px\" src=\"data:image/png;base64,{png}\"></p></body></html>"
+        );
+        let kmind = r#"{"root":{"data":{"text":"根"},"children":[{"data":{"id":"a","text":"枝","resource":["alias"],"hyperlink":"http://x.y","note":"说明"},"children":[{"data":{"text":"叶"}}]}]},"template":"right","metadata":{"id":"x","searchable":["lookup"],"library":["经目对照"],"catalog":["登噶目錄"]}}"#;
+        let mut zw = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let o = zip::write::SimpleFileOptions::default();
+        for (n, c) in [("库/", ""), ("库/文/", ""), ("库/文/文章.html", html.as_str()), ("库/图.kmind", kmind), ("库/说明.md", "# 说明
+
+正文"), ("库/x.bin", "?")] {
+            if n.ends_with('/') {
+                zw.add_directory(n, o).unwrap();
+            } else {
+                zw.start_file(n, o).unwrap();
+                zw.write_all(c.as_bytes()).unwrap();
+            }
+        }
+        zw.finish().unwrap();
+
+        let mut p = Package::open(&path).unwrap();
+        assert_eq!(p.title(), "库");
+        let store = NotesStore::memory().unwrap();
+        let mut pics: Vec<String> = Vec::new();
+        let mut with_props: Vec<(i64, Dims)> = Vec::new();
+        let n = import_into(&store, &mut p, None, false, &mut |n, _| (pics.push(n.to_string()), Ok(())).1, &mut |id, d| with_props.push((id, d.clone()))).unwrap();
+        assert_eq!(n, 4); // 文 / 文章 / 图 / 说明
+        let top = store.children(None).unwrap();
+        assert_eq!(top.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(), ["文", "图", "说明"]);
+        let article = store.children(Some(top[0].id)).unwrap();
+        let note = store.get(article[0].id).unwrap().unwrap();
+        // the title heading went into the title; marks became footnotes; the picture an attachment
+        assert!(note.content.starts_with("人[^1]有三种，[见](") || note.content.starts_with("人[^1]有三种，见[^2]。"), "{}", note.content);
+        assert!(note.content.contains("[^1]: 标注 @1") && note.content.contains("[^2]: 自写的标注"), "{}", note.content);
+        assert_eq!(pics.len(), 1);
+        assert!(note.content.contains(&format!("![](attach:{})", pics[0])), "{}", note.content);
+        let dims = &with_props.iter().find(|(id, _)| *id == note.id).unwrap().1;
+        assert_eq!(dims.get("period"), Some(&vec!["现代".to_string()]));
+        assert_eq!(dims.get("person"), Some(&vec!["甲".to_string(), "乙".to_string()]));
+        assert_eq!(dims.get("canon"), Some(&vec!["旧库".to_string()]));
+        assert_eq!(dims.get("bulei"), Some(&vec!["目/辑一".to_string()]));
+        // the mind map
+        let map = store.get(top[1].id).unwrap().unwrap();
+        assert_eq!(map.content_type, crate::mindmap::TYPE);
+        let v: Value = serde_json::from_str(&map.content).unwrap();
+        assert_eq!(v["nodeData"]["topic"], "根");
+        let branch = &v["nodeData"]["children"][0];
+        assert_eq!((branch["topic"].as_str(), branch["direction"].as_u64(), branch["hyperLink"].as_str()), (Some("枝"), Some(1), Some("http://x.y")));
+        assert_eq!(branch["tags"][0], "alias");
+        assert_eq!(branch["children"][0]["topic"], "注：说明");
+        assert_eq!(branch["children"][1]["topic"], "叶");
+        let md = &with_props.iter().find(|(id, _)| *id == map.id).unwrap().1;
+        assert_eq!((md.get("canon"), md.get("bulei")), (Some(&vec!["经目对照".to_string()]), Some(&vec!["登噶目錄".to_string()])));
+        assert!(!md.contains_key("searchable"));
+        assert_eq!(store.get(top[2].id).unwrap().unwrap().content, "正文");
+        assert!(Package::open(&dir.join("none.smartlib")).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -510,6 +908,36 @@ mod tests {
 #[cfg(test)]
 mod real {
     use super::*;
+
+    /// Needs the old packages: `cargo test -p smart-library-core real_old -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_old_packages() {
+        for f in ["数据包-慧灯文集-20220517_160633.smartlib", "数据包-经目信息-20221002_113537.smartlib"] {
+            let t = std::time::Instant::now();
+            let mut p = Package::open(&std::path::Path::new("C:/Devx/smartLib.d").join(f)).unwrap();
+            let store = NotesStore::memory().unwrap();
+            let mut pics = 0;
+            let n = import_into(&store, &mut p, None, false, &mut |_, _| (pics += 1, Ok(())).1, &mut |_, _| {}).unwrap();
+            println!("{} -> {} notes, {} pictures, {:?}, top {:?}", p.title(), n, pics, t.elapsed(), store.children(None).unwrap().iter().take(6).map(|r| r.title.clone()).collect::<Vec<_>>());
+            let rows = store.rows().unwrap();
+            let md = rows.len();
+            println!("rows {}", md);
+            for r in store.rows().unwrap() {
+                let note = store.get(r.id).unwrap().unwrap();
+                if note.title.starts_with("二谛") || note.title.starts_with("2011.04") {
+                    let c = &note.content;
+                    let at = c.find("![](").or(c.find("[^1]")).unwrap_or(0);
+                    let from = (0..=at.saturating_sub(40)).rev().find(|i| c.is_char_boundary(*i)).unwrap_or(0);
+                    println!("== {} ({} chars)
+{}
+...
+{}", note.title, c.len(), c.chars().take(80).collect::<String>(), c[from..].chars().take(200).collect::<String>());
+                    println!("tail: {}", c.chars().rev().take(60).collect::<Vec<_>>().into_iter().rev().collect::<String>());
+                }
+            }
+        }
+    }
 
     /// Needs the test data: `cargo test -p smart-library-core real_volume -- --ignored --nocapture`
     #[test]

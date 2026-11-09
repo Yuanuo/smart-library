@@ -172,6 +172,35 @@ impl AppState {
         Ok(n)
     }
 
+    /// Delete the pictures of an internal library that no note has referred to for `older_than`
+    /// seconds; how many and how many bytes.
+    pub fn sweep_pictures(&self, lib: &Library, older_than: i64) -> Result<(usize, u64), String> {
+        let dir = self.attachments_dir(&lib.id);
+        let on_disk: Vec<String> = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| smart_library_core::attach::is_name(n)).collect(),
+            Err(_) => Vec::new(),
+        };
+        let gone = self.notes(lib)?.sweep_pictures(older_than, &on_disk)?;
+        let mut bytes = 0u64;
+        let mut n = 0usize;
+        for name in gone {
+            let path = dir.join(&name);
+            bytes += std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(&path).is_ok() {
+                n += 1;
+            }
+        }
+        Ok((n, bytes))
+    }
+
+    /// The daily clean-up: pictures unreferenced for 24 hours.
+    pub fn sweep_all_pictures(&self) {
+        let libs: Vec<Library> = self.libraries.read().unwrap().clone();
+        for l in libs.iter().filter(|l| l.kind == "notes") {
+            let _ = self.sweep_pictures(l, 24 * 3600);
+        }
+    }
+
     fn titles(&self, lib: &Library) -> Result<Arc<TitleIndex>, String> {
         if let Some(t) = self.titles.read().unwrap().get(&lib.id) {
             return Ok(t.clone());
@@ -1111,21 +1140,10 @@ pub async fn clear_cache(state: State<'_, AppState>) -> Result<String, String> {
                 Err(e) => failed.push(format!("{}：{}", l.title, e)),
             }
         } else if l.kind == "notes" {
-            let result = (|| -> Result<(), String> {
-                let used: HashSet<String> = state.notes(&l)?.rows()?.iter().flat_map(|r| smart_library_core::attach::refs(&r.content)).collect();
-                let dir = state.attachments_dir(&l.id);
-                let recent = std::time::Duration::from_secs(60);
-                for e in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
-                    let n = e.file_name().to_string_lossy().into_owned();
-                    let fresh = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a < recent);
-                    if smart_library_core::attach::is_name(&n) && !used.contains(&n) && !fresh {
-                        pics += 1;
-                        pic_bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
-                        let _ = std::fs::remove_file(e.path());
-                    }
-                }
-                Ok(())
-            })();
+            let result = state.sweep_pictures(&l, 60).map(|(n, bytes)| {
+                pics += n;
+                pic_bytes += bytes;
+            });
             if let Err(e) = result {
                 if dir_exists(&state.attachments_dir(&l.id)) {
                     failed.push(format!("{}：{}", l.title, e));
@@ -1307,7 +1325,9 @@ pub async fn note_attach(request: tauri::ipc::Request<'_>, state: State<'_, AppS
     if l.kind != "notes" {
         return Err("只有自建知识库和读写模式的本地文件夹里的笔记可以放图片".into());
     }
-    smart_library_core::attach::store(&state.attachments_dir(&l.id), data, &header("mime"))
+    let name = smart_library_core::attach::store(&state.attachments_dir(&l.id), data, &header("mime"))?;
+    state.notes(&l)?.register_picture(&name)?;
+    Ok(name)
 }
 
 /// Write bytes to a file the user chose (the request body is the content,

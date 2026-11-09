@@ -58,6 +58,21 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
+/// Change the count of each picture by `delta`; one that drops below one starts its 24 hours.
+fn bump(c: &Connection, names: &[String], delta: i64) -> Result<(), String> {
+    let t = now();
+    for n in names {
+        c.execute(
+            "INSERT INTO attach_refs (name, refs, zero_since) VALUES (?1, MAX(?2, 0), CASE WHEN ?2 < 1 THEN ?3 END)
+             ON CONFLICT(name) DO UPDATE SET refs = MAX(refs + ?2, 0),
+                 zero_since = CASE WHEN refs + ?2 < 1 THEN COALESCE(zero_since, ?3) END",
+            params![n, delta, t],
+        )
+        .map_err(err)?;
+    }
+    Ok(())
+}
+
 fn err(e: rusqlite::Error) -> String {
     format!("笔记库出错：{}", e)
 }
@@ -91,7 +106,98 @@ impl NotesStore {
              CREATE INDEX IF NOT EXISTS notes_parent ON notes(parent_id, position);",
         )
         .map_err(err)?;
-        Ok(NotesStore { conn: Mutex::new(conn) })
+        // The picture table is new in this version: count what the notes refer to once.
+        let fresh: bool = conn
+            .query_row("SELECT NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'attach_refs')", [], |r| r.get(0))
+            .map_err(err)?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS attach_refs (
+                 name TEXT PRIMARY KEY,
+                 refs INTEGER NOT NULL DEFAULT 0,
+                 zero_since INTEGER
+             );",
+        )
+        .map_err(err)?;
+        let store = NotesStore { conn: Mutex::new(conn) };
+        if fresh {
+            store.recount()?;
+        }
+        Ok(store)
+    }
+
+    /// Count the pictures again from the notes (what each name is referred to by).
+    pub fn recount(&self) -> Result<(), String> {
+        let c = self.conn.lock().unwrap();
+        let mut counts: HashMap<String, i64> = HashMap::new();
+        {
+            let mut st = c.prepare("SELECT content FROM notes").map_err(err)?;
+            let rows = st.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
+            for content in rows {
+                for n in crate::attach::refs(&content.map_err(err)?) {
+                    *counts.entry(n).or_default() += 1;
+                }
+            }
+        }
+        let t = now();
+        c.execute("UPDATE attach_refs SET refs = 0", []).map_err(err)?;
+        for (n, k) in &counts {
+            c.execute(
+                "INSERT INTO attach_refs (name, refs, zero_since) VALUES (?1, ?2, NULL)
+                 ON CONFLICT(name) DO UPDATE SET refs = ?2, zero_since = NULL",
+                params![n, k],
+            )
+            .map_err(err)?;
+        }
+        c.execute("UPDATE attach_refs SET zero_since = ?1 WHERE refs < 1 AND zero_since IS NULL", params![t]).map_err(err)?;
+        Ok(())
+    }
+
+    /// A picture was stored but no note refers to it yet: it starts its 24 hours.
+    pub fn register_picture(&self, name: &str) -> Result<(), String> {
+        let c = self.conn.lock().unwrap();
+        c.execute("INSERT OR IGNORE INTO attach_refs (name, refs, zero_since) VALUES (?1, 0, ?2)", params![name, now()]).map_err(err)?;
+        Ok(())
+    }
+
+    /// Names whose count has been below one for at least `older_than` seconds are forgotten and
+    /// returned (the caller deletes the files). Pictures in `on_disk` that have no record start
+    /// their time now.
+    pub fn sweep_pictures(&self, older_than: i64, on_disk: &[String]) -> Result<Vec<String>, String> {
+        let c = self.conn.lock().unwrap();
+        let t = now();
+        for n in on_disk {
+            c.execute("INSERT OR IGNORE INTO attach_refs (name, refs, zero_since) VALUES (?1, 0, ?2)", params![n, t]).map_err(err)?;
+        }
+        let gone: Vec<String> = {
+            let mut st = c.prepare("SELECT name FROM attach_refs WHERE refs < 1 AND COALESCE(zero_since, 0) <= ?1").map_err(err)?;
+            let rows = st.query_map(params![t - older_than], |r| r.get::<_, String>(0)).map_err(err)?;
+            rows.collect::<Result<_, _>>().map_err(err)?
+        };
+        for n in &gone {
+            c.execute("DELETE FROM attach_refs WHERE name = ?1", params![n]).map_err(err)?;
+        }
+        Ok(gone)
+    }
+
+    /// `(name, refs)` of every known picture (for tests and the settings page).
+    pub fn picture_refs(&self) -> Result<Vec<(String, i64)>, String> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT name, refs FROM attach_refs ORDER BY name").map_err(err)?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
+    /// Group many writes into one transaction (import); end with `commit` or `rollback`.
+    pub fn begin(&self) -> Result<(), String> {
+        self.conn.lock().unwrap().execute_batch("BEGIN").map_err(err)
+    }
+
+    pub fn commit(&self) -> Result<(), String> {
+        self.conn.lock().unwrap().execute_batch("COMMIT").map_err(err)
+    }
+
+    pub fn rollback(&self) {
+        let _ = self.conn.lock().unwrap().execute_batch("ROLLBACK");
     }
 
     /// One level of the tree (`None`: the top of the library).
@@ -170,6 +276,7 @@ impl NotesStore {
             params![parent, title, content, content_type, pos, t],
         )
         .map_err(err)?;
+        bump(&c, &crate::attach::refs(content), 1)?;
         Ok(c.last_insert_rowid())
     }
 
@@ -182,6 +289,12 @@ impl NotesStore {
             c.execute("UPDATE notes SET title = ?1, updated = ?2 WHERE id = ?3", params![t.trim(), now(), id]).map_err(err)?;
         }
         if let Some(t) = content {
+            let old: Option<String> = c.query_row("SELECT content FROM notes WHERE id = ?1", params![id], |r| r.get(0)).ok();
+            if let Some(old) = old {
+                let (before, after) = (crate::attach::refs(&old), crate::attach::refs(t));
+                bump(&c, &after.iter().filter(|n| !before.contains(n)).cloned().collect::<Vec<_>>(), 1)?;
+                bump(&c, &before.iter().filter(|n| !after.contains(n)).cloned().collect::<Vec<_>>(), -1)?;
+            }
             c.execute("UPDATE notes SET content = ?1, updated = ?2 WHERE id = ?3", params![t, now(), id]).map_err(err)?;
         }
         Ok(())
@@ -216,6 +329,19 @@ impl NotesStore {
                 |r| r.get(0),
             )
             .map_err(err)?;
+        let contents: Vec<String> = {
+            let mut st = c
+                .prepare(
+                    "WITH RECURSIVE sub(id) AS (SELECT ?1 UNION ALL SELECT n.id FROM notes n JOIN sub ON n.parent_id = sub.id)
+                     SELECT content FROM notes WHERE id IN (SELECT id FROM sub)",
+                )
+                .map_err(err)?;
+            let rows = st.query_map(params![id], |r| r.get::<_, String>(0)).map_err(err)?;
+            rows.collect::<Result<_, _>>().map_err(err)?
+        };
+        for content in &contents {
+            bump(&c, &crate::attach::refs(content), -1)?;
+        }
         c.execute("DELETE FROM notes WHERE id = ?1", params![id]).map_err(err)?;
         Ok(n as usize)
     }
@@ -421,6 +547,32 @@ pub fn docs(rows: &[NoteRow], library_title: &str) -> Vec<IndexDoc> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_picture_references() {
+        let a = "00112233445566778899aabbccddeeff.png";
+        let b = "ffeeddccbbaa99887766554433221100.png";
+        let s = NotesStore::memory().unwrap();
+        let n1 = s.create(None, "一", &format!("![](attach:{})", a)).unwrap();
+        let n2 = s.create(None, "二", &format!("![](attach:{}) ![](attach:{})", a, b)).unwrap();
+        assert_eq!(s.picture_refs().unwrap(), vec![(a.into(), 2), (b.into(), 1)]);
+        s.update(n2, None, Some("没有图了")).unwrap();
+        assert_eq!(s.picture_refs().unwrap(), vec![(a.into(), 1), (b.into(), 0)]);
+        // below one but younger than the time: kept; the one never seen on disk is added
+        assert!(s.sweep_pictures(86400, &[]).unwrap().is_empty());
+        s.delete(n1).unwrap();
+        assert_eq!(s.picture_refs().unwrap(), vec![(a.into(), 0), (b.into(), 0)]);
+        let mut gone = s.sweep_pictures(0, &[]).unwrap();
+        gone.sort();
+        assert_eq!(gone, vec![a.to_string(), b.to_string()]);
+        assert!(s.picture_refs().unwrap().is_empty());
+        // a picture that is only pasted
+        s.register_picture(a).unwrap();
+        assert_eq!(s.picture_refs().unwrap(), vec![(a.into(), 0)]);
+        s.create(None, "三", &format!("![](attach:{})", a)).unwrap();
+        s.recount().unwrap();
+        assert_eq!(s.picture_refs().unwrap(), vec![(a.into(), 1)]);
+    }
 
     #[test]
     fn tree_crud_and_move() {

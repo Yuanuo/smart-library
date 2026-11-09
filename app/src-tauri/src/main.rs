@@ -49,6 +49,13 @@ fn main() {
                 None => (app.path().app_config_dir()?, app.path().app_data_dir()?),
             };
             app.manage(AppState::new(config_dir, data_dir));
+            // pictures no note has referred to for 24 hours: look every few hours
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(120));
+                handle.state::<AppState>().sweep_all_pictures();
+                std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+            });
             Ok(())
         })
         // `sl`: images of a library, `<lib>/<path in the bookcase>`
