@@ -636,10 +636,26 @@ impl<'a> Extractor<'a> {
                 } else {
                     String::new()
                 };
+                // the reading of the base text (大正藏), when CBETA's own reading differs from it:
+                // kept in `data-orig` (zero-width space: the base text has nothing there), so the
+                // reader can show it instead without changing the text that hits are counted in
+                let orig = if self.html.is_some() && !pick.is_some_and(|l| l.attr("wit").unwrap_or("").contains("【大】")) {
+                    el.elems().find(|e| e.name == "rdg" && e.attr("wit").unwrap_or("").contains("【大】")).map(|r| {
+                        let mut s = String::new();
+                        self.display_text(r, &mut s);
+                        if s.trim().is_empty() { "\u{200b}".to_string() } else { s.trim().to_string() }
+                    })
+                } else {
+                    None
+                };
                 if let Some(h) = self.html.as_mut() {
                     // `data-n` links the reading to its note point
-                    let class = if variants > 0 { "app v" } else { "app" };
-                    h.open("span", &[("class", class), ("data-n", el.attr("n").unwrap_or("")), ("title", &title)]);
+                    let class = match (variants > 0, orig.is_some()) {
+                        (true, true) => "app v o",
+                        (true, false) => "app v",
+                        _ => "app",
+                    };
+                    h.open("span", &[("class", class), ("data-n", el.attr("n").unwrap_or("")), ("data-orig", orig.as_deref().unwrap_or("")), ("title", &title)]);
                 }
                 if let Some(lem) = pick {
                     self.children(lem);

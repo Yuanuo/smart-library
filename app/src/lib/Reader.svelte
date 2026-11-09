@@ -74,6 +74,9 @@
   $effect(() => save("reader.showLb", showLb ? "1" : "0"));
   $effect(() => save("reader.noteMode", shared.noteMode));
   const noteMode = $derived(shared.noteMode);
+  // the base text's (大正藏) reading in place of CBETA's where they differ
+  let baseText = $state(load("reader.baseText", "0") === "1");
+  $effect(() => save("reader.baseText", baseText ? "1" : "0"));
   const simp = $derived(settings.readerScript === "simp");
   $effect(() => {
     if (simp) ensureSimplifier();
@@ -428,6 +431,7 @@
         {#if mode === "para"}
           <label class="check"><input type="checkbox" bind:checked={showLb} /> 行号</label>
           {#if vol.kind === "cbeta"}
+            <label class="check" title="正文用底本（大正藏等）的读法，不用 CBETA 修订的读法；只改显示"><input type="checkbox" bind:checked={baseText} /> 底本读法</label>
             <div class="seg notes" role="group" aria-label="编注显示方式">
               {#each NOTE_MODES as [k, label, help]}
                 <button class:on={noteMode === k} title={help} onclick={() => ((shared.noteMode = k), closeTip())}>{label}</button>
@@ -448,7 +452,7 @@
     <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))} oncontextmenu={readerMenu} onclick={docClick}
       onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para"}
-        <article class="doc notes-{noteMode}" class:show-lb={showLb}>{@html html}</article>
+        <article class="doc notes-{noteMode}" class:show-lb={showLb} class:base-text={baseText}>{@html html}</article>
       {:else}
         <div class="lines">
           {#each vol.lines as line}
@@ -576,6 +580,8 @@
     content: "（注）"; color: var(--note); font-weight: 700; font-size: 0.8em; cursor: help; user-select: none;
   }
   .doc :global(.fn:hover)::before { background: var(--accent-soft); border-radius: 3px; }
+  .doc.base-text :global(.app.o) { font-size: 0; }
+  .doc.base-text :global(.app.o)::after { content: attr(data-orig); font-size: var(--reader-size); color: var(--note); }
   .doc.notes-none :global(.fn) { display: none; }
   .doc.notes-num :global(.note) { cursor: help; }
   .doc.notes-num :global(.note sup) {

@@ -315,7 +315,7 @@ mod tests {
             "<span class=\"note\" tabindex=\"0\" data-note=\"1\" data-n=\"1\"><sup>1</sup>",
             "<span class=\"nb-orig\">〔死〕－【三】</span><span class=\"nb-cb\">〔－〕【CB】，死【大】</span></span>"
         )));
-        assert!(r.html.contains("<span class=\"app v\" data-n=\"1\" title=\"【CB】無；【大】死\">"));
+        assert!(r.html.contains("<span class=\"app v o\" data-n=\"1\" data-orig=\"死\" title=\"【CB】無；【大】死\">"));
         assert!(r.html.contains("[臊-品+巳]</span>"));
         assert!(r.html.contains("┌初<br><span class=\"lb\" data-lb=\"0001a03\"></span>└二"));
         assert!(r.html.contains("<span class=\"caesura\">　</span>"));

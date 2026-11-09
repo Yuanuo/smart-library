@@ -37,5 +37,5 @@ export function simplifyHtml(html) {
   if (!m || !html) return html;
   return html
     .replace(/>([^<]+)/g, (_, t) => ">" + simplifyText(t))
-    .replace(/ (title|data-tip)="([^"]*)"/g, (_, k, v) => ` ${k}="${simplifyText(v)}"`);
+    .replace(/ (title|data-tip|data-orig)="([^"]*)"/g, (_, k, v) => ` ${k}="${simplifyText(v)}"`);
 }
