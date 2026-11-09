@@ -14,6 +14,7 @@
   import { fullPath } from "./paths.js";
   import { monthPath, localDate } from "./diary.js";
   import { startScopeDrag } from "./scopeDrag.js";
+  import { installTextDrag } from "./textDrag.js";
   import { confirmWritable, isEditableName } from "./writable.js";
 
   let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
@@ -445,7 +446,7 @@
     // in a read-write folder the nodes can also be dropped on a folder of the tree to move them
     const move =
       node && isRwFolder(l.id) && (node.path == null || isEditableName(node.rel))
-        ? { ok: (row) => !!row.closest(`[data-lib="${l.id}"]`), onDrop: (row) => dropMove(l, node, key, row) }
+        ? { check: (row) => moveVerdict(l, node, key, row), onDrop: (row) => dropMove(l, node, key, row) }
         : null;
     startScopeDrag(
       e,
@@ -458,23 +459,60 @@
     );
   }
 
+  const parentOf = (r) => r.split("/").slice(0, -1).join("/");
+  const lastOf = (r) => r.split("/").pop();
+
+  /** The folder a row stands for when something is dropped on it: the folder itself, or the folder of a file. */
+  const dropTarget = (row) => {
+    const rel = row.dataset.rel ?? "";
+    return row.dataset.isdir === "1" ? rel : parentOf(rel);
+  };
+
+  /** The nodes of a folder as far as they are loaded (null: not read yet). `row`: a row of the tree or the library's root row. */
+  function loadedChildren(lib, row) {
+    const key = row.dataset.key;
+    if (!key) return nodes[lib] ?? null; // the library's root row
+    if (row.dataset.isdir === "1") {
+      const n = nodeAt(lib, key);
+      return n && !n.lazy ? n.children : null;
+    }
+    const pk = parentKey(key);
+    return pk ? (nodeAt(lib, pk)?.children ?? null) : (nodes[lib] ?? null);
+  }
+
+  /** What the dragged node (or the picked ones) really moves: not what is inside another moved folder,
+   * not what is there already, not a folder into itself. */
+  function moveList(l, node, key, target) {
+    const group = multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key) ? pickedNodes(l).map((x) => x.node) : [node];
+    const rels = group.filter((n) => n.rel != null && (n.path == null || isEditableName(n.rel))).map((n) => n.rel);
+    return rels.filter((r) => !rels.some((o) => o !== r && r.startsWith(o + "/")) && parentOf(r) !== target && target !== r && !target.startsWith(r + "/"));
+  }
+
+  /** While dragging: can the nodes be dropped on this row? "ok", "no" (cannot: shown with the not-allowed pointer), or null (not a place for them). */
+  function moveVerdict(l, node, key, row) {
+    if (row.closest("[data-lib]")?.dataset.lib !== l.id) return null;
+    const target = dropTarget(row);
+    const todo = moveList(l, node, key, target);
+    if (!todo.length) return "no"; // nothing would change: it is there already, or inside itself
+    const siblings = loadedChildren(l.id, row);
+    if (siblings) {
+      const taken = new Set(siblings.map((n) => lastOf(n.rel).toLowerCase()));
+      if (todo.some((r) => taken.has(lastOf(r).toLowerCase()))) return "no"; // the name is used there
+    }
+    return "ok";
+  }
+
   /** The dragged node (or the picked ones) was dropped on a row: move it into that folder (a file's row: its folder). */
   async function dropMove(l, node, key, row) {
-    const rel = row.dataset.rel ?? "";
-    const target = row.dataset.isdir === "1" ? rel : rel.split("/").slice(0, -1).join("/");
-    const group = multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key) ? pickedNodes(l).map((x) => x.node) : [node];
-    const parentOf = (r) => r.split("/").slice(0, -1).join("/");
-    const rels = group.filter((n) => n.rel != null && (n.path == null || isEditableName(n.rel))).map((n) => n.rel);
-    const todo = rels.filter(
-      (r) => !rels.some((o) => o !== r && r.startsWith(o + "/")) && parentOf(r) !== target && target !== r && !target.startsWith(r + "/"),
-    );
+    const target = dropTarget(row);
+    const todo = moveList(l, node, key, target);
     if (!todo.length) return;
     const fails = [];
     for (const r of todo) {
       try {
         await relocate(l.id, { rel: r }, () => api.moveFolderNode(l.id, r, target));
       } catch (e) {
-        fails.push(`${r.split("/").pop()}：${e}`);
+        fails.push(`${lastOf(r)}：${e}`);
       }
     }
     clearPicked();
@@ -491,6 +529,53 @@
     }
     if (fails.length) onerror?.(fails.join("\n"));
   }
+
+  // ---- selected text dropped on a node of the tree: it becomes a new note there
+
+  /** A name for a note made of `text`: its first line, without what a file name cannot have. */
+  function nameFrom(text) {
+    const line = (text.split(/\r?\n/).find((s) => s.trim()) ?? "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim();
+    return Array.from(line).slice(0, 30).join("").replace(/[. ]+$/, "").replace(/^[. ]+/, "") || "笔记";
+  }
+
+  /** Can text be dropped on this row: only on a library that can be edited. */
+  function textVerdict(row) {
+    const lib = row.closest("[data-lib]")?.dataset.lib;
+    if (!lib) return null;
+    return isEditable(lib) ? "ok" : "no";
+  }
+
+  /** The text was dropped on a row: ask for the name of the note, then make it (inside the folder or note of the row; for a file, next to it). */
+  function textDrop(row, text) {
+    const lib = row.closest("[data-lib]")?.dataset.lib;
+    if (!lib || !isEditable(lib)) return;
+    const folderLib = isRwFolder(lib);
+    const md = text.replace(/\r?\n+/g, "\n\n") + "\n";
+    nameDlg = {
+      title: "用选中的文字新建笔记",
+      label: folderLib ? "文件名（不含后缀）" : "笔记标题",
+      value: nameFrom(text),
+      okLabel: "新建",
+      hint: folderLib ? nameRules : "",
+      validate: folderLib ? checkName : null,
+      onok: guard(lib, async (title) => {
+        let r;
+        if (folderLib) {
+          r = await api.createFolderFile(lib, dropTarget(row), "md", title);
+        } else {
+          const key = row.dataset.key;
+          r = await api.createNoteAt(lib, key ? pathOf(lib, key) : "", title, "md");
+        }
+        await api.saveNote(lib, r.id, md);
+        onlibs?.();
+        await tick();
+        await showNew(r);
+        await workspace.openVolume({ lib: r.lib, path: r.id });
+      }),
+    };
+  }
+
+  $effect(() => installTextDrag({ check: textVerdict, onDrop: textDrop }));
 
   // The highlight of the node that was opened or revealed last gives way when another reading tab
   // becomes the active one (the active tab's own node is shown by `activeKey`): a node whose tab was

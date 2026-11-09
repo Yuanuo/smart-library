@@ -643,7 +643,22 @@ impl FolderLibrary {
         let path = self.picture_path(&name).ok_or("图片名不对")?;
         let dir = path.parent().unwrap_or(&self.root);
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
-        std::fs::write(&path, bytes).map_err(|e| format!("{}: {}", path.display(), e))?;
+        // the same content may be kept already (same fingerprint, another end): the new file is a hard
+        // link to it, so a picture used by many notes takes the space once and still goes with each note
+        let (fp, ext) = (&name[..32], name.rsplit('.').next().unwrap_or("png"));
+        let same = std::fs::read_dir(dir).ok().and_then(|rd| {
+            rd.flatten().map(|e| e.path()).find(|p| {
+                p.is_file() && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(fp) && n.ends_with(&format!(".{}", ext)))
+            })
+        });
+        match same {
+            Some(src) => {
+                if std::fs::hard_link(&src, &path).is_err() {
+                    std::fs::copy(&src, &path).map_err(|e| format!("{}: {}", path.display(), e))?;
+                }
+            }
+            None => std::fs::write(&path, bytes).map_err(|e| format!("{}: {}", path.display(), e))?,
+        }
         Ok(name)
     }
 
@@ -1291,6 +1306,10 @@ mod tests {
         // the same picture in another note is a file of its own (the fingerprint is the same, the end differs)
         let n_b = lib.store_picture(&b, &png, "image/png").unwrap();
         assert!(n_b != n && n_b[..32] == n[..32] && n.len() == 44);
+        // ... but one file on disk: a change through one name shows through the other (a hard link)
+        std::fs::write(lib.find_picture(&n).unwrap(), b"shared").unwrap();
+        assert_eq!(std::fs::read(lib.find_picture(&n_b).unwrap()).unwrap(), b"shared");
+        std::fs::write(lib.find_picture(&n).unwrap(), png).unwrap();
         let file = d.join(format!(".smart-library/attachments/{}/{}/{}", &n[..2], &n[2..4], n));
         assert!(file.is_file());
         assert_eq!(lib.find_picture(&n).unwrap(), file);

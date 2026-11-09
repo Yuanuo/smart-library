@@ -21,11 +21,14 @@ export function startScopeDrag(e, getItems, moveTo = null) {
   let over = null;
   let moveOver = null;
 
-  const setMove = (el) => {
-    if (el === moveOver) return;
-    moveOver?.classList.remove("move-over");
-    el?.classList.add("move-over");
+  let moveNo = false;
+  const setMove = (el, no = false) => {
+    if (el === moveOver && no === moveNo) return;
+    moveOver?.classList.remove("move-over", "move-no");
+    if (el) el.classList.add(no ? "move-no" : "move-over");
+    document.body.classList.toggle("move-blocked", !!el && no); // the pointer says it cannot be dropped here
     moveOver = el;
+    moveNo = no;
   };
   const setOver = (el) => {
     if (el === over) return;
@@ -51,11 +54,12 @@ export function startScopeDrag(e, getItems, moveTo = null) {
     setOver(under?.closest("[data-scope-drop]") ?? null);
     // a row of the tree to drop on (moving the dragged nodes into that folder)
     const row = moveTo ? under?.closest("[data-rel]") : null;
-    setMove(row && moveTo.ok(row) ? row : null);
+    const verdict = row ? moveTo.check(row) : null; // "ok", "no" or null (not a place to drop on)
+    setMove(verdict ? row : null, verdict === "no");
   };
   const up = () => {
     const target = over;
-    const into = moveOver;
+    const into = moveNo ? null : moveOver;
     const carried = items;
     const was = dragging;
     stop();
