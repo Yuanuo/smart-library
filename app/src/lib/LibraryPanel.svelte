@@ -445,9 +445,11 @@
   function dragNode(l, node, key, e) {
     // in a read-write folder the nodes can also be dropped on a folder of the tree to move them
     const move =
-      node && isRwFolder(l.id) && (node.path == null || isEditableName(node.rel))
-        ? { check: (row) => moveVerdict(l, node, key, row), onDrop: (row) => dropMove(l, node, key, row) }
-        : null;
+      node && isNotes(l.id)
+        ? { check: (row) => noteVerdict(l, node, key, row), onDrop: (row) => noteDrop(l, node, key, row) }
+        : node && isRwFolder(l.id) && (node.path == null || isEditableName(node.rel))
+          ? { check: (row) => moveVerdict(l, node, key, row), onDrop: (row) => dropMove(l, node, key, row) }
+          : null;
     startScopeDrag(
       e,
       () => {
@@ -461,6 +463,57 @@
 
   const parentOf = (r) => r.split("/").slice(0, -1).join("/");
   const lastOf = (r) => r.split("/").pop();
+
+  /** The notes (index path + node) that dropping on `row` would really move: the dragged one or the picked ones,
+   * not what is inside another moved note, not what is already a child of the target, not a note into itself. */
+  function noteMoveList(l, node, key, row) {
+    const tkey = row.dataset.key ?? ""; // "" : the root of the library (top level)
+    const group = multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key) ? pickedNodes(l) : [{ key, node }];
+    const keys = group.map((x) => x.key);
+    return {
+      tkey,
+      trel: row.dataset.rel || null,
+      todo: group.filter(
+        (x) => !keys.some((o) => o !== x.key && x.key.startsWith(o + "/")) && parentKey(x.key) !== tkey && tkey !== x.key && !tkey.startsWith(x.key + "/"),
+      ),
+    };
+  }
+
+  /** While dragging a note: it can go into another note or to the top (the library's row). */
+  function noteVerdict(l, node, key, row) {
+    const rowLib = row.closest("[data-lib]")?.dataset.lib;
+    if (!rowLib) return null;
+    if (rowLib !== l.id) return "no";
+    return noteMoveList(l, node, key, row).todo.length ? "ok" : "no";
+  }
+
+  /** Dropped: the notes become the last children of the target (or top level notes). */
+  async function noteDrop(l, node, key, row) {
+    const { trel, todo } = noteMoveList(l, node, key, row);
+    if (!todo.length) return;
+    const fails = [];
+    for (const x of todo) {
+      try {
+        await api.moveNote(l.id, x.node.rel, trel, 1e9);
+      } catch (e) {
+        fails.push(`${x.node.title}：${e}`);
+      }
+    }
+    clearPicked();
+    selected = null;
+    await reconcile(l.id, null);
+    // show where they went
+    const trail = trel ? await findNoteNode(l.id, trel) : [];
+    if (trail) {
+      let k = "";
+      for (const i of trail) {
+        k += `/${i}`;
+        (expanded[l.id] ??= {})[k] = true;
+      }
+      if (k) await refresh(l.id, k); // the target may have been a leaf: read what it holds now
+    }
+    if (fails.length) onerror?.(fails.join("\n"));
+  }
 
   /** The folder a row stands for when something is dropped on it: the folder itself, or the folder of a file. */
   const dropTarget = (row) => {
