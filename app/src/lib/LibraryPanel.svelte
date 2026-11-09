@@ -184,7 +184,7 @@
         await onlibs?.();
       });
     } catch (e) {
-      errors[l.id] = String(e);
+      onerror?.(String(e));
     }
   }
 
@@ -224,8 +224,7 @@
     try {
       await f(...a);
     } catch (e) {
-      errors[lib] = String(e);
-      throw e;
+      throw e; // the dialog that asked for it shows the reason
     }
   };
 
@@ -260,8 +259,7 @@
       await showNew(r);
       await workspace.openVolume({ lib: r.lib, path: r.id });
     } catch (e) {
-      if (lib) errors[lib] = String(e);
-      else onerror?.(String(e));
+      onerror?.(String(e)); // a failed action must not hide the tree
     }
   }
 
@@ -358,7 +356,7 @@
         }),
       };
     } catch (e) {
-      errors[lib] = String(e);
+      onerror?.(String(e));
     }
   }
 
@@ -391,7 +389,7 @@
       if (selected?.lib === lib && selected.key.startsWith(key)) selected = null;
       await refresh(lib, parentKey(key) || null);
     } catch (e) {
-      errors[lib] = String(e);
+      onerror?.(String(e));
     }
   }
 
@@ -412,7 +410,7 @@
       await api.moveNote(lib, node.rel, parent, idx + by);
       await refresh(lib, pk || null);
     } catch (e) {
-      errors[lib] = String(e);
+      onerror?.(String(e));
     }
   }
 
@@ -491,7 +489,7 @@
       }
       await reconcile(l.id, null);
     }
-    errors[l.id] = fails.join("\n");
+    if (fails.length) onerror?.(fails.join("\n"));
   }
 
   // The highlight of the node that was opened or revealed last gives way when another reading tab
@@ -794,7 +792,7 @@
       n.children = await api.folderChildren(lib, n.rel);
       n.lazy = false;
     } catch (e) {
-      errors[lib] = String(e);
+      onerror?.(String(e));
     }
   }
 

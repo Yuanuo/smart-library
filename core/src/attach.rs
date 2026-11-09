@@ -15,11 +15,12 @@ fn ext_of_mime(mime: &str) -> Option<&'static str> {
     }
 }
 
-/// A name made by [`store`]: 32 hex digits, a dot, a known extension.
+/// A name made by [`store`] (32 hex digits: the fingerprint of the content) or by
+/// [`unique_name`] (40: and 8 more that make it its own), a dot, a known extension.
 pub fn is_name(name: &str) -> bool {
     match name.split_once('.') {
         Some((stem, ext)) => {
-            stem.len() == 32
+            (stem.len() == 32 || stem.len() == 40)
                 && stem.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                 && matches!(ext, "png" | "jpg" | "gif" | "webp" | "bmp")
         }
@@ -59,6 +60,20 @@ pub fn name_for(bytes: &[u8], mime: &str) -> Result<String, String> {
         fnv(bytes, 0x84222325cbf29ce4 ^ bytes.len() as u64),
         ext
     ))
+}
+
+/// A name no other picture has, not even one with the same content: the fingerprint and 8
+/// hex digits from the clock and a counter. A picture pasted into a note is its own file,
+/// so it can go when the note, or the reference to it, goes.
+pub fn unique_name(bytes: &[u8], mime: &str) -> Result<String, String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let base = name_for(bytes, mime)?;
+    let (stem, ext) = base.split_once('.').unwrap_or((&base, "png"));
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let salt = fnv(&n.to_le_bytes(), nanos ^ 0x9e3779b97f4a7c15) as u32;
+    Ok(format!("{}{:08x}.{}", stem, salt, ext))
 }
 
 /// Keep a picture in `dir`; returns its name.

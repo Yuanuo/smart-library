@@ -148,8 +148,8 @@
       <legend>清理</legend>
       <div class="row">
         <button onclick={clean} disabled={cleaning}>{cleaning ? "清理中…" : "清理缓存"}</button>
-        <span class="muted hint wide">清空本地文件夹（读写模式）里的回收站 .smart-library/trash，并删除没有笔记引用的图片（内部知识库也一样）。</span>
       </div>
+      <p class="muted hint">清空本地文件夹（读写模式）里的回收站 .smart-library/trash，并删除没有笔记引用的图片（内部知识库也一样）。</p>
       {#if cleanMsg}<p class="hint" style="white-space: pre-line">{cleanMsg}</p>{/if}
     </fieldset>
 

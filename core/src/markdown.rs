@@ -123,7 +123,8 @@ fn images(s: &str) -> String {
         if let Some(close) = after.find("](attach:") {
             let name_at = close + 9;
             if let Some(end) = after[name_at..].find(')') {
-                let name = &after[name_at..name_at + end];
+                // `![alt](attach:name "title")`: the title (after a space) is left out
+                let name = after[name_at..name_at + end].split(' ').next().unwrap_or("");
                 if crate::attach::is_name(name) && !after[..close].contains('[') {
                     out.push_str(&rest[..at]);
                     out.push_str(&format!("<img src=\"attach:{}\">", name));
@@ -305,6 +306,16 @@ mod tests {
         assert!(h.contains("<ul><li>一</li><li>二</li></ul>"));
         assert!(h.contains("<ol><li>甲</li></ol>"));
         assert!(h.contains("<blockquote>引用</blockquote>") && h.contains("<p>code</p>"));
+    }
+
+    #[test]
+    fn an_image_with_a_title_is_still_an_image() {
+        let n = "5c990784e96425a5f842aef07429950c.png";
+        let h = to_html(&format!("![1.00](attach:{} \"aa\")
+![](attach:{}12345678.png)", n, &n[..32]));
+        assert!(h.contains(&format!("<img src=\"attach:{}\">", n)), "{h}");
+        assert!(h.contains(&format!("attach:{}12345678.png", &n[..32])), "{h}");
+        assert!(!h.contains("![") && !h.contains("\"aa\""), "{h}");
     }
 
     #[test]

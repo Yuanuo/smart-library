@@ -634,17 +634,16 @@ impl FolderLibrary {
         crate::attach::sharded(&self.attach_dir(), name)
     }
 
-    /// A picture pasted into a note: kept once under its fingerprint name, whatever
-    /// the number of notes that show it. Returns its name.
+    /// A picture pasted into a note: a file of its own under a name made of the fingerprint of
+    /// its content and some more digits. Returns its name.
     pub fn store_picture(&self, note_rel: &str, bytes: &[u8], mime: &str) -> Result<String, String> {
         self.editable(note_rel)?;
-        let name = crate::attach::name_for(bytes, mime)?;
+        // every paste is a file of its own, so a picture goes with the note (or the reference) that has it
+        let name = crate::attach::unique_name(bytes, mime)?;
         let path = self.picture_path(&name).ok_or("图片名不对")?;
-        if !path.exists() {
-            let dir = path.parent().unwrap_or(&self.root);
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
-            std::fs::write(&path, bytes).map_err(|e| format!("{}: {}", path.display(), e))?;
-        }
+        let dir = path.parent().unwrap_or(&self.root);
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
+        std::fs::write(&path, bytes).map_err(|e| format!("{}: {}", path.display(), e))?;
         Ok(name)
     }
 
@@ -694,10 +693,22 @@ impl FolderLibrary {
     /// relative links to its pictures (`![](../.smart-library/attachments/5c/99/<名>.png)`,
     /// so other programs show them), the data of a map or board keeps `attach:<名>`.
     /// A picture that was kept the way an earlier version did is moved to the place
-    /// it has now. Nothing is deleted here: an undo in the editor may bring a picture back.
+    /// it has now. A picture the note referred to when it was saved last and no longer does
+    /// goes to the trash (an undo in the editor brings the link back, and the picture is
+    /// found there again and put back with the next save).
     pub fn prepare_save(&self, rel: &str, content: &str) -> Result<String, String> {
-        let (_, kind) = self.editable(rel)?;
-        for n in crate::attach::refs(content) {
+        let (path, kind) = self.editable(rel)?;
+        let names = crate::attach::refs(content);
+        if let Ok(old) = std::fs::read(&path) {
+            for n in crate::attach::refs(&to_editor(&decode_auto(&old))) {
+                if !names.contains(&n) {
+                    if let Some(p) = self.picture_path(&n).filter(|p| p.is_file()) {
+                        self.to_trash(&p)?;
+                    }
+                }
+            }
+        }
+        for n in names {
             let Some(dst) = self.picture_path(&n) else { continue };
             if !dst.exists() {
                 if let Some(src) = self.find_picture(&n) {
@@ -1277,18 +1288,23 @@ mod tests {
         let b = lib.create("", Some("丙"), EditKind::Markdown).unwrap();
         let png = [137u8, 80, 78, 71, 1, 2, 3];
         let n = lib.store_picture(&a, &png, "image/png").unwrap();
-        assert_eq!(lib.store_picture(&b, &png, "image/png").unwrap(), n); // one file for both notes
+        // the same picture in another note is a file of its own (the fingerprint is the same, the end differs)
+        let n_b = lib.store_picture(&b, &png, "image/png").unwrap();
+        assert!(n_b != n && n_b[..32] == n[..32] && n.len() == 44);
         let file = d.join(format!(".smart-library/attachments/{}/{}/{}", &n[..2], &n[2..4], n));
         assert!(file.is_file());
         assert_eq!(lib.find_picture(&n).unwrap(), file);
         assert!(lib.find_picture("../x.png").is_none());
         assert_eq!(lib.children("").unwrap().len(), 2); // no folders of pictures in the tree
 
-        // saving writes the relative link; leaving the picture out does not delete it (undo may bring it back)
+        // saving writes the relative link; leaving the picture out sends it to the trash, and an undo brings it back
         let text = lib.prepare_save(&a, &format!("![](attach:{})", n)).unwrap();
         assert_eq!(text, format!("![](.smart-library/attachments/{}/{}/{})", &n[..2], &n[2..4], n));
         lib.write_edit(&a, &text, None).unwrap();
         assert_eq!(lib.prepare_save(&a, "无图").unwrap(), "无图");
+        assert!(!file.exists());
+        assert!(lib.find_picture(&n).unwrap().to_string_lossy().contains("trash")); // still shown from the trash
+        assert_eq!(lib.prepare_save(&a, &format!("![](attach:{})", n)).unwrap(), text); // the undo: put back
         assert!(file.is_file());
 
         // moving the note changes its depth: the links are written again
@@ -1305,9 +1321,11 @@ mod tests {
         let a3 = lib.rename(&format!("{}/甲 乙.md", moved), "新").unwrap();
         assert!(lib.read_edit(&a3).unwrap().0.contains("../../.smart-library/attachments/"));
 
-        // deleting a note that is not the one using it leaves the picture; the last user takes it along
+        // deleting a note takes the pictures of it; those of another note stay
+        let file_b = lib.find_picture(&n_b).unwrap();
         lib.delete(&b).unwrap();
         assert!(file.is_file());
+        let _ = file_b;
         lib.delete(&a3).unwrap();
         assert!(!file.exists());
         // deleting a folder takes the pictures only it used
