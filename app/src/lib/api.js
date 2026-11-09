@@ -26,6 +26,10 @@ export const checkFilePath = (path) => invoke("check_file_path", { path });
 export const sidecarRefresh = () => invoke("sidecar_refresh");
 /** Empty the trash of read-write local folders and delete pictures no note refers to; resolves to a sentence. */
 export const clearCache = () => invoke("clear_cache");
+export const readTextFile = (path) => invoke("read_text_file", { path });
+export const dynastyTable = () => invoke("dynasty_table");
+export const dynastyText = () => invoke("dynasty_text");
+export const setDynastyText = (text) => invoke("set_dynasty_text", { text });
 /** The rules for local file names, as text. */
 export const fileNameRules = () => invoke("file_name_rules");
 /** Rejects with the reason when `name` cannot be a local file name. */

@@ -3,7 +3,7 @@
   // height. Changes apply at once and are kept.
   import { onMount } from "svelte";
   import * as api from "./api.js";
-  import { ask } from "@tauri-apps/plugin-dialog";
+  import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { settings, update, reset, FONTS } from "./settings.svelte.js";
 
   let { onclose } = $props();
@@ -22,6 +22,45 @@
       cleanMsg = String(e);
     } finally {
       cleaning = false;
+    }
+  }
+
+  // the table of periods (时域): the user's rows on top of the preset ones
+  let dyn = $state(null); // null: closed; otherwise { text, preset, msg }
+  async function openDyn() {
+    try {
+      const [user, preset] = await api.dynastyText();
+      dyn = { text: user || preset, preset, msg: user ? "" : "显示的是预设表；改动后保存即成为你的表（同名的行覆盖预设）。" };
+    } catch (e) {
+      dyn = { text: "", preset: "", msg: String(e) };
+    }
+  }
+  async function saveDyn() {
+    try {
+      const n = await api.setDynastyText(dyn.text);
+      dyn.msg = `已保存，${n} 行。已建好的索引要重建后，别称才会合并。`;
+    } catch (e) {
+      dyn.msg = String(e);
+    }
+  }
+  async function exportDyn() {
+    const path = await saveDialog({ defaultPath: "时域表.txt", filters: [{ name: "文本", extensions: ["txt"] }] });
+    if (!path) return;
+    try {
+      await api.saveBytes(path, new TextEncoder().encode(dyn.text));
+      dyn.msg = `已导出：${path}`;
+    } catch (e) {
+      dyn.msg = String(e);
+    }
+  }
+  async function importDyn() {
+    const path = await openDialog({ multiple: false, filters: [{ name: "文本", extensions: ["txt", "tsv"] }] });
+    if (!path) return;
+    try {
+      dyn.text = await api.readTextFile(path);
+      dyn.msg = "已读入，核对后点「保存」。";
+    } catch (e) {
+      dyn.msg = String(e);
     }
   }
 
@@ -123,6 +162,24 @@
     </fieldset>
 
     <fieldset>
+      <legend>时域表</legend>
+      <p class="muted hint">朝代的名称、起止年份和别称（别称在索引时并入第一列的名称，搜索页的「时域」按起年排序）。可导出、导入。</p>
+      {#if !dyn}
+        <div class="row"><button onclick={openDyn}>编辑时域表…</button></div>
+      {:else}
+        <textarea class="dyn" bind:value={dyn.text} spellcheck="false" aria-label="时域表"></textarea>
+        <div class="row">
+          <button onclick={saveDyn}>保存</button>
+          <button onclick={() => (dyn.text = dyn.preset)}>恢复预设</button>
+          <button onclick={importDyn}>导入…</button>
+          <button onclick={exportDyn}>导出…</button>
+          <button onclick={() => (dyn = null)}>收起</button>
+        </div>
+        {#if dyn.msg}<p class="muted hint">{dyn.msg}</p>{/if}
+      {/if}
+    </fieldset>
+
+    <fieldset>
       <legend>每日一句</legend>
       <label class="row">
         <input type="checkbox" checked={settings.dailyOn} onchange={(e) => update({ dailyOn: e.currentTarget.checked })} />
@@ -161,6 +218,7 @@
 </div>
 
 <style>
+  .dyn { width: 100%; height: 160px; font-family: monospace; font-size: 12px; box-sizing: border-box; }
   .backdrop {
     position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.3);
     display: flex; align-items: center; justify-content: center;

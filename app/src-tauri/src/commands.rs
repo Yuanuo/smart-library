@@ -94,6 +94,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(config_dir: PathBuf, data_dir: PathBuf) -> Self {
         let libraries = load_registry(&config_dir);
+        smart_library_core::dynasty::set_user(&std::fs::read_to_string(config_dir.join("dynasties.txt")).unwrap_or_default());
         let data_dir_for_history = data_dir.join("history.db");
         AppState {
             workspace_file: data_dir.join("workspace.json"),
@@ -1123,6 +1124,53 @@ pub async fn delete_folder_dir(lib: String, rel: String, state: State<'_, AppSta
 /// Clean up what the program leaves behind: in every read-write local folder the trash
 /// (`.smart-library/trash`) and the pictures no note refers to; in every internal library the
 /// pictures no note refers to (those from the last minute are spared). Returns a sentence about what was removed.
+#[derive(Serialize)]
+pub struct DynastyDto {
+    name: String,
+    start: i32,
+    end: i32,
+    aliases: Vec<String>,
+}
+
+/// The table of periods in use (preset and the user's rows), for ordering and the editor.
+#[tauri::command]
+pub async fn dynasty_table(state: State<'_, AppState>) -> Result<Vec<DynastyDto>, String> {
+    let user = std::fs::read_to_string(state.config_dir.join("dynasties.txt")).unwrap_or_default();
+    Ok(smart_library_core::dynasty::merged(&user)
+        .into_iter()
+        .map(|d| DynastyDto { name: d.name, start: d.start, end: d.end, aliases: d.aliases })
+        .collect())
+}
+
+/// `[the user's rows as text, the preset as text]`.
+#[tauri::command]
+pub async fn dynasty_text(state: State<'_, AppState>) -> Result<(String, String), String> {
+    let user = std::fs::read_to_string(state.config_dir.join("dynasties.txt")).unwrap_or_default();
+    Ok((user, smart_library_core::dynasty::preset_text().to_string()))
+}
+
+/// Keep the user's rows (an empty text removes them). Indexes built before show the old
+/// names until they are built again.
+#[tauri::command]
+pub async fn set_dynasty_text(text: String, state: State<'_, AppState>) -> Result<usize, String> {
+    std::fs::create_dir_all(&state.config_dir).map_err(|e| e.to_string())?;
+    let path = state.config_dir.join("dynasties.txt");
+    if text.trim().is_empty() {
+        let _ = std::fs::remove_file(&path);
+    } else {
+        std::fs::write(&path, &text).map_err(|e| e.to_string())?;
+    }
+    smart_library_core::dynasty::set_user(&text);
+    Ok(smart_library_core::dynasty::parse(&text).len())
+}
+
+/// The text of a file the user chose to import a table from.
+#[tauri::command]
+pub async fn read_text_file(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {}", path, e))?;
+    Ok(String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}').to_string())
+}
+
 #[tauri::command]
 pub async fn clear_cache(state: State<'_, AppState>) -> Result<String, String> {
     let libs: Vec<Library> = state.libraries.read().unwrap().clone();

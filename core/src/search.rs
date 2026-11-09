@@ -33,7 +33,7 @@ use tantivy::{Index, IndexReader, ReloadPolicy, TantivyDocument, Term};
 
 /// Bumped whenever the schema or the analyzer changes: an index with another
 /// version must be rebuilt.
-pub const INDEX_VERSION: u32 = 3;
+pub const INDEX_VERSION: u32 = 4;
 const META_FILE: &str = "smart-library-index.json";
 
 // ------------------------------------------------------------ tokenizers
@@ -1043,7 +1043,7 @@ mod tests {
             m.insert(dim.to_string(), v.iter().map(|s| s.to_string()).collect());
             p.set("cbeta", Some("T0262"), "", &m).unwrap();
         };
-        set(&props, "period", &["姚秦"]);
+        set(&props, "period", &["唐"]);
         SearchIndex::build(&bc, d.path(), &props.overlay("cbeta").unwrap(), |_, _| {}).unwrap();
         let idx = SearchIndex::open(d.path()).unwrap();
         let with = |idx: &SearchIndex, dim: &str, v: &str| {
@@ -1051,10 +1051,10 @@ mod tests {
             req.filters = vec![filter(dim, &[v])];
             idx.search(&req).unwrap().total_volumes
         };
-        assert_eq!(with(&idx, "/period", "姚秦"), 2);
+        assert_eq!(with(&idx, "/period", "唐"), 2);
         // change it later: only the book's volumes are written again
         let mut m = Dims::new();
-        m.insert("period".to_string(), vec!["後秦".to_string()]);
+        m.insert("period".to_string(), vec!["宋".to_string()]);
         m.insert("bulei".to_string(), vec!["新部/子部".to_string()]);
         props.set("cbeta", Some("T0262"), "", &m).unwrap();
         let only: HashSet<String> = ["T0262".to_string()].into_iter().collect();
@@ -1063,7 +1063,7 @@ mod tests {
         assert_eq!(n, 2);
         let idx = SearchIndex::open(d.path()).unwrap();
         assert_eq!(idx.search(&SearchRequest::new("")).unwrap().total_volumes, 3); // no document twice
-        assert_eq!(with(&idx, "/period", "姚秦"), 0);
+        assert_eq!(with(&idx, "/period", "唐"), 0);
         assert_eq!(with(&idx, "/bulei", "新部/子部"), 2);
         assert_eq!(with(&idx, "/bulei", "新部"), 2);
         assert_eq!(with(&idx, "/bulei", "法華部類"), 0);

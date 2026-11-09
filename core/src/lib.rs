@@ -13,6 +13,7 @@ pub mod bookcase;
 pub mod bookinfo;
 pub mod catalog;
 pub mod cite;
+pub mod dynasty;
 pub mod exchange;
 pub mod folder;
 pub mod history;

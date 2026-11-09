@@ -151,10 +151,19 @@ pub fn cbeta_facets(bc: &Bookcase, book_id: &str) -> Option<Vec<Vec<String>>> {
             facets.push(kind);
         }
         for p in &bi.periods {
-            facets.push(vec!["period".to_string(), p.clone()]);
+            facets.push(vec!["period".to_string(), crate::dynasty::canonical(p)]);
         }
         for a in &bi.authors {
             facets.push(vec!["person".to_string(), a.clone()]);
+        }
+    } else if !book.author_info.trim().is_empty() {
+        // not in the hand-made table: read the raw string (唐 慧菀述)
+        let (period, people) = crate::dynasty::parse_author(&book.author_info);
+        if let Some(p) = period {
+            facets.push(vec!["period".to_string(), p]);
+        }
+        for a in people {
+            facets.push(vec!["person".to_string(), a]);
         }
     }
     Some(facets)

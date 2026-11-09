@@ -3,7 +3,28 @@
   // of the ticked values of a dimension, and every ticked dimension, must
   // match). Long lists are cut into a window of rows, can be narrowed by
   // typing, sorted by count or by pinyin, and (by pinyin) jumped to by letter.
+  import { onMount } from "svelte";
+  import * as api from "./api.js";
   let { facet, selected = [], ontoggle, onclear } = $props();
+
+  // periods are ordered by the first year of the table of periods (names and other names)
+  const isPeriod = $derived(facet.root === "/period");
+  let years = $state(new Map());
+  onMount(() => {
+    if (!isPeriod) return;
+    api
+      .dynastyTable()
+      .then((rows) => {
+        const m = new Map();
+        for (const r of rows) {
+          m.set(r.name, r.start);
+          for (const a of r.aliases) if (!m.has(a)) m.set(a, r.start);
+        }
+        years = m;
+      })
+      .catch(() => {});
+  });
+  const yearOf = (n) => years.get(n) ?? 1e9;
 
   const ROW = 28;
   let collator;
@@ -22,9 +43,9 @@
   function initialSort() {
     try {
       const v = localStorage.getItem(`facet.sort${facet.root}`);
-      if (v === "count" || v === "pinyin") return v;
+      if (v === "count" || v === "pinyin" || (v === "time" && facet.root === "/period")) return v;
     } catch {}
-    return facet.root === "/person" ? "pinyin" : "count";
+    return facet.root === "/person" ? "pinyin" : facet.root === "/period" ? "time" : "count";
   }
   function setSort(v) {
     sort = v;
@@ -43,7 +64,13 @@
     return [...m].map(([name, count]) => ({ name, count }));
   });
 
-  const flatCmp = $derived(sort === "count" ? (a, b) => b.count - a.count || byName(a.name, b.name) : (a, b) => byName(a.name, b.name));
+  const flatCmp = $derived(
+    sort === "count"
+      ? (a, b) => b.count - a.count || byName(a.name, b.name)
+      : sort === "time"
+        ? (a, b) => yearOf(a.name) - yearOf(b.name) || byName(a.name, b.name)
+        : (a, b) => byName(a.name, b.name),
+  );
 
   const rows = $derived.by(() => {
     const q = text.trim().toLowerCase();
@@ -123,6 +150,7 @@
     <span class="seg" role="radiogroup" aria-label="排序">
       <button type="button" class:on={sort === "count"} onclick={() => setSort("count")} title="按命中数从多到少">数量</button>
       <button type="button" class:on={sort === "pinyin"} onclick={() => setSort("pinyin")} title="按拼音 A–Z">拼音</button>
+      {#if isPeriod}<button type="button" class:on={sort === "time"} onclick={() => setSort("time")} title="按时域表里的起始年份，先古后今">年代</button>{/if}
     </span>
   </div>
   <div class="sub muted">
