@@ -61,6 +61,15 @@ fn t2s_table() -> &'static [char] {
     })
 }
 
+/// Every char that has a simplified form (traditional and variant forms) with it, for showing text in simplified characters.
+pub fn simplified_pairs() -> Vec<(char, char)> {
+    (T2S_FIRST..=T2S_LAST)
+        .filter_map(char::from_u32)
+        .map(|c| (c, to_simplified(c)))
+        .filter(|(a, b)| a != b)
+        .collect()
+}
+
 /// Traditional -> simplified for one char (identity for anything else).
 #[inline]
 pub fn to_simplified(c: char) -> char {

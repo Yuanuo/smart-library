@@ -37,6 +37,8 @@
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
   import { parseSource } from "./clip.js";
+  import { settings, update } from "./settings.svelte.js";
+  import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
 
   let {
     vol,
@@ -72,6 +74,11 @@
   $effect(() => save("reader.showLb", showLb ? "1" : "0"));
   $effect(() => save("reader.noteMode", shared.noteMode));
   const noteMode = $derived(shared.noteMode);
+  const simp = $derived(settings.readerScript === "simp");
+  $effect(() => {
+    if (simp) ensureSimplifier();
+  });
+  const html = $derived(simp ? simplifyHtml(vol?.html) : vol?.html);
   const hasFn = $derived(!!vol?.html && vol.html.includes('class="fn"')); // an article with footnotes
   const coloring = $derived(noteMode === "color" || noteMode === "color-orig");
 
@@ -414,6 +421,10 @@
           <button class:on={mode === "para"} onclick={() => (mode = "para")}>段落</button>
           <button class:on={mode === "lines"} onclick={() => (mode = "lines")}>原书行</button>
         </div>
+        <div class="seg" role="group" aria-label="字形">
+          <button class:on={!simp} title="按原文的字形显示" onclick={() => update({ readerScript: "orig" })}>原文</button>
+          <button class:on={simp} title="显示成简体字（只改显示，不改文件和索引）" onclick={() => update({ readerScript: "simp" })}>简体</button>
+        </div>
         {#if mode === "para"}
           <label class="check"><input type="checkbox" bind:checked={showLb} /> 行号</label>
           {#if vol.kind === "cbeta"}
@@ -437,13 +448,13 @@
     <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))} oncontextmenu={readerMenu} onclick={docClick}
       onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para"}
-        <article class="doc notes-{noteMode}" class:show-lb={showLb}>{@html vol.html}</article>
+        <article class="doc notes-{noteMode}" class:show-lb={showLb}>{@html html}</article>
       {:else}
         <div class="lines">
           {#each vol.lines as line}
             <div class="line" data-lb={line.lb}>
               <span class="lbn">{line.lb}</span>
-              <span class="txt">{#each line.parts as p}{#if p.hl}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}</span>
+              <span class="txt">{#each line.parts as p}{#if p.hl}<mark>{simp ? simplifyText(p.t) : p.t}</mark>{:else}{simp ? simplifyText(p.t) : p.t}{/if}{/each}</span>
             </div>
           {/each}
         </div>

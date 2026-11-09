@@ -90,6 +90,7 @@ fn main() {
             commands::clear_cache,
             commands::dynasty_table,
             commands::read_text_file,
+            commands::t2s_pairs,
             commands::dynasty_text,
             commands::set_dynasty_text,
             commands::delete_folder_dir,

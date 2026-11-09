@@ -1166,6 +1166,12 @@ pub async fn set_dynasty_text(text: String, state: State<'_, AppState>) -> Resul
     Ok(smart_library_core::dynasty::parse(&text).len())
 }
 
+/// Traditional -> simplified pairs, as one string `繁简繁简…` (for showing text in simplified characters).
+#[tauri::command]
+pub async fn t2s_pairs() -> String {
+    smart_library_core::analyzer::simplified_pairs().into_iter().flat_map(|(a, b)| [a, b]).collect()
+}
+
 /// The text of a file the user chose to import a table from.
 #[tauri::command]
 pub async fn read_text_file(path: String) -> Result<String, String> {
