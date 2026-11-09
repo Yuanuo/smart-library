@@ -286,6 +286,11 @@
     }
   }
 
+  /** A new note (Ctrl+N): where the add menu puts it. */
+  export function newNote(kind = "md") {
+    addNoteHere(kind);
+  }
+
   /** From the add menu: below the selected note, else in the library of the last one. */
   function addNoteHere(kind) {
     const sel = selected && isEditable(selected.lib) ? selected : null;

@@ -441,7 +441,7 @@
           {/if}
         {/if}
         {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
-        {#if onaction}<button class="locate" onclick={() => onaction({ type: "tag", vol })} title="为本卷（本篇）加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
+        {#if onaction}<button class="locate" onclick={() => onaction({ type: "tag", vol })} title="为本卷（本篇）加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
       </div>
     </header>
     <!-- svelte-ignore a11y_mouse_events_have_key_events -->

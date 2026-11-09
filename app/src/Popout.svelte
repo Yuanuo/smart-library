@@ -46,7 +46,13 @@
       if (!docking) emit("popout-closed", { tab: start.tab });
     });
     // shortcuts are carried out by the main window
-    const offKeys = installShortcuts((type) => emit("popout-shortcut", { type, text: readerSelection().slice(0, 200) }));
+    const offKeys = installShortcuts((type) => {
+      // about this window's document: its tags and bookmark; closing closes this window
+      if (type === "tag" || type === "bookmark") return forward({ type, lb: lastLb, vol: { lib: start.lib, path: start.path, book_id: start.bookId, title, author: "" } });
+      if (type === "close") return win.close();
+      if (type === "props" || type === "locate" || type === "next-tab" || type === "prev-tab") return;
+      emit("popout-shortcut", { type, text: readerSelection().slice(0, 200) });
+    });
     return () => {
       un1.then((f) => f());
       un2.then((f) => f());

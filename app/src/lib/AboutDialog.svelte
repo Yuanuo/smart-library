@@ -10,7 +10,8 @@
     <p class="ver">版本 {info?.version ?? ""}（年.月.日）</p>
     <p>本地知识库桌面软件：快速、精确地阅读和检索《大藏经》等大量文本，也可以链接本机文件夹、写自己的笔记。</p>
     <p class="muted">数据位置：<span class="path">{info?.data_dir ?? ""}</span></p>
-    <p class="muted keys">快捷键：双击 Shift / Ctrl+G 标题快搜　Ctrl+H 全文搜索　Ctrl+E 最近打开　Ctrl+B 收藏与标签　Ctrl+, 设置</p>
+    <p class="muted keys">快捷键：双击 Shift / Ctrl+G 标题快搜　Ctrl+H 全文搜索　Ctrl+E 最近打开　Ctrl+B 收藏与标签　Ctrl+, 设置　Ctrl+J 今日日记</p>
+    <p class="muted keys">当前文档：Ctrl+T 标签　Ctrl+D 书签　Ctrl+P 属性　Ctrl+L 在目录树中定位　Ctrl+N 新建笔记　Ctrl+W 关闭标签　Ctrl+Tab / Ctrl+Shift+Tab 切换标签　Ctrl+Shift+S 简体 / 原文　F2 重命名　Ctrl+S 保存</p>
     <div class="actions"><button class="primary" onclick={onclose}>关闭</button></div>
   </div>
 </div>

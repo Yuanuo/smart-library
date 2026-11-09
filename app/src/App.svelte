@@ -96,6 +96,29 @@
     else if (type === "marks") openMarks();
     else if (type === "settings") settingsBox = true;
     else if (type === "diary") libPanel?.openDiary();
+    else if (type === "new") libPanel?.newNote();
+    else if (type === "close") workspace.closeActive();
+    else if (type === "next-tab") workspace.cycleTab(1);
+    else if (type === "prev-tab") workspace.cycleTab(-1);
+    else if (type === "script") updateSettings({ readerScript: settings.readerScript === "simp" ? "orig" : "simp" });
+    else docShortcut(type);
+  }
+
+  /** The shortcuts about the document of the active tab. */
+  function docShortcut(type) {
+    const c = workspace.ws.current;
+    if (!c) {
+      notice = "先打开一篇文档。";
+      return;
+    }
+    const vol = { lib: c.lib, book_id: c.bookId ?? null, path: c.path, title: c.title, author: c.author ?? "" };
+    if (type === "tag") markAction({ type: "tag", vol });
+    else if (type === "bookmark") markAction({ type: "bookmark", vol, lb: workspace.currentLine() });
+    else if (type === "locate") locate({ lib: c.lib, bookId: c.bookId ?? null, path: c.path });
+    else if (type === "props") {
+      const l = libraries.find((x) => x.id === c.lib);
+      if (l) propsDlg = { lib: l.id, libTitle: l.title, bookId: l.kind === "cbeta" ? c.bookId : null, path: l.kind === "cbeta" ? "" : c.path, title: c.title };
+    }
   }
 
   let quickQuery = $state(null); // text to start the quick search with

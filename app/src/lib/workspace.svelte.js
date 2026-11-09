@@ -304,7 +304,7 @@ function tabMenu({ panel, group }) {
   const isReader = !isSearch && panel.id !== "search";
   const where = group.api.location.type;
   const items = [
-    { label: "关闭", action: () => panel.api.close() },
+    { label: "关闭（Ctrl+W）", action: () => panel.api.close() },
     {
       label: "关闭其他标签",
       action: () => group.panels.filter((x) => x !== panel).forEach((x) => x.api.close()),
@@ -539,6 +539,25 @@ export async function openVolume({ lib, bookId = null, path = null, lb = null, q
  * Add text to a note that is being edited in a tab: it goes to the editor
  * (saving the editor later must not lose it). False when it is not edited.
  */
+/** Close the tab being read. */
+export function closeActive() {
+  dv?.activePanel?.api.close();
+}
+
+/** The next (1) or previous (-1) tab, round the list. */
+export function cycleTab(delta) {
+  const list = dv?.panels ?? [];
+  if (list.length < 2) return;
+  const i = list.indexOf(dv.activePanel);
+  list[(i + delta + list.length) % list.length].api.setActive();
+}
+
+/** The line the active tab was last read at (null: none known). */
+export function currentLine() {
+  const c = ws.current;
+  return (c && progress[`${c.lib}|${c.path}`]?.lb) || null;
+}
+
 export function appendIfEditing(lib, id, text) {
   const st = states[`${lib}|${id}`];
   if (!st?.editing) return false;
