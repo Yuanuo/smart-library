@@ -451,7 +451,7 @@
     // in a read-write folder the nodes can also be dropped on a folder of the tree to move them
     const move =
       node && isNotes(l.id)
-        ? { check: (row) => noteVerdict(l, node, key, row), onDrop: (row) => noteDrop(l, node, key, row) }
+        ? { reorder: true, check: (row, zone) => noteVerdict(l, node, key, row, zone), onDrop: (row, zone) => noteDrop(l, node, key, row, zone) }
         : node && isRwFolder(l.id) && (node.path == null || isEditableName(node.rel))
           ? { check: (row) => moveVerdict(l, node, key, row), onDrop: (row) => dropMove(l, node, key, row) }
           : null;
@@ -471,35 +471,52 @@
 
   /** The notes (index path + node) that dropping on `row` would really move: the dragged one or the picked ones,
    * not what is inside another moved note, not what is already a child of the target, not a note into itself. */
-  function noteMoveList(l, node, key, row) {
-    const tkey = row.dataset.key ?? ""; // "" : the root of the library (top level)
+  function noteMoveList(l, node, key, row, zone = "in") {
+    const rowKey = row.dataset.key ?? ""; // "" : the root of the library (top level)
     const group = multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key) ? pickedNodes(l) : [{ key, node }];
     const keys = group.map((x) => x.key);
-    return {
-      tkey,
-      trel: row.dataset.rel || null,
-      todo: group.filter(
-        (x) => !keys.some((o) => o !== x.key && x.key.startsWith(o + "/")) && parentKey(x.key) !== tkey && tkey !== x.key && !tkey.startsWith(x.key + "/"),
-      ),
-    };
+    const alone = (x) => !keys.some((o) => o !== x.key && x.key.startsWith(o + "/"));
+    // before / after a row: the notes join the level of that row; into: they become its last children
+    const beside = zone !== "in" && rowKey !== "";
+    const tkey = beside ? parentKey(rowKey) : rowKey;
+    const trel = beside ? (tkey ? (nodeAt(l.id, tkey)?.rel ?? null) : null) : row.dataset.rel || null;
+    const todo = group.filter((x) => alone(x) && tkey !== x.key && !tkey.startsWith(x.key + "/") && (beside ? rowKey !== x.key && !rowKey.startsWith(x.key + "/") : parentKey(x.key) !== tkey));
+    let index = 1e9;
+    if (beside) {
+      const moved = new Set(todo.map((x) => x.node.rel));
+      const siblings = (tkey ? nodeAt(l.id, tkey)?.children : nodes[l.id]) ?? [];
+      const rest = siblings.filter((n) => !moved.has(n.rel));
+      const at = rest.findIndex((n) => n.rel === row.dataset.rel);
+      index = at < 0 ? 1e9 : at + (zone === "after" ? 1 : 0);
+      // nothing moves when the notes stay where they are in the same order
+      if (todo.length && todo.every((x) => parentKey(x.key) === tkey)) {
+        const order = siblings.map((n) => n.rel);
+        const want = [...rest.map((n) => n.rel)];
+        want.splice(index, 0, ...todo.map((x) => x.node.rel));
+        if (want.every((r, i) => r === order[i])) return { tkey, trel, todo: [], index };
+      }
+    }
+    return { tkey, trel, todo, index };
   }
 
-  /** While dragging a note: it can go into another note or to the top (the library's row). */
-  function noteVerdict(l, node, key, row) {
+  /** While dragging a note: into another note, to the top (the library's row), or before / after a row. */
+  function noteVerdict(l, node, key, row, zone) {
     const rowLib = row.closest("[data-lib]")?.dataset.lib;
     if (!rowLib) return null;
     if (rowLib !== l.id) return "no";
-    return noteMoveList(l, node, key, row).todo.length ? "ok" : "no";
+    return noteMoveList(l, node, key, row, zone).todo.length ? "ok" : "no";
   }
 
-  /** Dropped: the notes become the last children of the target (or top level notes). */
-  async function noteDrop(l, node, key, row) {
-    const { trel, todo } = noteMoveList(l, node, key, row);
+  /** Dropped: the notes go where the verdict said. */
+  async function noteDrop(l, node, key, row, zone) {
+    const { trel, todo, index } = noteMoveList(l, node, key, row, zone);
     if (!todo.length) return;
     const fails = [];
+    let at = index;
     for (const x of todo) {
       try {
-        await api.moveNote(l.id, x.node.rel, trel, 1e9);
+        await api.moveNote(l.id, x.node.rel, trel, at);
+        at += at >= 1e9 ? 0 : 1;
       } catch (e) {
         fails.push(`${x.node.title}：${e}`);
       }

@@ -22,10 +22,12 @@ export function startScopeDrag(e, getItems, moveTo = null) {
   let moveOver = null;
 
   let moveNo = false;
-  const setMove = (el, no = false) => {
-    if (el === moveOver && no === moveNo) return;
-    moveOver?.classList.remove("move-over", "move-no");
-    if (el) el.classList.add(no ? "move-no" : "move-over");
+  let moveZone = "in";
+  const setMove = (el, no = false, zone = "in") => {
+    if (el === moveOver && no === moveNo && zone === moveZone) return;
+    moveOver?.classList.remove("move-over", "move-no", "move-before", "move-after");
+    if (el) el.classList.add(no ? "move-no" : zone === "before" ? "move-before" : zone === "after" ? "move-after" : "move-over");
+    moveZone = zone;
     document.body.classList.toggle("move-blocked", !!el && no); // the pointer says it cannot be dropped here
     moveOver = el;
     moveNo = no;
@@ -54,12 +56,20 @@ export function startScopeDrag(e, getItems, moveTo = null) {
     setOver(under?.closest("[data-scope-drop]") ?? null);
     // a row of the tree to drop on (moving the dragged nodes into that folder)
     const row = moveTo ? under?.closest("[data-rel]") : null;
-    const verdict = row ? moveTo.check(row) : null; // "ok", "no" or null (not a place to drop on)
-    setMove(verdict ? row : null, verdict === "no");
+    // `reorder`: the top / bottom quarter of a row means before / after it, the middle means into it
+    let zone = "in";
+    if (row && moveTo.reorder && row.dataset.key) {
+      const r = row.getBoundingClientRect();
+      const f = (ev.clientY - r.top) / Math.max(1, r.height);
+      zone = f < 0.25 ? "before" : f > 0.75 ? "after" : "in";
+    }
+    const verdict = row ? moveTo.check(row, zone) : null; // "ok", "no" or null (not a place to drop on)
+    setMove(verdict ? row : null, verdict === "no", zone);
   };
   const up = () => {
     const target = over;
     const into = moveNo ? null : moveOver;
+    const zone = moveZone;
     const carried = items;
     const was = dragging;
     stop();
@@ -72,7 +82,7 @@ export function startScopeDrag(e, getItems, moveTo = null) {
       window.addEventListener("click", swallow, { capture: true, once: true });
       setTimeout(() => window.removeEventListener("click", swallow, true), 0);
       if (target) target.dispatchEvent(new CustomEvent("scopedrop", { detail: carried }));
-      else if (into) moveTo.onDrop(into);
+      else if (into) moveTo.onDrop(into, zone);
     }
   };
   const key = (ev) => ev.key === "Escape" && stop();
