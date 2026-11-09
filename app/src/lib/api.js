@@ -22,6 +22,8 @@ export const folderDirs = (lib) => invoke("folder_dirs", { lib });
 export const deleteFolderDir = (lib, rel) => invoke("delete_folder_dir", { lib, rel });
 /** Rejects with the reason when a path of folders (`a/b`) has a bad name in it. */
 export const checkFilePath = (path) => invoke("check_file_path", { path });
+/** Read again the file that travels with a read-write folder when it was changed outside; resolves to true when it was. */
+export const sidecarRefresh = () => invoke("sidecar_refresh");
 /** The rules for local file names, as text. */
 export const fileNameRules = () => invoke("file_name_rules");
 /** Rejects with the reason when `name` cannot be a local file name. */

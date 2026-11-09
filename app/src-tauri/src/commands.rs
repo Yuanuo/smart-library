@@ -79,6 +79,8 @@ pub struct AppState {
     /// (folder paths / note ids), per library; the index gets them just
     /// before a full-text search (`flush_dirty`)
     dirty: Mutex<HashMap<String, HashSet<String>>>,
+    /// the stamp of each read-write folder's `meta.json` as we last wrote or read it
+    sidecar_seen: Mutex<HashMap<String, String>>,
     indexes: RwLock<HashMap<String, Arc<SearchIndex>>>,
     /// title quick search, per library (built on first use)
     titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
@@ -104,6 +106,7 @@ impl AppState {
             notes: RwLock::new(HashMap::new()),
             stamps: Mutex::new(HashMap::new()),
             dirty: Mutex::new(HashMap::new()),
+            sidecar_seen: Mutex::new(HashMap::new()),
             indexes: RwLock::new(HashMap::new()),
             titles: RwLock::new(HashMap::new()),
             building: Mutex::new(HashSet::new()),
@@ -236,7 +239,17 @@ impl AppState {
     fn sidecar_write(&self, l: &Library) -> Result<bool, String> {
         let props = self.props.all(&l.id)?.into_iter().filter(|(b, _, _)| b.is_empty()).map(|(_, p, d)| (p, d)).collect();
         let marks = self.marks.export_lib(&l.id)?;
-        smart_library_core::sidecar::write(Path::new(&l.source), &smart_library_core::sidecar::Sidecar { props, marks })
+        let root = Path::new(&l.source);
+        let wrote = smart_library_core::sidecar::write(root, &smart_library_core::sidecar::Sidecar { props, marks })?;
+        self.note_sidecar(l);
+        Ok(wrote)
+    }
+
+    /// The file is as we have it now.
+    fn note_sidecar(&self, l: &Library) {
+        if let Some(s) = smart_library_core::sidecar::stamp(Path::new(&l.source)) {
+            self.sidecar_seen.lock().unwrap().insert(l.id.clone(), s);
+        }
     }
 
     /// The file of a read-write folder replaces what we keep for the library
@@ -246,7 +259,9 @@ impl AppState {
         let props: Vec<(String, String, Dims)> = sc.props.into_iter().map(|(p, d)| (String::new(), p, d)).collect();
         self.props.replace_lib(&l.id, &props)?;
         let marks: Vec<_> = sc.marks.into_iter().map(|mut m| { m.lib_title = l.title.clone(); m }).collect();
-        self.marks.replace_lib(&l.id, &marks)
+        self.marks.replace_lib(&l.id, &marks)?;
+        self.note_sidecar(l);
+        Ok(())
     }
 
     /// A folder library has just become read-write: what its file has and what
@@ -1074,6 +1089,23 @@ pub async fn delete_folder_dir(lib: String, rel: String, state: State<'_, AppSta
     }
     state.sidecar_sync();
     Ok(before.len())
+}
+
+/// The file that travels with a read-write folder was changed outside (git pull, a
+/// synchronised copy): read it again. True when something was read.
+#[tauri::command]
+pub async fn sidecar_refresh(state: State<'_, AppState>) -> Result<bool, String> {
+    let libs: Vec<Library> = state.libraries.read().unwrap().iter().filter(|l| l.kind == "folder" && l.writable).cloned().collect();
+    let mut changed = false;
+    for l in libs {
+        let now = smart_library_core::sidecar::stamp(Path::new(&l.source));
+        let seen = state.sidecar_seen.lock().unwrap().get(&l.id).cloned();
+        if now.is_some() && now != seen {
+            state.sidecar_load(&l)?;
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 /// Every folder of a read-write folder library (paths), to pick where to move something.
@@ -3445,6 +3477,7 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
         // a whole library comes as one note named like it; picked nodes come as they are
         let wrap = pkg.manifest["scope"] == "library";
         let dir = state.attachments_dir(&lib_id);
+        let ids_before: HashSet<i64> = store.rows()?.into_iter().map(|r| r.id).collect();
         let notes = smart_library_core::exchange::import_into(
             &store,
             &mut pkg,
@@ -3455,6 +3488,9 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
                 let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
             },
         )?;
+        // the new notes join the index (when the library has one) just before the next full-text search
+        let added: Vec<String> = store.rows()?.into_iter().map(|r| r.id).filter(|i| !ids_before.contains(i)).map(|i| i.to_string()).collect();
+        state.mark_dirty(&lib_id, added);
         return Ok(ImportDone { status: status_of(&state), title: state.library(&lib_id)?.title, notes });
     }
     let base = pkg.title();

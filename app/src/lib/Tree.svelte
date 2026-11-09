@@ -27,7 +27,7 @@
     {@const hasChildren = node.children.length > 0 || !!node.lazy}
     {@const open = !!expanded[key]}
     <li>
-      <div class="row" class:current={current === key} class:active={active === key} class:marked={marked === key} class:picked={picked?.has(key)} data-key={key} style="padding-left: {depth * 14 + 4}px"
+      <div class="row" class:current={current === key} class:active={active === key} class:marked={marked === key} class:picked={picked?.has(key)} data-key={key} data-rel={node.rel ?? undefined} data-isdir={node.rel != null && node.path == null ? "1" : undefined} style="padding-left: {depth * 14 + 4}px"
         role="presentation" oncontextmenu={(e) => oncontext?.(node, key, e)} onpointerdown={(e) => ondrag?.(node, key, e)}>
         {#if hasChildren}
           <button class="twisty" onclick={() => ontoggle(key)} aria-label={open ? "收起" : "展开"}>

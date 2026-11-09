@@ -95,6 +95,13 @@ pub fn parse(text: &str, lib: &str) -> Result<Sidecar, String> {
     Ok(sc)
 }
 
+/// Changes whenever the file does (modification time and size); `None` without a file.
+pub fn stamp(root: &Path) -> Option<String> {
+    let m = std::fs::metadata(path_of(root)).ok()?;
+    let t = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some(format!("{}:{}", t, m.len()))
+}
+
 /// The file of a folder, if there is one.
 pub fn read(root: &Path, lib: &str) -> Result<Option<Sidecar>, String> {
     match std::fs::read_to_string(path_of(root)) {

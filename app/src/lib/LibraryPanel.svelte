@@ -444,12 +444,144 @@
 
   /** Dragging a node (or the picked nodes, when it is one of them) into a search range list. */
   function dragNode(l, node, key, e) {
-    startScopeDrag(e, () => {
-      if (!node) return [scopeOf(l, null)];
-      const list = multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key) ? pickedNodes(l) : [{ key, node }];
-      return list.map((x) => scopeOf(l, x.node, x.key));
-    });
+    // in a read-write folder the nodes can also be dropped on a folder of the tree to move them
+    const move =
+      node && isRwFolder(l.id) && (node.path == null || isEditableName(node.rel))
+        ? { ok: (row) => !!row.closest(`[data-lib="${l.id}"]`), onDrop: (row) => dropMove(l, node, key, row) }
+        : null;
+    startScopeDrag(
+      e,
+      () => {
+        if (!node) return [scopeOf(l, null)];
+        const list = multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key) ? pickedNodes(l) : [{ key, node }];
+        return list.map((x) => scopeOf(l, x.node, x.key));
+      },
+      move,
+    );
   }
+
+  /** The dragged node (or the picked ones) was dropped on a row: move it into that folder (a file's row: its folder). */
+  async function dropMove(l, node, key, row) {
+    const rel = row.dataset.rel ?? "";
+    const target = row.dataset.isdir === "1" ? rel : rel.split("/").slice(0, -1).join("/");
+    const group = multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key) ? pickedNodes(l).map((x) => x.node) : [node];
+    const parentOf = (r) => r.split("/").slice(0, -1).join("/");
+    const rels = group.filter((n) => n.rel != null && (n.path == null || isEditableName(n.rel))).map((n) => n.rel);
+    const todo = rels.filter(
+      (r) => !rels.some((o) => o !== r && r.startsWith(o + "/")) && parentOf(r) !== target && target !== r && !target.startsWith(r + "/"),
+    );
+    if (!todo.length) return;
+    const fails = [];
+    for (const r of todo) {
+      try {
+        await relocate(l.id, { rel: r }, () => api.moveFolderNode(l.id, r, target));
+      } catch (e) {
+        fails.push(`${r.split("/").pop()}：${e}`);
+      }
+    }
+    clearPicked();
+    await reconcile(l.id, null);
+    // show where they went
+    const trail = target ? await findFolderNode(l.id, target) : [];
+    if (trail) {
+      let k = "";
+      for (const i of trail) {
+        k += `/${i}`;
+        (expanded[l.id] ??= {})[k] = true;
+      }
+      await reconcile(l.id, null);
+    }
+    errors[l.id] = fails.join("\n");
+  }
+
+  // ---- keeping the tree of a local folder in step with the disk (like an IDE): when the window gets the
+  // focus again, and whenever a folder is opened, what is shown is compared with the folder; nodes that are
+  // gone leave, new ones join, and nothing that is open is closed.
+  const reconciling = {};
+
+  /** Compare one loaded level of a folder library (`key` null: the top) with the disk, then the open levels below it. */
+  async function reconcile(lib, key) {
+    const parent = key ? nodeAt(lib, key) : null;
+    if (key && (!parent || parent.lazy)) return; // not loaded: it is read when it is opened
+    const old = key ? parent.children : (nodes[lib] ?? []);
+    let fresh;
+    try {
+      fresh = await api.folderChildren(lib, parent ? parent.rel : "");
+    } catch {
+      return; // the folder is gone or not readable: leave what is shown
+    }
+    const oldRels = old.map((n) => n.rel);
+    const newRels = fresh.map((n) => n.rel);
+    const same = oldRels.length === newRels.length && oldRels.every((r, i) => r === newRels[i]);
+    if (!same) {
+      remapKeys(lib, key ?? "", oldRels, newRels);
+      const byRel = new Map(old.map((n) => [n.rel, n]));
+      const merged = fresh.map((n) => {
+        const o = byRel.get(n.rel);
+        if (!o) return n;
+        o.title = n.title; // a loaded folder keeps what was read below it
+        return o;
+      });
+      if (key) parent.children = merged;
+      else nodes[lib] = merged;
+    }
+    const level = key ?? "";
+    const list = key ? nodeAt(lib, key).children : nodes[lib];
+    for (let i = 0; i < list.length; i++) {
+      const k = `${level}/${i}`;
+      if (list[i].path == null && !list[i].lazy && expanded[lib]?.[k]) await reconcile(lib, k);
+    }
+  }
+
+  /** The nodes of a level changed places: what is kept by index path (open folders, the marked node) follows. */
+  function remapKeys(lib, level, oldRels, newRels) {
+    const prefix = `${level}/`;
+    const map = (k) => {
+      if (!k.startsWith(prefix)) return k;
+      const rest = k.slice(prefix.length);
+      const slash = rest.indexOf("/");
+      const j = newRels.indexOf(oldRels[Number(slash < 0 ? rest : rest.slice(0, slash))]);
+      return j < 0 ? null : prefix + j + (slash < 0 ? "" : rest.slice(slash));
+    };
+    const next = {};
+    for (const k of Object.keys(expanded[lib] ?? {})) {
+      const m = map(k);
+      if (m) next[m] = true;
+    }
+    expanded[lib] = next;
+    for (const ref of [current, selected]) {
+      if (ref?.lib === lib) ref.key = map(ref.key) ?? "";
+    }
+    if (current?.lib === lib && !current.key) current = null;
+    if (selected?.lib === lib && !selected.key) selected = null;
+    if (multi.lib === lib) clearPicked();
+  }
+
+  async function syncFolders() {
+    for (const l of libraries) {
+      if (l.kind !== "folder" || !open[l.id] || !nodes[l.id] || reconciling[l.id]) continue;
+      reconciling[l.id] = true;
+      try {
+        await reconcile(l.id, null);
+      } finally {
+        reconciling[l.id] = false;
+      }
+    }
+    api.sidecarRefresh().catch(() => {}); // the file that travels with a folder may have been changed by git
+  }
+
+  $effect(() => {
+    let t = null;
+    const onFocus = () => {
+      clearTimeout(t);
+      t = setTimeout(syncFolders, 300);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      clearTimeout(t);
+    };
+  });
 
   /** The titles from the library down to a node (`key` is its index path). */
   function titleChain(l, key) {
@@ -662,8 +794,11 @@
           await refresh(lib, key);
         } catch {}
       }
-      await loadChildren(lib, nodeAt(lib, key));
+      const n = nodeAt(lib, key);
+      await loadChildren(lib, n);
       ex[key] = true;
+      // a folder that was read before is compared with the disk again
+      if (libraries.find((l) => l.id === lib)?.kind === "folder" && n && n.path == null) reconcile(lib, key);
     }
   }
 
@@ -861,7 +996,7 @@
   {#each libraries as l (l.id)}
     {@const b = badge(l)}
     <div class="lib" data-lib={l.id}>
-      <div class="root" class:marked={menuMark?.lib === l.id && menuMark.key === null} role="treeitem" aria-expanded={!!open[l.id]} aria-selected="false" tabindex="0"
+      <div class="root" class:marked={menuMark?.lib === l.id && menuMark.key === null} data-rel="" data-isdir="1" role="treeitem" aria-expanded={!!open[l.id]} aria-selected="false" tabindex="0"
         oncontextmenu={(e) => libMenu(e, l)}
         onpointerdown={(e) => dragNode(l, null, null, e)}
         onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggle(l))}>

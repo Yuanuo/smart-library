@@ -12,14 +12,21 @@ let ghost = null;
  * moved a few pixels (a plain click stays a click); `getItems()` then gives
  * the items to carry: [{ lib, label, books, paths, rels, whole }].
  */
-export function startScopeDrag(e, getItems) {
+export function startScopeDrag(e, getItems, moveTo = null) {
   if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
   const x0 = e.clientX;
   const y0 = e.clientY;
   let items = null;
   let dragging = false;
   let over = null;
+  let moveOver = null;
 
+  const setMove = (el) => {
+    if (el === moveOver) return;
+    moveOver?.classList.remove("move-over");
+    el?.classList.add("move-over");
+    moveOver = el;
+  };
   const setOver = (el) => {
     if (el === over) return;
     over?.classList.remove("scope-over");
@@ -40,10 +47,15 @@ export function startScopeDrag(e, getItems) {
     }
     ghost.style.left = `${ev.clientX + 12}px`;
     ghost.style.top = `${ev.clientY + 12}px`;
-    setOver(document.elementFromPoint(ev.clientX, ev.clientY)?.closest("[data-scope-drop]") ?? null);
+    const under = document.elementFromPoint(ev.clientX, ev.clientY);
+    setOver(under?.closest("[data-scope-drop]") ?? null);
+    // a row of the tree to drop on (moving the dragged nodes into that folder)
+    const row = moveTo ? under?.closest("[data-rel]") : null;
+    setMove(row && moveTo.ok(row) ? row : null);
   };
   const up = () => {
     const target = over;
+    const into = moveOver;
     const carried = items;
     const was = dragging;
     stop();
@@ -56,6 +68,7 @@ export function startScopeDrag(e, getItems) {
       window.addEventListener("click", swallow, { capture: true, once: true });
       setTimeout(() => window.removeEventListener("click", swallow, true), 0);
       if (target) target.dispatchEvent(new CustomEvent("scopedrop", { detail: carried }));
+      else if (into) moveTo.onDrop(into);
     }
   };
   const key = (ev) => ev.key === "Escape" && stop();
@@ -65,6 +78,7 @@ export function startScopeDrag(e, getItems) {
     window.removeEventListener("pointercancel", stop);
     window.removeEventListener("keydown", key);
     setOver(null);
+    setMove(null);
     ghost?.remove();
     ghost = null;
     document.body.classList.remove("scope-dragging");
