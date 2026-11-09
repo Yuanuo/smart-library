@@ -571,6 +571,11 @@
 
   async function openQuick(item) {
     try {
+      if (item.kind === "folder") {
+        // a folder is not read: show it in the tree
+        if (!(await libPanel?.reveal({ lib: item.lib, path: item.path }))) error = "目录树里找不到这个文件夹";
+        return;
+      }
       // a citation's quote is highlighted as a phrase
       await workspace.openVolume({
         lib: item.lib,

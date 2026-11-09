@@ -29,6 +29,8 @@
   let suggestions = $state({});
   let tags = $state([]);
   let tags0 = "";
+  let aliases = $state([]);
+  let aliases0 = "";
   let loading = $state(true);
   let busy = $state(false);
   let error = $state("");
@@ -45,6 +47,8 @@
       }
       tags = r.tags;
       tags0 = norm(r.tags);
+      aliases = [...(r.aliases ?? [])];
+      aliases0 = (r.aliases ?? []).join(""); // the order is kept
     } catch (e) {
       error = String(e);
     } finally {
@@ -76,7 +80,7 @@
         if (r.own && norm(r.values) !== norm(derived[d] ?? [])) dims[d] = r.values;
       }
       if (norm(tags) !== tags0) await api.nodeTagsSet(lib, bookId, path, title, tags.join(","));
-      const res = await api.propsSet(lib, bookId, path, dims);
+      const res = await api.propsSet(lib, bookId, path, dims, aliases.join("") !== aliases0 ? aliases : null);
       onsaved?.(res);
       onclose();
     } catch (e) {
@@ -116,6 +120,14 @@
         <p class="muted hint">
           这些值用在全文搜索的过滤里（改动后会更新索引），不会改动原文件。对文件夹或笔记设置时，它下面的内容都适用；下层另有设置时以下层为准。
         </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>别名</legend>
+        <div class="row">
+          <div class="field"><ChipInput bind:values={aliases} placeholder="这个节点的其他名字，可多个，如 法华经、莲华经" /></div>
+        </div>
+        <p class="muted hint">标题快搜里输入别名也能找到这个节点（不会继承给下面的内容，也不是搜索过滤）。</p>
       </fieldset>
 
       <fieldset>

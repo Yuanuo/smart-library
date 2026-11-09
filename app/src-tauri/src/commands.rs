@@ -206,17 +206,19 @@ impl AppState {
         if let Some(t) = self.titles.read().unwrap().get(&lib.id) {
             return Ok(t.clone());
         }
-        let t = Arc::new(if lib.kind == "notes" {
+        let mut built = if lib.kind == "notes" {
             TitleIndex::notes(&self.notes(lib)?.rows()?, &lib.title)
         } else if lib.kind == "folder" {
             let f = self.folder(lib)?;
             let name = Path::new(&lib.source).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            TitleIndex::folder(&f.files(), &name)
+            TitleIndex::folder(&f.files(), &f.dirs(), &name)
         } else if lib.kind == "html" {
             TitleIndex::html(&*self.html_tree(lib)?)
         } else {
             TitleIndex::cbeta(&*self.bookcase_of(lib)?, &lib.tree)?
-        });
+        };
+        built.add_aliases(&self.props.all_aliases(&lib.id).unwrap_or_default());
+        let t = Arc::new(built);
         self.titles.write().unwrap().insert(lib.id.clone(), t.clone());
         Ok(t)
     }
@@ -2921,6 +2923,8 @@ pub struct PropsDto {
     /// what the data itself gives (before the user's properties)
     derived: Dims,
     tags: Vec<String>,
+    /// other names (found by the title quick search)
+    aliases: Vec<String>,
 }
 
 /// The values the data gives a node, as facets say.
@@ -2967,6 +2971,7 @@ pub async fn props_get(lib: String, book_id: Option<String>, path: String, state
         own: state.props.get(&lib, book_id.as_deref(), &path)?,
         derived: derived_dims(&state, &l, book_id.as_deref(), &path).unwrap_or_default(),
         tags: state.marks.node_tags(&lib, book_id.as_deref(), &path).unwrap_or_default(),
+        aliases: state.props.aliases(&lib, book_id.as_deref(), &path).unwrap_or_default(),
     })
 }
 
@@ -2984,11 +2989,16 @@ pub async fn props_set(
     book_id: Option<String>,
     path: String,
     dims: Dims,
+    aliases: Option<Vec<String>>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<PropsSaved, String> {
     let l = state.library(&lib)?;
     state.props.set(&lib, book_id.as_deref(), &path, &dims)?;
+    if let Some(names) = aliases {
+        state.props.set_aliases(&lib, book_id.as_deref(), &path, &names)?;
+        state.titles.write().unwrap().remove(&lib); // the quick search reads them again
+    }
     state.sidecar_sync();
     let dir = state.index_dir(&lib);
     if !dir.join("smart-library-index.json").exists() {

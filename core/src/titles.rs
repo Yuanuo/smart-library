@@ -29,6 +29,8 @@ use std::collections::{HashMap, HashSet};
 pub enum TitleKind {
     Book,
     Article,
+    /// a folder of a local folder library
+    Folder,
     Chapter,
     Juan,
 }
@@ -38,6 +40,7 @@ impl TitleKind {
         match self {
             TitleKind::Book => "book",
             TitleKind::Article => "article",
+            TitleKind::Folder => "folder",
             TitleKind::Chapter => "chapter",
             TitleKind::Juan => "juan",
         }
@@ -46,7 +49,7 @@ impl TitleKind {
     /// Order inside the same match quality: whole documents first.
     fn order(self) -> u8 {
         match self {
-            TitleKind::Book | TitleKind::Article => 0,
+            TitleKind::Book | TitleKind::Article | TitleKind::Folder => 0,
             TitleKind::Chapter => 1,
             TitleKind::Juan => 2,
         }
@@ -84,6 +87,8 @@ pub struct TitleIndex {
     names: Vec<String>,
     /// more words of the entry alone, folded (usually empty)
     extras: Vec<String>,
+    /// other names the user gave an entry (folded): entry index -> names
+    aliases: HashMap<usize, Vec<String>>,
 }
 
 /// Quality of a match, smaller is better; ties keep the tree order.
@@ -131,6 +136,29 @@ impl TitleIndex {
             groups: Vec::new(),
             names: Vec::new(),
             extras: Vec::new(),
+            aliases: HashMap::new(),
+        }
+    }
+
+    /// Give entries the other names the user set on their nodes: `(book id, path)` -> names
+    /// (a CBETA book: `(id, "")`; an article, file, folder or note: `("", path)`). A name counts
+    /// like the title itself.
+    pub fn add_aliases(&mut self, map: &HashMap<(String, String), Vec<String>>) {
+        if map.is_empty() {
+            return;
+        }
+        for (i, e) in self.entries.iter().enumerate() {
+            let k = match (e.kind, &e.path) {
+                (TitleKind::Book, None) => (self.groups[e.group as usize].book_id.clone().unwrap_or_default(), String::new()),
+                (TitleKind::Article | TitleKind::Folder, Some(p)) => (String::new(), p.clone()),
+                _ => continue,
+            };
+            if let Some(names) = map.get(&k) {
+                let keys: Vec<String> = names.iter().map(|n| key(n)).filter(|n| !n.is_empty()).collect();
+                if !keys.is_empty() {
+                    self.aliases.insert(i, keys);
+                }
+            }
         }
     }
 
@@ -342,9 +370,24 @@ impl TitleIndex {
     }
 
     /// The files of a folder library, grouped by their folder.
-    pub fn folder(files: &[crate::folder::FolderFile], root_name: &str) -> TitleIndex {
+    pub fn folder(files: &[crate::folder::FolderFile], dirs: &[String], root_name: &str) -> TitleIndex {
         let mut t = TitleIndex::new();
         let mut group_of: HashMap<String, u32> = HashMap::new();
+        // the folders themselves come first, each under the folder that holds it
+        for d in dirs {
+            let (up, name) = d.rsplit_once('/').unwrap_or(("", d));
+            let g = match group_of.get(up) {
+                Some(&g) => g,
+                None => {
+                    let line = if up.is_empty() { root_name.to_string() } else { up.replace('/', " / ") };
+                    let parts: Vec<&str> = up.split('/').filter(|s| !s.is_empty()).collect();
+                    let g = t.add_group(line, "", None, &parts);
+                    group_of.insert(up.to_string(), g);
+                    g
+                }
+            };
+            t.push(TitleEntry { kind: TitleKind::Folder, title: name.to_string(), group: g, path: Some(d.clone()), lb: None }, name, &[]);
+        }
         for f in files {
             let dir = f.rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("").to_string();
             let g = match group_of.get(&dir) {
@@ -386,7 +429,22 @@ impl TitleIndex {
                 in_name = false;
                 self.extras[i].contains(w.as_str()) || self.groups[e.group as usize].key.contains(w.as_str())
             });
+            // another name of the entry may match better than the title
+            let by_alias = self.aliases.get(&i).and_then(|list| {
+                list.iter()
+                    .filter(|a| words.iter().all(|w| a.contains(w.as_str())))
+                    .map(|a| Rank {
+                        tier: (!a.starts_with(words[0].as_str())) as u8,
+                        kind: e.kind.order(),
+                        inexact: (*a != joined) as u8,
+                        len: a.chars().count() as u32,
+                    })
+                    .min()
+            });
             if !all {
+                if let Some(r) = by_alias {
+                    out.push((r, i));
+                }
                 continue;
             }
             let tier = if !in_name {
@@ -396,15 +454,13 @@ impl TitleIndex {
             } else {
                 1
             };
-            out.push((
-                Rank {
-                    tier,
-                    kind: e.kind.order(),
-                    inexact: (*name != joined) as u8,
-                    len: if tier < 2 { name.chars().count() as u32 } else { 0 },
-                },
-                i,
-            ));
+            let own = Rank {
+                tier,
+                kind: e.kind.order(),
+                inexact: (*name != joined) as u8,
+                len: if tier < 2 { name.chars().count() as u32 } else { 0 },
+            };
+            out.push((by_alias.map_or(own, |a| a.min(own)), i));
         }
         out
     }
@@ -532,5 +588,23 @@ mod tests {
         assert_eq!(top[0].path.as_deref(), Some("a/ZB/z/1.html"));
         assert_eq!(t.context(top[0]), "著作 / 悲惨世界");
         assert_eq!(t.top("悲惨世界", 5).0, 2);
+        // another name of an article finds it, and counts like the title
+        let mut t = t;
+        assert_eq!(t.top("少年", 5).0, 0);
+        let mut map = HashMap::new();
+        map.insert((String::new(), "a/ZB/z/1.html".to_string()), vec!["少年时".to_string()]);
+        t.add_aliases(&map);
+        let (n, top) = t.top("少年", 5);
+        assert_eq!((n, top[0].path.as_deref()), (1, Some("a/ZB/z/1.html")));
+    }
+
+    #[test]
+    fn lists_the_folders_of_a_folder_library() {
+        let files = vec![crate::folder::FolderFile { rel: "甲/乙/文.md".into(), name: "文.md".into(), size: 1 }];
+        let dirs = vec!["甲".to_string(), "甲/乙".to_string()];
+        let t = TitleIndex::folder(&files, &dirs, "库");
+        let (n, top) = t.top("乙", 5);
+        assert_eq!(n, 2); // the folder, and the file inside it (its folder is context)
+        assert_eq!((top[0].kind, top[0].path.as_deref(), t.context(top[0])), (TitleKind::Folder, Some("甲/乙"), "甲"));
     }
 }

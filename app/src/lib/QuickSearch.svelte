@@ -26,12 +26,13 @@
   // `scope`: { lib, label, within } when started from a node of the tree
   let { libraries, onopen, onclose, scope = null, initialQuery = null } = $props();
 
-  const KIND = { book: "经", chapter: "目", juan: "卷", article: "文", cite: "引", cite_missing: "引" };
+  const KIND = { book: "经", chapter: "目", juan: "卷", article: "文", folder: "夹", cite: "引", cite_missing: "引" };
   const KIND_TITLE = {
     book: "经",
     chapter: "目次（序、品、分、经…）",
     juan: "卷",
     article: "文章",
+    folder: "文件夹（在目录树中定位）",
     cite: "CBETA 引用",
     cite_missing: "CBETA 引用",
   };
@@ -274,7 +275,7 @@
     flex: none; width: 20px; height: 20px; border-radius: 4px; display: grid; place-items: center;
     font-size: 12px; color: var(--paper); background: var(--muted);
   }
-  .k-book, .k-article, .k-cite { background: var(--accent); }
+  .k-book, .k-article, .k-folder, .k-cite { background: var(--accent); }
   .go { color: var(--accent); font-weight: 600; margin-right: 4px; }
   .missing { color: var(--hl); }
   .main { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

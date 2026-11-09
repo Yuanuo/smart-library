@@ -124,6 +124,14 @@ impl Props {
                  pos INTEGER NOT NULL,
                  value TEXT NOT NULL,
                  PRIMARY KEY (lib, book_id, path, dim, pos)
+             );
+             CREATE TABLE IF NOT EXISTS node_alias (
+                 lib TEXT NOT NULL,
+                 book_id TEXT NOT NULL DEFAULT '',
+                 path TEXT NOT NULL DEFAULT '',
+                 pos INTEGER NOT NULL,
+                 alias TEXT NOT NULL,
+                 PRIMARY KEY (lib, book_id, path, pos)
              );",
         )
         .map_err(err)?;
@@ -168,6 +176,45 @@ impl Props {
         tx.commit().map_err(err)
     }
 
+    /// The other names of a node (not inherited, not a facet: they are found by the title quick search).
+    pub fn aliases(&self, lib: &str, book_id: Option<&str>, path: &str) -> Result<Vec<String>, String> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT alias FROM node_alias WHERE lib = ?1 AND book_id = ?2 AND path = ?3 ORDER BY pos").map_err(err)?;
+        let rows = st.query_map(params![lib, book_id.unwrap_or(""), path], |r| r.get::<_, String>(0)).map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
+    /// Replace the other names of a node (trimmed, no empty ones, no duplicates).
+    pub fn set_aliases(&self, lib: &str, book_id: Option<&str>, path: &str, names: &[String]) -> Result<(), String> {
+        let mut list: Vec<&str> = Vec::new();
+        for n in names.iter().map(|n| n.trim()).filter(|n| !n.is_empty()) {
+            if !list.contains(&n) {
+                list.push(n);
+            }
+        }
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
+        let book = book_id.unwrap_or("");
+        tx.execute("DELETE FROM node_alias WHERE lib = ?1 AND book_id = ?2 AND path = ?3", params![lib, book, path]).map_err(err)?;
+        for (i, n) in list.iter().enumerate() {
+            tx.execute("INSERT INTO node_alias VALUES (?1, ?2, ?3, ?4, ?5)", params![lib, book, path, i as i64, n]).map_err(err)?;
+        }
+        tx.commit().map_err(err)
+    }
+
+    /// Every node of a library that has other names: (book id, path) -> names.
+    pub fn all_aliases(&self, lib: &str) -> Result<std::collections::HashMap<(String, String), Vec<String>>, String> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT book_id, path, alias FROM node_alias WHERE lib = ?1 ORDER BY book_id, path, pos").map_err(err)?;
+        let rows = st.query_map(params![lib], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))).map_err(err)?;
+        let mut map = std::collections::HashMap::new();
+        for r in rows {
+            let (b, p, a) = r.map_err(err)?;
+            map.entry((b, p)).or_insert_with(Vec::new).push(a);
+        }
+        Ok(map)
+    }
+
     /// Every node of a library that has properties: (book id, path, dims).
     pub fn all(&self, lib: &str) -> Result<Vec<(String, String, Dims)>, String> {
         let c = self.conn.lock().unwrap();
@@ -193,6 +240,7 @@ impl Props {
         let c = self.conn.lock().unwrap();
         for p in paths {
             c.execute("DELETE FROM node_props WHERE lib = ?1 AND book_id = '' AND path = ?2", params![lib, p]).map_err(err)?;
+            c.execute("DELETE FROM node_alias WHERE lib = ?1 AND book_id = '' AND path = ?2", params![lib, p]).map_err(err)?;
         }
         Ok(())
     }
@@ -203,6 +251,12 @@ impl Props {
         let c = self.conn.lock().unwrap();
         c.execute(
             "UPDATE OR REPLACE node_props SET path = ?3 || substr(path, ?4)
+             WHERE lib = ?1 AND book_id = '' AND (path = ?2 OR path LIKE ?5 ESCAPE '\\')",
+            params![lib, from, to, from.chars().count() as i64 + 1, like_below(from)],
+        )
+        .map_err(err)?;
+        c.execute(
+            "UPDATE OR REPLACE node_alias SET path = ?3 || substr(path, ?4)
              WHERE lib = ?1 AND book_id = '' AND (path = ?2 OR path LIKE ?5 ESCAPE '\\')",
             params![lib, from, to, from.chars().count() as i64 + 1, like_below(from)],
         )
@@ -279,6 +333,18 @@ mod tests {
 
     fn dims(list: &[(&str, &[&str])]) -> Dims {
         list.iter().map(|(d, v)| (d.to_string(), v.iter().map(|s| s.to_string()).collect())).collect()
+    }
+
+    #[test]
+    fn aliases_are_kept_per_node_and_follow_a_move() {
+        let p = Props::memory().unwrap();
+        p.set_aliases("f", None, "a/b.md", &[" 乙 ".into(), "".into(), "乙".into(), "丙".into()]).unwrap();
+        assert_eq!(p.aliases("f", None, "a/b.md").unwrap(), vec!["乙", "丙"]);
+        p.rekey("f", "a", "c").unwrap();
+        assert_eq!(p.aliases("f", None, "c/b.md").unwrap(), vec!["乙", "丙"]);
+        assert_eq!(p.all_aliases("f").unwrap().len(), 1);
+        p.remove_nodes("f", &["c/b.md".to_string()]).unwrap();
+        assert!(p.aliases("f", None, "c/b.md").unwrap().is_empty());
     }
 
     #[test]

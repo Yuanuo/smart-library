@@ -58,7 +58,7 @@ export const markTags = () => invoke("mark_tags");
 export const nodeTagsGet = (lib, bookId, path) => invoke("node_tags_get", { lib, bookId, path });
 export const nodeTagsSet = (lib, bookId, path, docTitle, tags) => invoke("node_tags_set", { lib, bookId, path, docTitle, tags });
 export const propsGet = (lib, bookId, path) => invoke("props_get", { lib, bookId, path });
-export const propsSet = (lib, bookId, path, dims) => invoke("props_set", { lib, bookId, path, dims });
+export const propsSet = (lib, bookId, path, dims, aliases = null) => invoke("props_set", { lib, bookId, path, dims, aliases });
 export const appInfo = () => invoke("app_info");
 export const listFonts = () => invoke("list_fonts");
 export const findInPage = () => invoke("find_in_page");
