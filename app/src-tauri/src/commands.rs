@@ -19,7 +19,7 @@ use smart_library_core::library::{classify_trees, HtmlTree, TreeGroup};
 use smart_library_core::nav::NavNode;
 use smart_library_core::notes::{self, NotesStore};
 use smart_library_core::render::RenderOptions;
-use smart_library_core::search::{facet_label, locate, snippets, MatchMode, SearchIndex, SearchRequest, Within};
+use smart_library_core::search::{facet_label, locate, snippets, Filter, MatchMode, SearchIndex, SearchRequest, Within};
 use smart_library_core::source::{DirSource, Source, ZipSource};
 use smart_library_core::cite::{parse_citations, parse_command};
 use smart_library_core::titles::{query_words, TitleIndex};
@@ -1511,6 +1511,9 @@ pub struct WithinDto {
     #[serde(default)]
     rels: Vec<String>,
     rel: Option<String>,
+    /// the whole library (a library root in the search range list)
+    #[serde(default)]
+    whole: bool,
 }
 
 fn resolve_within(state: &AppState, w: &WithinDto) -> Result<Within, String> {
@@ -1599,41 +1602,71 @@ pub struct SearchDto {
     hits: Vec<HitDto>,
 }
 
+/// One facet filter of the search page: one of the `values` of a dimension.
+#[derive(Deserialize, Clone)]
+pub struct FilterDto {
+    root: String,
+    values: Vec<String>,
+}
+
+/// Full-text search. `query` may be empty (everything, to browse); `filters`
+/// are the ticked facet values (one of the values of every dimension);
+/// `withins` the search range list: the union of its items, per library.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn search(
     query: String,
     phrase: bool,
     lib: Option<String>,
-    scope: Option<String>,
-    drill: Option<String>,
+    filters: Option<Vec<FilterDto>>,
+    withins: Option<Vec<WithinDto>>,
     page: Option<usize>,
     limit: Option<usize>,
-    within: Option<WithinDto>,
     state: State<'_, AppState>,
 ) -> Result<SearchDto, String> {
     let start = std::time::Instant::now();
     let mut req = SearchRequest::new(&query);
     req.mode = if phrase { MatchMode::Phrase } else { MatchMode::Loose };
     req.limit = limit.unwrap_or(20).clamp(1, 100);
+    req.filters = filters
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| !f.values.is_empty())
+        .map(|f| Filter { root: f.root, values: f.values })
+        .collect();
 
     let mut libs = state.libraries.read().unwrap().clone();
-    // searching from a node: that library only
-    let lib = match &within {
-        Some(w) => {
-            libs.retain(|l| l.id == w.lib);
-            req.within = Some(resolve_within(&state, w)?);
-            Some(w.lib.clone())
+    // a search range: those libraries only; per library the union of its
+    // items (`None`: the whole library)
+    let mut ranges: HashMap<String, Option<Within>> = HashMap::new();
+    for w in withins.unwrap_or_default() {
+        let item = if w.whole { None } else { Some(resolve_within(&state, &w)?) };
+        match (ranges.get_mut(&w.lib), item) {
+            (Some(None), _) => {}
+            (Some(slot), None) => *slot = None,
+            (Some(Some(have)), Some(more)) => {
+                have.books.extend(more.books);
+                have.paths.extend(more.paths);
+            }
+            (None, item) => {
+                ranges.insert(w.lib.clone(), item);
+            }
         }
-        None => lib,
-    };
+    }
+    if !ranges.is_empty() {
+        libs.retain(|l| ranges.contains_key(&l.id));
+    }
+    // counts per library ignore the filters (those belong to one library)
     let mut counts = Vec::new();
     for l in &libs {
         if let Some(idx) = state.index(&l.id) {
+            let mut r = SearchRequest::new(&query);
+            r.mode = req.mode;
+            r.within = ranges.get(&l.id).cloned().flatten();
             counts.push(LibCountDto {
                 id: l.id.clone(),
                 title: l.title.clone(),
-                count: idx.count(&req)?,
+                count: idx.count(&r)?,
             });
         }
     }
@@ -1645,24 +1678,27 @@ pub async fn search(
         .filter(|id| counts.iter().any(|c| &c.id == id))
         .or_else(|| counts.iter().find(|c| c.count > 0).map(|c| c.id.clone()))
         .unwrap_or_else(|| counts[0].id.clone());
+    req.within = ranges.get(&selected).cloned().flatten();
     let l = state.library(&selected)?;
     let idx = state.index(&selected).ok_or("索引不可用")?;
     let html = if l.kind == "html" { Some(state.html_tree(&l)?) } else { None };
 
     let page = page.unwrap_or(1).max(1);
     req.offset = (page - 1) * req.limit;
-    req.scope = scope.filter(|s| !s.is_empty());
-    req.facet_drill = drill.filter(|s| !s.is_empty()).into_iter().collect();
     let r = idx.search(&req)?;
+    let browsing = req.query.trim().is_empty();
 
     let mut hits = Vec::new();
     for h in &r.hits {
-        let text = if is_article(&l) {
+        let text = if browsing {
+            Err(String::new())
+        } else if is_article(&l) {
             article_of(&state, &l, &h.path, None).map(|a| a.text)
         } else {
             state.bookcase_of(&l)?.volume_text(&h.path)
         };
         let (occurrences, sn) = match text {
+            _ if browsing => (0, Vec::new()), // no words to show
             Ok(vt) => {
                 let occ = locate(&vt, &req.query, req.mode);
                 let sn = snippets(&vt, &occ, 24, 3)

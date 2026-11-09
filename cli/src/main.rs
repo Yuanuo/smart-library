@@ -23,8 +23,8 @@ fn usage() {
   smart-library libraries <bookcase.zip|dir>
   smart-library titles <bookcase.zip|dir> [keywords ...] [--tree bulei|longzang|...] [--limit N]
   smart-library index <bookcase.zip|dir> [--index DIR] [--tree <id of an HTML tree, e.g. longzang>]
-  smart-library search <bookcase.zip|dir> <query> [--phrase] [--scope bulei/阿含部類] [--page N] [--limit N]
-                       [--facet bulei/阿含部類] [--index DIR]
+  smart-library search <bookcase.zip|dir> <query> [--phrase] [--scope bulei/阿含部類 ...] [--page N] [--limit N]
+                       [--index DIR]     (an empty query lists everything)
 
   The index directory defaults to app_data/repos/cbeta/index (it can be deleted and rebuilt).
   search: loose match by default (every bigram in the same volume; a space separates
@@ -117,8 +117,17 @@ fn main() {
                 req.limit = flag_value(&args, "--limit").and_then(|v| v.parse().ok()).unwrap_or(10);
                 let page: usize = flag_value(&args, "--page").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
                 req.offset = (page - 1) * req.limit;
-                req.scope = flag_value(&args, "--scope").map(|s| s.to_string());
-                req.facet_drill = flag_value(&args, "--facet").map(|s| vec![s.to_string()]).unwrap_or_default();
+                // --scope bulei/阿含部類 (can be repeated: one of them, per dimension)
+                for (i, a) in args.iter().enumerate() {
+                    if a == "--scope" || a == "--facet" {
+                        if let Some(f) = args.get(i + 1).and_then(|v| smart_library_core::search::parse_filter(v)) {
+                            match req.filters.iter_mut().find(|x| x.root == f.root) {
+                                Some(x) => x.values.extend(f.values),
+                                None => req.filters.push(f),
+                            }
+                        }
+                    }
+                }
                 cmd_search(&bc, Path::new(dir), &req);
             }
             None => {

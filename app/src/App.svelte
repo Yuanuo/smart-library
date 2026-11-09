@@ -1,5 +1,5 @@
 <script>
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import * as api from "./lib/api.js";
   import * as workspace from "./lib/workspace.svelte.js";
@@ -75,11 +75,6 @@
     return () => evs.forEach((e) => window.removeEventListener(e, touch));
   });
 
-  let query = $state("");
-  let phrase = $state(false);
-  let searching = $state(false);
-  let lastSearch = null; // query of the shown results, used for highlights
-
   let progress = $state({}); // lib id -> { done, total }
   let binding = $state(null); // null, or { path } for the bind dialog
   let quick = $state(false); // title quick search popup
@@ -106,19 +101,9 @@
   function readerAction(a) {
     const v = a.vol ?? {};
     if (a.type === "search" || a.type === "phrase" || a.type === "book") {
-      query = a.text;
-      searchBox = false;
-      phrase = a.type === "phrase";
-      rs.scope = "";
-      rs.drill = "";
-      if (a.type === "book") {
-        rs.within = { lib: v.lib, books: v.book_id ? [v.book_id] : [], paths: v.book_id ? [] : [v.path], rel: null };
-        rs.rangeLabel = v.title;
-      } else {
-        rs.within = null;
-        rs.rangeLabel = "";
-      }
-      runSearch(1, v.lib && a.type === "book" ? v.lib : null);
+      // a new search page; "search in this book" limits it to the book
+      const scopes = a.type === "book" ? [{ lib: v.lib, label: v.title, books: v.book_id ? [v.book_id] : [], paths: v.book_id ? [] : [v.path], rels: [], whole: false }] : [];
+      workspace.openSearch({ query: a.text, phrase: a.type === "phrase", scopes, autorun: true });
     } else if (a.type === "note") {
       clipDlg = { text: a.text, vol: v, lb: a.lb };
     } else if (a.type === "diary") {
@@ -132,7 +117,6 @@
     } else if (a.type === "quick") {
       quickScope = null;
       quickQuery = a.text;
-      searchBox = false;
       recentBox = false;
       quick = true;
     } else {
@@ -309,18 +293,27 @@
     }
   }
 
-  let searchBox = $state(false); // full-text search popup
-  let searchScope = $state(null); // { lib, label, within }: search from a node of the tree
   let quickScope = $state(null);
+  /** A node of the tree as an item of a search range. */
+  function rangeItem({ lib, label, within }) {
+    return {
+      lib,
+      label,
+      books: within?.books ?? [],
+      paths: within?.paths ?? [],
+      rels: within?.rels ?? (within?.rel ? [within.rel] : []),
+      whole: !within,
+    };
+  }
+  /** From the tree: title quick search, a new full-text search page, or add to the range of the page used last. */
   function searchFrom(kind, scope) {
     if (kind === "title") {
       quickScope = scope;
       openQuickSearch(scope);
-    } else openSearch(scope);
+    } else if (kind === "scope-add") workspace.addSearchScopes([rangeItem(scope)]);
+    else openSearch(scope);
   }
-  let searchInput = $state();
   function openMarks() {
-    searchBox = false;
     quick = false;
     recentBox = false;
     marksBox = true;
@@ -328,7 +321,6 @@
   let settingsBox = $state(false);
   let recentBox = $state(false); // reading history popup
   function openRecent() {
-    searchBox = false;
     quick = false;
     recentBox = true;
   }
@@ -341,20 +333,15 @@
     }
   }
   function openQuickSearch(scope = null) {
-    searchBox = false;
     recentBox = false;
     quickScope = scope && scope.lib ? scope : null; // a click passes the event
     quickQuery = null;
     quick = true;
   }
+  /** A full-text search page (a click on the button passes the event). */
   function openSearch(scope = null) {
-    searchScope = scope && scope.lib ? scope : null;
     quick = false;
-    searchBox = true;
-    tick().then(() => {
-      searchInput?.focus();
-      searchInput?.select();
-    });
+    workspace.openSearch({ scopes: scope && scope.lib ? [rangeItem(scope)] : [] });
   }
 
   // window title: the document being read (with its author), its library,
@@ -448,51 +435,8 @@
       })
       .join("　");
   });
-  const searchable = $derived(libraries.some((l) => l.index_ready));
 
-  // props of the search results tab (mounted by the workspace)
-  const rs = $state({
-    result: null,
-    within: null, // a tree node the search is limited to
-    rangeLabel: "",
-    scope: "",
-    drill: "",
-    onfacet: (root, name) => {
-      rs.scope = `${root}/${name}`.replace(/^\//, "");
-      rs.drill = "";
-      runSearch(1, rs.result?.lib);
-    },
-    ondrill: (d) => {
-      rs.drill = d.replace(/^\//, "");
-      runSearch(rs.result?.page ?? 1, rs.result?.lib);
-    },
-    onclearscope: () => {
-      rs.scope = "";
-      rs.drill = "";
-      rs.within = null;
-      rs.rangeLabel = "";
-      runSearch(1, rs.result?.lib);
-    },
-    onlib: (id) => {
-      // facets differ between libraries: start again unscoped
-      rs.scope = "";
-      rs.drill = "";
-      rs.within = null;
-      rs.rangeLabel = "";
-      runSearch(1, id);
-    },
-    onhit: (h, lb) =>
-      workspace.openVolume({
-        lib: h.lib,
-        bookId: h.book_id,
-        path: h.path,
-        lb,
-        query: lastSearch?.query ?? null,
-        phrase: lastSearch?.phrase ?? false,
-      }),
-    onpage: (p) => runSearch(p, rs.result?.lib),
-  });
-
+  // the full-text search pages are tabs of the workspace (lib/SearchPage.svelte)
   onMount(() => {
     refresh().then(() => st?.libraries.length && api.prepareTitles().catch(() => {}));
     const offKeys = installShortcuts((type) => shortcut(type, readerSelection()));
@@ -541,7 +485,7 @@
   $effect(() => {
     if (wsEl && st && !wsReady) {
       wsReady = true;
-      workspace.init(wsEl, { resultsProps: rs, libraries: st.libraries, onlocate: locate, onaction: readerAction, oncopypath: copyTabPath, ontreepath: (d) => libPanel?.treePath(d) }).catch((e) => (error = String(e)));
+      workspace.init(wsEl, { libraries: st.libraries, onlocate: locate, onaction: readerAction, oncopypath: copyTabPath, ontreepath: (d) => libPanel?.treePath(d) }).catch((e) => (error = String(e)));
     }
   });
 
@@ -620,41 +564,6 @@
       error = String(e);
     }
   }
-
-  async function runSearch(page = 1, lib = null) {
-    if (!query.trim()) return;
-    searching = true;
-    try {
-      rs.result = await api.search({
-        query,
-        phrase,
-        lib,
-        scope: rs.scope || null,
-        drill: rs.drill || null,
-        within: rs.within,
-        page,
-        limit: 20,
-      });
-      lastSearch = { query, phrase };
-      workspace.showResults();
-      error = "";
-    } catch (e) {
-      error = String(e);
-    } finally {
-      searching = false;
-    }
-  }
-
-  function submit(e) {
-    e.preventDefault();
-    if (!query.trim()) return;
-    searchBox = false;
-    rs.scope = "";
-    rs.drill = "";
-    rs.within = searchScope?.within ?? null;
-    rs.rangeLabel = searchScope?.label ?? "";
-    runSearch(1, searchScope?.lib ?? null);
-  }
 </script>
 
 <div class="app">
@@ -711,22 +620,6 @@
     <main class="content" bind:this={wsEl}></main>
   </div>
 </div>
-
-{#if searchBox}
-  <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && (searchBox = false)}>
-    <form class="searchbox" onsubmit={submit} onkeydown={(e) => e.key === "Escape" && (searchBox = false)}>
-      {#if searchScope}
-        <span class="chip" title="从目录树的这个节点搜索">范围：<b>{searchScope.label}</b>
-          <button type="button" class="link" onclick={() => (searchScope = null)} aria-label="取消范围">×</button></span>
-      {/if}
-      <input type="search" placeholder="全文搜索：全部知识库（空格分隔关键词）" bind:value={query} bind:this={searchInput} aria-label="全文搜索" />
-      <label class="check"><input type="checkbox" bind:checked={phrase} /> 精确短语</label>
-      <button class="primary" disabled={searching || !searchable || !query.trim()} title={searchable ? "" : "请先为知识库建立索引"}>
-        {searching ? "搜索中…" : "搜索"}
-      </button>
-    </form>
-  </div>
-{/if}
 
 {#if toast}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -808,18 +701,6 @@
     border-top: 1px solid var(--line); font-size: 12px; min-height: 32px;
   }
   .building { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .backdrop {
-    position: fixed; inset: 0; z-index: 900; background: rgba(0, 0, 0, 0.2);
-    display: flex; align-items: flex-start; justify-content: center; padding-top: 14vh;
-  }
-  .searchbox {
-    display: flex; gap: 10px; align-items: center; width: min(720px, calc(100vw - 32px)); padding: 12px 16px;
-    background: var(--paper); border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
-  }
-  .chip { white-space: nowrap; font-size: 13px; color: var(--muted); }
-  .chip b { color: var(--accent); }
-  .searchbox input[type="search"] { flex: 1; min-width: 160px; font-size: 16px; }
-  .check { display: flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 14px; }
   .toast {
     position: fixed; right: 16px; bottom: 16px; z-index: 1000; max-width: min(520px, calc(100vw - 32px));
     display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 8px;

@@ -12,6 +12,7 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import { fullPath } from "./paths.js";
   import { monthPath, localDate } from "./diary.js";
+  import { startScopeDrag } from "./scopeDrag.js";
 
   let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
 
@@ -93,6 +94,7 @@
         "separator",
         { label: "从所选节点搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label, within: withinMany(l, list) }) },
         { label: "从所选节点搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinMany(l, list) }) },
+        { label: "加入搜索范围", action: () => list.forEach(({ key, node }) => onsearchfrom("scope-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) })) },
         "separator",
         {
           label: "导出所选…",
@@ -296,6 +298,22 @@
     };
   }
 
+  /** A node (or a whole library) as an item of a search range list. */
+  function scopeOf(l, node, key) {
+    if (!node) return { lib: l.id, label: l.title, books: [], paths: [], rels: [], whole: true };
+    const w = withinOf(l, node);
+    return { lib: l.id, label: titleChain(l, key).join(" › "), books: w.books, paths: w.paths, rels: w.rel ? [w.rel] : [], whole: false };
+  }
+
+  /** Dragging a node (or the picked nodes, when it is one of them) into a search range list. */
+  function dragNode(l, node, key, e) {
+    startScopeDrag(e, () => {
+      if (!node) return [scopeOf(l, null)];
+      const list = multi.lib === l.id && multi.keys.size > 1 && multi.keys.has(key) ? pickedNodes(l) : [{ key, node }];
+      return list.map((x) => scopeOf(l, x.node, x.key));
+    });
+  }
+
   /** The titles from the library down to a node (`key` is its index path). */
   function titleChain(l, key) {
     let list = nodes[l.id];
@@ -365,6 +383,7 @@
       [
         { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label, within: withinOf(l, node) }) },
         { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinOf(l, node) }) },
+        { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) }) },
       ],
       node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node) }] : [],
       [
@@ -616,6 +635,7 @@
         [
           { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: l.title, within: null }) },
           { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
+          { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { lib: l.id, label: l.title, within: null }), disabled: !l.index_ready },
           { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
         ],
         [
@@ -675,6 +695,7 @@
     <div class="lib" data-lib={l.id}>
       <div class="root" class:marked={menuMark?.lib === l.id && menuMark.key === null} role="treeitem" aria-expanded={!!open[l.id]} aria-selected="false" tabindex="0"
         oncontextmenu={(e) => libMenu(e, l)}
+        onpointerdown={(e) => dragNode(l, null, null, e)}
         onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggle(l))}>
         <button class="twisty" onclick={() => toggle(l)} tabindex="-1" aria-hidden="true">
           <Icon name={open[l.id] ? "chevron-down" : "chevron-right"} size={14} />
@@ -704,6 +725,7 @@
             onclear={clearPicked}
             ontoggle={(key) => toggleNode(l.id, key)}
             oncontext={(node, key, e) => nodeMenu(e, l, node, key)}
+            ondrag={(node, key, e) => dragNode(l, node, key, e)}
             onopen={(node, key) => {
               selected = { lib: l.id, key };
               onopen(l, node);

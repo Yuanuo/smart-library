@@ -6,7 +6,7 @@
   import Tree from "./Tree.svelte";
   import Icon from "./Icon.svelte";
 
-  let { nodes, onopen, ontoggle, oncontext = null, expanded, depth = 0, prefix = "", current = null, active = null, marked = null, seen = null, picked = null, onselect = null, onclear = null } = $props();
+  let { nodes, onopen, ontoggle, oncontext = null, ondrag = null, expanded, depth = 0, prefix = "", current = null, active = null, marked = null, seen = null, picked = null, onselect = null, onclear = null } = $props();
   const wasOpened = (n) => !!seen && ((n.book_id && seen.books.has(n.book_id)) || (n.path && seen.paths.has(n.path)));
 
   /** Ctrl / Shift + click picks nodes (several can be picked); a plain click opens. */
@@ -28,7 +28,7 @@
     {@const open = !!expanded[key]}
     <li>
       <div class="row" class:current={current === key} class:active={active === key} class:marked={marked === key} class:picked={picked?.has(key)} data-key={key} style="padding-left: {depth * 14 + 4}px"
-        role="presentation" oncontextmenu={(e) => oncontext?.(node, key, e)}>
+        role="presentation" oncontextmenu={(e) => oncontext?.(node, key, e)} onpointerdown={(e) => ondrag?.(node, key, e)}>
         {#if hasChildren}
           <button class="twisty" onclick={() => ontoggle(key)} aria-label={open ? "收起" : "展开"}>
             <Icon name={open ? "chevron-down" : "chevron-right"} size={14} />
@@ -48,7 +48,7 @@
         {/if}
       </div>
       {#if hasChildren && open}
-        <Tree nodes={node.children} {onopen} {ontoggle} {oncontext} {expanded} depth={depth + 1} prefix={key} {current} {active} {marked} {seen} {picked} {onselect} {onclear} />
+        <Tree nodes={node.children} {onopen} {ontoggle} {oncontext} {ondrag} {expanded} depth={depth + 1} prefix={key} {current} {active} {marked} {seen} {picked} {onselect} {onclear} />
       {/if}
     </li>
   {/each}

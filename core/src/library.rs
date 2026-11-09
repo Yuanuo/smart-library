@@ -105,6 +105,8 @@ pub fn cbeta_docs(bc: &Bookcase) -> (usize, impl Iterator<Item = Result<IndexDoc
     }
     let info = bookinfo();
     let total = jobs.len();
+    // facets carry the canon's name (大正新脩大藏經), not its code (T)
+    let canon_names: HashMap<String, String> = bc.tripitakas.iter().map(|t| (t.id.clone(), t.name.clone())).collect();
     let iter = jobs.into_iter().filter_map(move |(book_id, vol)| {
         let book = bc.book(&book_id)?;
         let vt = match bc.volume_text(&vol.path) {
@@ -112,7 +114,7 @@ pub fn cbeta_docs(bc: &Bookcase) -> (usize, impl Iterator<Item = Result<IndexDoc
             Err(e) => return Some(Err(e)),
         };
         let mut facets = vec![
-            vec!["canon".to_string(), book.canon.clone()],
+            vec!["canon".to_string(), canon_names.get(&book.canon).filter(|n| !n.is_empty()).unwrap_or(&book.canon).clone()],
             vec!["book".to_string(), book_id.clone()],
         ];
         let mut bulei = vec!["bulei".to_string()];

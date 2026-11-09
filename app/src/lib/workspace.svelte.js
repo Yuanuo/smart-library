@@ -17,7 +17,8 @@ import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api.js";
 import ReaderPanel from "./ReaderPanel.svelte";
-import Results from "./Results.svelte";
+import SearchPage from "./SearchPage.svelte";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // 2: tabs are `<library>|<path>` (version 1 had CBETA paths only)
 const WORKSPACE_VERSION = 2;
@@ -31,6 +32,10 @@ let popouts = {}; // tab -> { label, lib, bookId, path, title }
 let tooltips = {}; // tab -> tooltip of its tab (title, author, path)
 let states = {}; // tab -> the reactive state of its panel (for notes changed from outside)
 let appendSeq = 0;
+let searchStates = {}; // tab -> the reactive state of a search page
+let searchSeq = 0; // search tabs are `search:<n>`
+let lastSearchId = null; // the search tab used last (it receives "add to range")
+let searchWinSeq = 0;
 let infos = {}; // tab -> { title, lib, path, bookId, author } of its document
 let restoring = false;
 let saveTimer = null;
@@ -206,19 +211,83 @@ function applyTooltip(id) {
   if (el && tooltips[id] && el.title !== tooltips[id]) el.title = tooltips[id];
 }
 
-function resultsRenderer() {
+const isSearchTab = (id) => typeof id === "string" && id.startsWith("search:");
+
+/** What of a search page is kept with its tab (and handed to a window). */
+function searchSnapshot(st) {
+  const x = $state.snapshot(st);
+  return { kind: "search", query: x.query, phrase: x.phrase, library: x.lib, filters: x.filters, scopes: x.scopes, tab: x.tab, page: x.page, ran: x.ran };
+}
+
+function searchRenderer() {
   const element = document.createElement("div");
   element.className = "panel-host";
   let instance = null;
+  let panelApi = null;
+  // a hidden tab's element is taken out of the page, which resets scroll
+  // positions: remember them while visible, put them back when shown
+  const tops = new Map();
+  element.addEventListener(
+    "scroll",
+    (e) => {
+      if (element.isConnected && e.target instanceof HTMLElement) tops.set(e.target, e.target.scrollTop);
+    },
+    true,
+  );
   return {
     element,
-    init() {
-      instance = mount(Results, { target: element, props: hooks.resultsProps });
+    init(params) {
+      panelApi = params.api;
+      const prm = params.params || {};
+      const st = $state({
+        query: prm.query || "",
+        phrase: !!prm.phrase,
+        lib: prm.library ?? null, // (not `lib`: a tab with that parameter belongs to a library)
+        filters: prm.filters || {},
+        scopes: prm.scopes || [],
+        tab: prm.tab || "/bulei",
+        page: prm.page || 1,
+        ran: !!prm.ran,
+        autorun: !!prm.autorun, // search once when shown
+        rerun: 0, // +1: the range changed from outside, search again
+        focus: 0, // +1: put the cursor in the search box
+      });
+      searchStates[panelApi.id] = st;
+      panelApi.onDidVisibilityChange(({ isVisible }) => {
+        if (!isVisible) return;
+        requestAnimationFrame(() => {
+          for (const [el, top] of tops) {
+            if (!el.isConnected) tops.delete(el);
+            else if (top && Math.abs(el.scrollTop - top) > 1) el.scrollTop = top;
+          }
+        });
+      });
+      instance = mount(SearchPage, {
+        target: element,
+        props: {
+          s: st,
+          onopen: (req) => openVolume(req).catch((e) => hooks.onaction?.({ type: "error", text: String(e) })),
+          onstate: () => {
+            panelApi.updateParameters(searchSnapshot(st));
+            scheduleSave();
+          },
+          ontitle: (t) => panelApi.setTitle(t),
+          onpopout: () => popOutSearch(panelApi.id),
+        },
+      });
     },
+    update() {},
     dispose() {
+      if (panelApi) delete searchStates[panelApi.id];
       if (instance) unmount(instance);
     },
   };
+}
+
+/** Workspaces saved before search pages had tabs of their own hold a `results` tab: it is closed at start. */
+function oldResultsRenderer() {
+  const element = document.createElement("div");
+  return { element, init() {}, update() {}, dispose() {} };
 }
 
 function watermark() {
@@ -231,7 +300,8 @@ function watermark() {
 }
 
 function tabMenu({ panel, group }) {
-  const isReader = panel.id !== "search";
+  const isSearch = isSearchTab(panel.id);
+  const isReader = !isSearch && panel.id !== "search";
   const where = group.api.location.type;
   const items = [
     { label: "关闭", action: () => panel.api.close() },
@@ -250,6 +320,7 @@ function tabMenu({ panel, group }) {
   } else {
     items.push({ label: "浮动", action: () => float(panel) });
   }
+  if (isSearch) items.push({ label: "在新窗口打开", action: () => popOutSearch(panel.id) });
   if (isReader) {
     items.push({ label: "在新窗口打开", action: () => popOut(panel) });
     items.push("separator");
@@ -324,6 +395,21 @@ async function popOut(panel) {
   await createPopout({ tab: panel.id, lib: prm.lib, bookId: prm.bookId, path: prm.path, title });
 }
 
+/** A search tab into a window of its own (not kept after a restart). */
+async function popOutSearch(id) {
+  const st = searchStates[id];
+  if (!st) return;
+  const info = searchSnapshot(st);
+  dv.getPanel(id)?.api.close();
+  scheduleSave();
+  new WebviewWindow(`search-win-${Date.now()}-${++searchWinSeq}`, {
+    url: "/?search=" + encodeURIComponent(JSON.stringify(info)),
+    title: "全文搜索 — Smart Library",
+    width: 1100,
+    height: 820,
+  });
+}
+
 function listenToPopouts() {
   listen("popout-progress", (e) => recordProgress(e.payload.tab, e.payload.lb, e.payload.mode));
   listen("popout-closed", (e) => {
@@ -335,7 +421,14 @@ function listenToPopouts() {
     delete popouts[q.tab];
     openVolume({ lib: q.lib, bookId: q.bookId, path: q.path, lb: q.lb });
   });
-  listen("popout-open", (e) => openVolume(e.payload));
+  listen("popout-open", async (e) => {
+    // from a reader or search window: the document opens here, so show this window
+    const w = getCurrentWindow();
+    await w.unminimize().catch(() => {});
+    await w.setFocus().catch(() => {});
+    openVolume(e.payload).catch((err) => hooks.onaction?.({ type: "error", text: String(err) }));
+  });
+  listen("search-dock", (e) => openSearch({ ...e.payload, autorun: !!e.payload.ran, fresh: true }));
 }
 
 // ------------------------------------------------------------ public
@@ -346,7 +439,7 @@ export async function init(element, h) {
   hostEl = element;
   dv = createDockview(element, {
     className: "dockview-theme-light sl-dock",
-    createComponent: (opts) => (opts.name === "results" ? resultsRenderer() : readerRenderer()),
+    createComponent: (opts) => (opts.name === "search" ? searchRenderer() : opts.name === "results" ? oldResultsRenderer() : readerRenderer()),
     createWatermarkComponent: watermark,
     getTabContextMenuItems: tabMenu,
   });
@@ -359,6 +452,7 @@ export async function init(element, h) {
   // an empty workspace keep / clear it)
   dv.onDidActivePanelChange((e) => {
     const panel = e?.panel; // the event is { panel, origin }; panel is undefined when nothing is active
+    if (panel && isSearchTab(panel.id)) lastSearchId = panel.id;
     // a restored tab that was never shown has no document info yet: its parameters have it
     const i = panel && (infos[panel.id] || (panel.params?.lib ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null, author: "" } : null));
     if (i) ws.current = { ...i, title: panel.title || i.title };
@@ -388,8 +482,11 @@ export async function init(element, h) {
       console.warn("restore layout", e);
       dv.clear();
     }
-    // search results are not saved; tabs of unbound libraries are dropped
+    // the old single results tab is gone; tabs of unbound libraries are dropped
     dv.getPanel("search")?.api.close();
+    for (const panel of dv.panels) {
+      if (isSearchTab(panel.id)) searchSeq = Math.max(searchSeq, Number(panel.id.slice(7)) || 0);
+    }
     for (const panel of [...dv.panels]) {
       const lib = panel.params?.lib;
       if (lib && !known.has(lib)) panel.api.close();
@@ -482,14 +579,46 @@ export async function closeLibrary(lib) {
   scheduleSave();
 }
 
-/** Show (or focus) the search results tab. */
-export function showResults() {
-  const panel = dv.getPanel("search");
-  if (panel) {
-    panel.api.setActive();
-    return;
+/**
+ * Open a search page in a new tab (several can be open). `query` / `phrase` /
+ * `scopes` fill it in. The page searches at once (an empty query lists
+ * everything); a page that already shows everything is used again.
+ */
+export function openSearch({ query = "", phrase = false, scopes = [], autorun = false, fresh = false, ...more } = {}) {
+  const blank = !query && !scopes.length && !fresh;
+  if (blank) {
+    for (const [id, st] of Object.entries(searchStates)) {
+      if (st.ran && !st.query.trim() && !st.scopes.length && !Object.values(st.filters).some((v) => v.length)) {
+        dv.getPanel(id)?.api.setActive();
+        st.focus += 1;
+        return id;
+      }
+    }
   }
-  dv.addPanel({ id: "search", component: "results", title: "搜索结果" });
+  const id = `search:${++searchSeq}`;
+  dv.addPanel({
+    id,
+    component: "search",
+    title: "全文搜索",
+    params: { kind: "search", ...more, query, phrase, scopes, autorun: autorun || !fresh },
+  });
+  return id;
+}
+
+/** Add nodes to the search range of the search page used last (a new page when there is none). */
+export function addSearchScopes(items) {
+  const st = lastSearchId && searchStates[lastSearchId];
+  if (!st) return openSearch({ scopes: items });
+  const have = new Set(st.scopes.map((x) => `${x.lib}|${x.label}`));
+  const fresh = items.filter((x) => !have.has(`${x.lib}|${x.label}`));
+  if (fresh.length) {
+    st.scopes = [...st.scopes, ...fresh];
+    st.filters = {};
+    st.tab = "scope";
+    st.rerun += 1;
+  }
+  dv.getPanel(lastSearchId)?.api.setActive();
+  return lastSearchId;
 }
 
 /** Save now (e.g. before the window closes). */

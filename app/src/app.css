@@ -115,3 +115,11 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent;
 }
+
+/* dragging a tree node into a search range list (lib/scopeDrag.js) */
+.scope-ghost {
+  position: fixed; z-index: 2000; pointer-events: none; max-width: 320px; padding: 3px 10px;
+  border-radius: 6px; background: var(--accent); color: var(--paper); font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+body.scope-dragging, body.scope-dragging * { cursor: copy !important; user-select: none !important; }

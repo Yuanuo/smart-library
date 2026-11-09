@@ -8,8 +8,8 @@
 //! * `book`, `juan`, `title`                                 (stored)
 //! * `body`  `aio` terms: bigrams, words, single-char runs, with positions
 //! * `body1` CJK unigrams, frequencies only (one-char queries need no positions)
-//! * `facet` `/bulei/部類/子類`, `/canon/T`, `/kind/论/经释`, `/period/唐`,
-//!   `/person/玄奘`, `/book/T0262`
+//! * `facet` `/bulei/部類/子類`, `/canon/大正新脩大藏經` (the canon's name, not
+//!   its code), `/kind/论/经释`, `/period/唐`, `/person/玄奘`, `/book/T0262`
 //!
 //! Hit positions are **not** stored: for the hits being shown, the volume is
 //! extracted again (`Bookcase::volume_text`, ~1.5 ms) and `locate` finds every
@@ -19,10 +19,10 @@ use crate::analyzer::{self, TermKind};
 use crate::bookcase::Bookcase;
 use crate::library::{cbeta_docs, HtmlTree, IndexDoc};
 use crate::volume::VolumeText;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
-use tantivy::collector::{Count, FacetCollector, TopDocs};
-use tantivy::query::{BooleanQuery, Occur, PhraseQuery, Query, TermQuery, TermSetQuery};
+use tantivy::collector::{Count, FacetCollector, FacetCounts, TopDocs};
+use tantivy::query::{AllQuery, BooleanQuery, Occur, PhraseQuery, Query, TermQuery, TermSetQuery};
 use tantivy::schema::{
     Facet, FacetOptions, Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED,
     STRING,
@@ -32,7 +32,7 @@ use tantivy::{Index, IndexReader, ReloadPolicy, TantivyDocument, Term};
 
 /// Bumped whenever the schema or the analyzer changes: an index with another
 /// version must be rebuilt.
-pub const INDEX_VERSION: u32 = 2;
+pub const INDEX_VERSION: u32 = 3;
 const META_FILE: &str = "smart-library-index.json";
 
 // ------------------------------------------------------------ tokenizers
@@ -145,11 +145,41 @@ fn register_tokenizers(index: &Index) {
 /// Facet dimensions, in display order: (root, label).
 pub const FACET_DIMENSIONS: [(&str, &str); 5] = [
     ("/bulei", "部类"),
-    ("/canon", "藏经"),
-    ("/kind", "典类"),
     ("/period", "时域"),
     ("/person", "人物"),
+    ("/canon", "藏经"),
+    ("/kind", "典类"),
 ];
+
+/// Dimensions whose two levels are listed together (`部類` and `部類/子類`).
+const TWO_LEVEL: [&str; 2] = ["/bulei", "/kind"];
+
+pub fn is_two_level(root: &str) -> bool {
+    TWO_LEVEL.contains(&root)
+}
+
+fn root_name(root: &str) -> &str {
+    root.trim_start_matches('/')
+}
+
+/// The facet of a filter value: `大集部類` or (two levels) `大集部類/大集部`.
+fn filter_facet(root: &str, value: &str) -> Facet {
+    let mut path = vec![root_name(root)];
+    if is_two_level(root) {
+        path.extend(value.split('/').filter(|s| !s.is_empty()));
+    } else {
+        path.push(value);
+    }
+    Facet::from_path(path)
+}
+
+/// `bulei/阿含部類` -> (`/bulei`, `阿含部類`): the command line form of a filter.
+pub fn parse_filter(text: &str) -> Option<Filter> {
+    let t = text.trim_start_matches('/');
+    let (root, value) = t.split_once('/')?;
+    let root = format!("/{}", root);
+    FACET_DIMENSIONS.iter().any(|(r, _)| *r == root).then(|| Filter { root, values: vec![value.to_string()] })
+}
 
 // ------------------------------------------------------------ index
 
@@ -157,6 +187,9 @@ pub struct SearchIndex {
     index: Index,
     reader: IndexReader,
     f: Fields,
+    /// first-level names of the two-level dimensions (`/bulei` -> 部類 names),
+    /// recorded when the index was built
+    tops: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Default)]
@@ -223,7 +256,18 @@ impl SearchIndex {
             .try_into()
             .map_err(|e: tantivy::TantivyError| e.to_string())?;
         let (_, f) = schema();
-        Ok(SearchIndex { index, reader, f })
+        let tops = meta["facet_tops"]
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .map(|(k, v)| {
+                        let names = v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+                        (k.clone(), names)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(SearchIndex { index, reader, f, tops })
     }
 
     /// Data version recorded when the index was built.
@@ -235,9 +279,69 @@ impl SearchIndex {
 
     /// Only the number of hit documents (to show counts per library).
     pub fn count(&self, req: &SearchRequest) -> Result<usize, String> {
-        let query = build_query(&self.f, &req.query, req.mode)?;
-        let query = self.restrict(query, req);
+        let query = self.query_for(req, None)?;
         self.reader.searcher().search(&query, &Count).map_err(|e| e.to_string())
+    }
+
+    /// The text query (everything when it is empty), limited to `req.within`
+    /// and to the filters: one of the values of every filtered dimension
+    /// (`skip`: leave that dimension out, to count its alternatives).
+    fn query_for(&self, req: &SearchRequest, skip: Option<&str>) -> Result<Box<dyn Query>, String> {
+        let text: Box<dyn Query> = if req.query.trim().is_empty() {
+            Box::new(AllQuery)
+        } else {
+            build_query(&self.f, &req.query, req.mode)?
+        };
+        let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(Occur::Must, self.restrict(text, req))];
+        for flt in &req.filters {
+            if flt.values.is_empty() || Some(flt.root.as_str()) == skip {
+                continue;
+            }
+            let any: Vec<(Occur, Box<dyn Query>)> = flt
+                .values
+                .iter()
+                .map(|v| {
+                    let term = Term::from_facet(self.f.facet, &filter_facet(&flt.root, v));
+                    (Occur::Should, Box::new(TermQuery::new(term, IndexRecordOption::Basic)) as Box<dyn Query>)
+                })
+                .collect();
+            clauses.push((Occur::Must, Box::new(BooleanQuery::new(any))));
+        }
+        Ok(if clauses.len() == 1 { clauses.pop().unwrap().1 } else { Box::new(BooleanQuery::new(clauses)) })
+    }
+
+    /// Collectors for the counts of some dimensions: the first level of each,
+    /// and the second level of the two-level ones (a collector cannot hold a
+    /// facet and one below it, so those go to a collector of their own).
+    fn collectors(&self, roots: &[&str]) -> (FacetCollector, FacetCollector) {
+        let mut first = FacetCollector::for_field("facet");
+        let mut second = FacetCollector::for_field("facet");
+        for root in roots {
+            first.add_facet(*root);
+            if is_two_level(root) {
+                for top in self.tops.get(*root).into_iter().flatten() {
+                    second.add_facet(Facet::from_path([root_name(root), top.as_str()]));
+                }
+            }
+        }
+        (first, second)
+    }
+
+    /// The values of one dimension, largest first.
+    fn values(&self, root: &str, first: &FacetCounts, second: &FacetCounts) -> FacetCount {
+        let mut values: Vec<(String, u64)> = first
+            .get(root)
+            .map(|(f, c)| (f.to_path().last().unwrap_or(&"").to_string(), c))
+            .collect();
+        if is_two_level(root) {
+            for top in self.tops.get(root).into_iter().flatten() {
+                for (f, c) in second.get(Facet::from_path([root_name(root), top.as_str()])) {
+                    values.push((format!("{}/{}", top, f.to_path().last().unwrap_or(&"")), c));
+                }
+            }
+        }
+        values.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        FacetCount { root: root.to_string(), values }
     }
 
     /// The query limited to `req.within`.
@@ -259,51 +363,17 @@ impl SearchIndex {
 
     pub fn search(&self, req: &SearchRequest) -> Result<SearchResult, String> {
         let _ = &self.index;
-        let query = build_query(&self.f, &req.query, req.mode)?;
-        let query = self.restrict(query, req);
-        let query: Box<dyn Query> = match &req.scope {
-            Some(scope) => {
-                // `bulei/阿含部類` or `/bulei/阿含部類` (shells such as Git Bash
-                // rewrite arguments that start with `/`)
-                let text = if scope.starts_with('/') { scope.clone() } else { format!("/{}", scope) };
-                let facet = Facet::from_text(&text).map_err(|e| format!("bad scope {}: {}", scope, e))?;
-                Box::new(BooleanQuery::new(vec![
-                    (Occur::Must, query),
-                    (
-                        Occur::Must,
-                        Box::new(TermQuery::new(Term::from_facet(self.f.facet, &facet), IndexRecordOption::Basic)),
-                    ),
-                ]))
-            }
-            None => query,
-        };
         let searcher = self.reader.searcher();
-        let mut fc = FacetCollector::for_field("facet");
-        fc.add_facet("/book");
-        for (root, _) in FACET_DIMENSIONS {
-            fc.add_facet(root);
-        }
-        let drill: Vec<String> = req
-            .facet_drill
-            .iter()
-            .map(|d| if d.starts_with('/') { d.clone() } else { format!("/{}", d) })
-            .collect();
-        // drill-down roots lie under the roots above, and one collector may not
-        // hold a facet and its descendant: they get a collector of their own
-        // (nested drill-downs are dropped for the same reason)
-        let drill: Vec<String> = drill
-            .iter()
-            .filter(|d| !drill.iter().any(|o| o != *d && d.starts_with(&format!("{}/", o))))
-            .cloned()
-            .collect();
-        let mut fc_drill = FacetCollector::for_field("facet");
-        for sub in &drill {
-            fc_drill.add_facet(sub.as_str());
-        }
+        // dimensions without a filter are counted under the whole query; one
+        // with a filter is counted without that filter, so that its other
+        // values stay visible and can be added
+        let filtered: Vec<&str> = req.filters.iter().filter(|f| !f.values.is_empty()).map(|f| f.root.as_str()).collect();
+        let shared: Vec<&str> = FACET_DIMENSIONS.iter().map(|d| d.0).filter(|r| !filtered.contains(r)).collect();
+        let (mut first, second) = self.collectors(&shared);
+        first.add_facet("/book");
         let top = TopDocs::with_limit(req.limit.max(1)).and_offset(req.offset).order_by_score();
-        let (top, total, counts, drill_counts) = searcher
-            .search(&query, &(top, Count, fc, fc_drill))
-            .map_err(|e| e.to_string())?;
+        let query = self.query_for(req, None)?;
+        let (top, total, counts, counts2) = searcher.search(&query, &(top, Count, first, second)).map_err(|e| e.to_string())?;
 
         let mut hits = Vec::new();
         for (score, addr) in top {
@@ -318,19 +388,15 @@ impl SearchIndex {
             });
         }
         let mut facets = Vec::new();
-        let roots: Vec<String> = FACET_DIMENSIONS
-            .iter()
-            .map(|(r, _)| r.to_string())
-            .chain(drill.iter().cloned())
-            .collect();
-        for root in roots {
-            let source = if drill.contains(&root) { &drill_counts } else { &counts };
-            let mut values: Vec<(String, u64)> = source
-                .get(root.as_str())
-                .map(|(f, c)| (f.to_path().last().unwrap_or(&"").to_string(), c))
-                .collect();
-            values.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-            facets.push(FacetCount { root, values });
+        for (root, _) in FACET_DIMENSIONS {
+            if shared.contains(&root) {
+                facets.push(self.values(root, &counts, &counts2));
+            } else {
+                let q = self.query_for(req, Some(root))?;
+                let (c1, c2) = self.collectors(&[root]);
+                let (c1, c2) = searcher.search(&q, &(c1, c2)).map_err(|e| e.to_string())?;
+                facets.push(self.values(root, &c1, &c2));
+            }
         }
         let books = counts.get("/book").count();
         Ok(SearchResult {
@@ -363,6 +429,7 @@ pub fn build_index(
     register_tokenizers(&index);
     let mut writer = index.writer::<TantivyDocument>(1_000_000_000).map_err(|e| e.to_string())?;
     let mut stats = BuildStats::default();
+    let mut tops: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (n, d) in docs.enumerate() {
         if n % 500 == 0 {
             progress(n, total);
@@ -385,6 +452,10 @@ pub fn build_index(
         doc.add_text(f.body1, &d.text);
         for facet in &d.facets {
             if facet.len() > 1 && facet.iter().all(|c| !c.is_empty()) {
+                let root = format!("/{}", facet[0]);
+                if facet.len() > 2 && is_two_level(&root) {
+                    tops.entry(root).or_default().insert(facet[1].clone());
+                }
                 doc.add_facet(f.facet, Facet::from_path(facet.iter().map(|s| s.as_str())));
             }
         }
@@ -396,6 +467,7 @@ pub fn build_index(
     writer.wait_merging_threads().map_err(|e| e.to_string())?;
     meta["index_version"] = serde_json::json!(INDEX_VERSION);
     meta["documents"] = serde_json::json!(stats.volumes);
+    meta["facet_tops"] = serde_json::json!(tops);
     std::fs::write(dir.join(META_FILE), serde_json::to_string_pretty(&meta).unwrap()).map_err(|e| e.to_string())?;
     stats.seconds = start.elapsed().as_secs_f64();
     Ok(stats)
@@ -413,16 +485,24 @@ pub enum MatchMode {
 
 #[derive(Debug, Clone)]
 pub struct SearchRequest {
+    /// empty: every document (to browse)
     pub query: String,
     pub mode: MatchMode,
     pub offset: usize,
     pub limit: usize,
-    /// facet filter, e.g. `/bulei/阿含部類` or `/canon/T`
-    pub scope: Option<String>,
-    /// extra facet roots to count, e.g. `/bulei/阿含部類` for its sub-categories
-    pub facet_drill: Vec<String>,
+    /// facet filters: a document needs one of the values of every filter
+    pub filters: Vec<Filter>,
     /// only these books and / or documents (a node of the tree and what is below it)
     pub within: Option<Within>,
+}
+
+/// Values of one facet dimension a document may have.
+#[derive(Debug, Clone, Default)]
+pub struct Filter {
+    /// e.g. `/bulei`
+    pub root: String,
+    /// `阿含部類`, or `阿含部類/阿含部` in the two-level dimensions
+    pub values: Vec<String>,
 }
 
 /// A set of books (CBETA book ids) and documents (paths) to search in.
@@ -439,8 +519,7 @@ impl SearchRequest {
             mode: MatchMode::Loose,
             offset: 0,
             limit: 10,
-            scope: None,
-            facet_drill: Vec::new(),
+            filters: Vec::new(),
             within: None,
         }
     }
@@ -818,22 +897,70 @@ mod tests {
         assert_eq!(idx.search(&req).unwrap().total_volumes, 0);
     }
 
+    fn filter(root: &str, values: &[&str]) -> Filter {
+        Filter { root: root.to_string(), values: values.iter().map(|v| v.to_string()).collect() }
+    }
+
+    fn values<'a>(r: &'a SearchResult, root: &str) -> &'a Vec<(String, u64)> {
+        &r.facets.iter().find(|f| f.root == root).unwrap().values
+    }
+
     #[test]
-    fn facets_count_volumes_and_scope_filters() {
+    fn facets_count_volumes_with_both_levels_and_real_canon_names() {
         let (_d, idx) = build();
         let r = idx.search(&SearchRequest::new("佛")).unwrap();
-        let bulei = r.facets.iter().find(|f| f.root == "/bulei").unwrap();
-        assert_eq!(bulei.values, vec![("法華部類".to_string(), 1), ("阿含部類".to_string(), 1)]);
+        // two levels side by side; the canon is its name, not `T`
+        assert_eq!(
+            values(&r, "/bulei"),
+            &vec![
+                ("法華部類".to_string(), 1),
+                ("法華部類/法華部".to_string(), 1),
+                ("阿含部類".to_string(), 1),
+                ("阿含部類/阿含部".to_string(), 1),
+            ]
+        );
+        assert_eq!(values(&r, "/canon"), &vec![("大正新脩大藏經".to_string(), 2)]);
+    }
+
+    #[test]
+    fn filters_or_within_a_dimension_and_across_dimensions() {
+        let (_d, idx) = build();
         let mut req = SearchRequest::new("佛");
-        req.scope = Some("bulei/法華部類".to_string());
-        assert_eq!(books(&idx.search(&req).unwrap()), vec!["T0262_1"]);
-        // drill-down into a sub-category, counted next to the top level
-        let mut req = SearchRequest::new("佛");
-        req.facet_drill = vec!["bulei/阿含部類".to_string()];
+        req.filters = vec![filter("/bulei", &["法華部類"])];
         let r = idx.search(&req).unwrap();
-        let sub = r.facets.iter().find(|f| f.root == "/bulei/阿含部類").unwrap();
-        assert_eq!(sub.values, vec![("阿含部".to_string(), 1)]);
-        assert_eq!(r.facets.iter().find(|f| f.root == "/bulei").unwrap().values.len(), 2);
+        assert_eq!(books(&r), vec!["T0262_1"]);
+        // the filtered dimension still lists its alternatives
+        assert_eq!(values(&r, "/bulei").len(), 4);
+        // two values of one dimension: either
+        req.filters = vec![filter("/bulei", &["法華部類", "阿含部類/阿含部"])];
+        assert_eq!(idx.search(&req).unwrap().total_volumes, 2);
+        // a second dimension narrows down; the first one is counted without its own filter
+        req.filters = vec![filter("/bulei", &["法華部類"]), filter("/canon", &["大正新脩大藏經"])];
+        let r = idx.search(&req).unwrap();
+        assert_eq!(books(&r), vec!["T0262_1"]);
+        req.filters = vec![filter("/bulei", &["法華部類"]), filter("/canon", &["卍續"])];
+        let r = idx.search(&req).unwrap();
+        assert_eq!(r.total_volumes, 0);
+        assert_eq!(values(&r, "/bulei").iter().filter(|v| !v.0.contains('/')).count(), 0);
+    }
+
+    #[test]
+    fn an_empty_query_lists_everything_to_browse() {
+        let (_d, idx) = build();
+        let r = idx.search(&SearchRequest::new("")).unwrap();
+        assert_eq!(r.total_volumes, 3);
+        assert_eq!(r.total_books, 2);
+        let mut req = SearchRequest::new("  ");
+        req.filters = vec![filter("/bulei", &["阿含部類"])];
+        assert_eq!(books(&idx.search(&req).unwrap()), vec!["T0001_1"]);
+        assert_eq!(idx.count(&req).unwrap(), 1);
+    }
+
+    #[test]
+    fn parses_command_line_filters() {
+        let f = parse_filter("bulei/阿含部類").unwrap();
+        assert_eq!((f.root.as_str(), f.values.as_slice()), ("/bulei", &["阿含部類".to_string()][..]));
+        assert!(parse_filter("/nothing/x").is_none());
     }
 
     #[test]
