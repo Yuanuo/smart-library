@@ -490,7 +490,9 @@
 
   /** While dragging: can the nodes be dropped on this row? "ok", "no" (cannot: shown with the not-allowed pointer), or null (not a place for them). */
   function moveVerdict(l, node, key, row) {
-    if (row.closest("[data-lib]")?.dataset.lib !== l.id) return null;
+    const rowLib = row.closest("[data-lib]")?.dataset.lib;
+    if (!rowLib) return null;
+    if (rowLib !== l.id) return "no"; // another library: moving between libraries is not possible (copy or link is still open)
     const target = dropTarget(row);
     const todo = moveList(l, node, key, target);
     if (!todo.length) return "no"; // nothing would change: it is there already, or inside itself
