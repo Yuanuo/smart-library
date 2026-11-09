@@ -14,7 +14,7 @@
   import { monthPath, localDate } from "./diary.js";
   import { startScopeDrag } from "./scopeDrag.js";
 
-  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
+  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -387,7 +387,12 @@
         { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) }) },
         { label: "加入每日一句来源", action: () => onsearchfrom("daily-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) }) },
       ],
-      node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node) }] : [],
+      node.book_id || node.path || node.rel
+        ? [
+            { label: "属性…", action: () => onprops(l, node) },
+            { label: "标签…", action: () => ontag(l, node) },
+          ]
+        : [],
       [
         ...(notes ? [{ label: "导入到这里（作为子节点）…", action: () => onimport({ lib: l.id, parent: node.rel, key }) }] : []),
         { label: "导出此节点…", action: () => onexport(l, { whole: false, keys: [key], rels: node.rel ? [node.rel] : [] }, node.title, node.title) },

@@ -15,6 +15,7 @@ use smart_library_core::bookcase::Bookcase;
 use smart_library_core::folder::{self, FolderFilter, FolderLibrary};
 use smart_library_core::history::History;
 use smart_library_core::marks::{parse_tags, MarkFilter, MarkNew, Marks};
+use smart_library_core::props::{self, Dims, Props};
 use smart_library_core::library::{classify_trees, HtmlTree, TreeGroup};
 use smart_library_core::nav::NavNode;
 use smart_library_core::notes::{self, NotesStore};
@@ -72,6 +73,8 @@ pub struct AppState {
     building: Mutex<HashSet<String>>,
     history: History,
     marks: Marks,
+    /// user properties of nodes (部类, 时域, 人物, 藏经, 典类)
+    props: Props,
 }
 
 impl AppState {
@@ -92,6 +95,7 @@ impl AppState {
             building: Mutex::new(HashSet::new()),
             history: History::open(&data_dir_for_history).unwrap_or_else(|_| History::memory().unwrap()),
             marks: Marks::open(&data_dir_for_history.with_file_name("marks.db")).unwrap_or_else(|_| Marks::memory().unwrap()),
+            props: Props::open(&data_dir_for_history.with_file_name("props.db")).unwrap_or_else(|_| Props::memory().unwrap()),
         }
     }
 
@@ -547,12 +551,16 @@ pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<St
     if state.building.lock().unwrap().contains(&id) {
         return Err("正在建立这个知识库的索引，请稍后再解除绑定".into());
     }
+    let own_lib = state.library(&id).map(|l| l.kind == "notes").unwrap_or(false);
     state.libraries.write().unwrap().retain(|l| l.id != id);
     state.indexes.write().unwrap().remove(&id);
     state.html.write().unwrap().remove(&id);
     state.folders.write().unwrap().remove(&id);
     state.notes.write().unwrap().remove(&id);
     let _ = state.history.remove_lib(&id);
+    if own_lib {
+        let _ = state.props.remove_lib(&id);
+    }
     state.titles.write().unwrap().remove(&id);
     state.save_registry()?;
     let dir = state.data_dir.join("repos").join(&id);
@@ -924,7 +932,12 @@ pub async fn note_append(lib: String, id: String, text: String, state: State<'_,
 /// Delete a note and everything below it; returns the number removed.
 #[tauri::command]
 pub async fn delete_note(lib: String, id: String, state: State<'_, AppState>) -> Result<usize, String> {
-    notes_of(&state, &lib)?.delete(note_id(&id)?)
+    let store = notes_of(&state, &lib)?;
+    let nid = note_id(&id)?;
+    let gone: Vec<String> = store.descendants(nid).unwrap_or_default().iter().map(|i| i.to_string()).collect();
+    let n = store.delete(nid)?;
+    let _ = state.props.remove_nodes(&lib, &gone);
+    Ok(n)
 }
 
 #[tauri::command]
@@ -2126,6 +2139,7 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
         return Err("正在建立这个知识库的索引".to_string());
     }
     let dir = state.index_dir(&lib);
+    let overlay = state.props.overlay(&lib).unwrap_or_default();
     // drop the open index before deleting its files
     state.indexes.write().unwrap().remove(&lib);
     std::thread::spawn(move || {
@@ -2143,7 +2157,7 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
                     let n = notes_store.as_ref().unwrap();
                     let docs = notes::docs(&n.rows()?, &lib_title);
                     let meta = serde_json::json!({ "kind": "notes", "data_version": n.fingerprint() });
-                    smart_library_core::search::build_index(&dir, meta, docs.len(), docs.into_iter().map(Ok), progress)?
+                    smart_library_core::search::build_index(&dir, meta, docs.len(), docs.into_iter().map(Ok), &overlay, progress)?
                 }
                 (Some(f), _, _) => {
                     let files = f.files();
@@ -2151,10 +2165,10 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
                         "kind": "folder",
                         "data_version": f.fingerprint(&files),
                     });
-                    smart_library_core::search::build_index(&dir, meta, files.len(), f.docs(&files), progress)?
+                    smart_library_core::search::build_index(&dir, meta, files.len(), f.docs(&files), &overlay, progress)?
                 }
-                (_, Some(bc), Some(t)) => SearchIndex::build_html(bc, t, &dir, progress)?,
-                (_, Some(bc), None) => SearchIndex::build(bc, &dir, progress)?,
+                (_, Some(bc), Some(t)) => SearchIndex::build_html(bc, t, &dir, &overlay, progress)?,
+                (_, Some(bc), None) => SearchIndex::build(bc, &dir, &overlay, progress)?,
                 _ => return Err("没有数据".into()),
             };
             Ok(format!(
@@ -2340,6 +2354,143 @@ pub async fn node_tags_set(
 ) -> Result<(), String> {
     let lib_title = state.library(&lib)?.title;
     state.marks.set_node_tags(&lib, book_id.as_deref(), &path, &doc_title, &lib_title, &parse_tags(&tags))
+}
+
+// ------------------------------------------------------------ properties
+
+#[derive(Serialize)]
+pub struct PropsDto {
+    /// what the user set on this node (a dimension with an empty list: set to nothing)
+    own: Dims,
+    /// what the data itself gives (before the user's properties)
+    derived: Dims,
+    tags: Vec<String>,
+}
+
+/// The values the data gives a node, as facets say.
+fn derived_dims(state: &AppState, l: &Library, book_id: Option<&str>, path: &str) -> Result<Dims, String> {
+    use smart_library_core::library::cbeta_facets;
+    let facets = match l.kind.as_str() {
+        "cbeta" => match book_id {
+            Some(b) => cbeta_facets(state.bookcase_of(l)?.as_ref(), b).unwrap_or_default(),
+            None => Vec::new(),
+        },
+        "html" => {
+            let t = state.html_tree(l)?;
+            let bc = state.bookcase_of(l)?;
+            let only: HashSet<String> = [path.to_string()].into_iter().collect();
+            let (_, mut docs) = t.docs(&bc, Some(&only));
+            docs.next().and_then(|d| d.ok()).map(|d| d.facets).unwrap_or_default()
+        }
+        "folder" => {
+            let f = state.folder(l)?;
+            let files = f.files();
+            match files.iter().find(|x| x.rel == path) {
+                Some(file) => f.docs(std::slice::from_ref(file)).next().and_then(|d| d.ok()).map(|d| d.facets).unwrap_or_default(),
+                None => Vec::new(), // a folder: the data gives it nothing
+            }
+        }
+        "notes" => match path.parse::<i64>() {
+            Ok(id) => {
+                let mut bulei = vec!["bulei".to_string()];
+                bulei.extend(state.notes(l)?.folders_of(id)?.into_iter().take(2));
+                if bulei.len() > 1 { vec![bulei] } else { Vec::new() }
+            }
+            Err(_) => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+    Ok(props::dims_of(&facets))
+}
+
+/// The properties of a node, for the properties dialog.
+#[tauri::command]
+pub async fn props_get(lib: String, book_id: Option<String>, path: String, state: State<'_, AppState>) -> Result<PropsDto, String> {
+    let l = state.library(&lib)?;
+    Ok(PropsDto {
+        own: state.props.get(&lib, book_id.as_deref(), &path)?,
+        derived: derived_dims(&state, &l, book_id.as_deref(), &path).unwrap_or_default(),
+        tags: state.marks.node_tags(&lib, book_id.as_deref(), &path).unwrap_or_default(),
+    })
+}
+
+#[derive(Serialize)]
+pub struct PropsSaved {
+    /// the documents of the index that are being updated (0: no index, or none affected)
+    updating: usize,
+}
+
+/// Keep the properties of a node, and bring the index up to date for the
+/// documents they apply to (in the background; `index-done` tells when).
+#[tauri::command]
+pub async fn props_set(
+    lib: String,
+    book_id: Option<String>,
+    path: String,
+    dims: Dims,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PropsSaved, String> {
+    let l = state.library(&lib)?;
+    state.props.set(&lib, book_id.as_deref(), &path, &dims)?;
+    let dir = state.index_dir(&lib);
+    if !dir.join("smart-library-index.json").exists() {
+        return Ok(PropsSaved { updating: 0 });
+    }
+    if state.building.lock().unwrap().contains(&lib) {
+        // a rebuild is running: it may have read the old properties
+        return Err("正在建立索引：属性已保存，索引完成后请再保存一次或重建索引".into());
+    }
+    // the documents the properties apply to
+    enum Job {
+        Cbeta(Arc<Bookcase>, HashSet<String>),
+        Html(Arc<Bookcase>, Arc<HtmlTree>, HashSet<String>),
+        Folder(Arc<FolderLibrary>, Vec<folder::FolderFile>),
+        Notes(Arc<NotesStore>, HashSet<i64>),
+    }
+    let job = match l.kind.as_str() {
+        "cbeta" => Job::Cbeta(state.bookcase_of(&l)?, book_id.iter().cloned().collect()),
+        "html" => Job::Html(state.bookcase_of(&l)?, state.html_tree(&l)?, [path.clone()].into_iter().collect()),
+        "folder" => {
+            let f = state.folder(&l)?;
+            let prefix = format!("{}/", path);
+            let files = f.files().into_iter().filter(|x| x.rel == path || x.rel.starts_with(&prefix)).collect();
+            Job::Folder(f, files)
+        }
+        "notes" => {
+            let store = state.notes(&l)?;
+            let ids = store.descendants(note_id(&path)?)?.into_iter().collect();
+            Job::Notes(store, ids)
+        }
+        _ => return Ok(PropsSaved { updating: 0 }),
+    };
+    let overlay = state.props.overlay(&lib)?;
+    let lib_title = l.title.clone();
+    state.building.lock().unwrap().insert(lib.clone());
+    state.indexes.write().unwrap().remove(&lib);
+    std::thread::spawn(move || {
+        let result = (|| -> Result<usize, String> {
+            use smart_library_core::search::update_docs;
+            match &job {
+                Job::Cbeta(bc, books) => update_docs(&dir, smart_library_core::library::cbeta_docs(bc, Some(books)).1, &overlay),
+                Job::Html(bc, t, paths) => update_docs(&dir, t.docs(bc, Some(paths)).1, &overlay),
+                Job::Folder(f, files) => update_docs(&dir, f.docs(files), &overlay),
+                Job::Notes(store, ids) => {
+                    let rows: Vec<_> = store.rows()?.into_iter().filter(|r| ids.contains(&r.id)).collect();
+                    update_docs(&dir, notes::docs(&rows, &lib_title).into_iter().map(Ok), &overlay)
+                }
+            }
+        })();
+        let state = app.state::<AppState>();
+        state.building.lock().unwrap().remove(&lib);
+        state.indexes.write().unwrap().remove(&lib); // opened again with the new documents
+        let done = match result {
+            Ok(n) => IndexDoneDto { lib: lib.clone(), ok: true, message: format!("属性已更新到索引（{} 篇）", n) },
+            Err(e) => IndexDoneDto { lib: lib.clone(), ok: false, message: format!("更新索引失败：{}，可以重建索引", e) },
+        };
+        let _ = app.emit("index-done", done);
+    });
+    Ok(PropsSaved { updating: 1 })
 }
 
 // ------------------------------------------------------------ history
@@ -2573,6 +2724,8 @@ struct Plan {
     src: Src,
     /// internal libraries: the note
     note: Option<i64>,
+    /// the node as the user properties know it: (book id, path)
+    key: Option<(Option<String>, String)>,
     children: Vec<Plan>,
 }
 
@@ -2597,10 +2750,17 @@ fn plan_of_dto(n: &NodeDto, kind: &str, parts: &HashMap<String, Vec<String>>) ->
     } else {
         Src::None
     };
+    // CBETA: the whole book only (a part of a big book is not a node of its own)
+    let key = if kind == "html" {
+        n.path.clone().map(|p| (None, p))
+    } else {
+        n.book_id.clone().filter(|_| n.start.is_none()).map(|b| (Some(b), String::new()))
+    };
     Plan {
         title: n.title.clone(),
         src,
         note: None,
+        key,
         children: n.children.iter().map(|c| plan_of_dto(c, kind, parts)).collect(),
     }
 }
@@ -2612,13 +2772,13 @@ fn plan_of_folder(f: &FolderLibrary, rel: &str, name: &str, is_dir: bool) -> Res
         name.rsplit_once('.').map(|(s, _)| s.to_string()).filter(|s| !s.is_empty()).unwrap_or(name.to_string())
     };
     if !is_dir {
-        return Ok(Plan { title, src: Src::Folder(rel.to_string()), note: None, children: Vec::new() });
+        return Ok(Plan { title, src: Src::Folder(rel.to_string()), note: None, key: Some((None, rel.to_string())), children: Vec::new() });
     }
     let mut children = Vec::new();
     for e in f.children(rel)? {
         children.push(plan_of_folder(f, &e.rel, &e.name, e.is_dir)?);
     }
-    Ok(Plan { title, src: Src::None, note: None, children })
+    Ok(Plan { title, src: Src::None, note: None, key: Some((None, rel.to_string())), children })
 }
 
 fn plan_of_note(s: &NotesStore, id: i64) -> Result<Plan, String> {
@@ -2627,7 +2787,7 @@ fn plan_of_note(s: &NotesStore, id: i64) -> Result<Plan, String> {
     for c in s.children(Some(id))? {
         children.push(plan_of_note(s, c.id)?);
     }
-    Ok(Plan { title: n.title, src: Src::None, note: Some(id), children })
+    Ok(Plan { title: n.title, src: Src::None, note: Some(id), key: Some((None, id.to_string())), children })
 }
 
 /// The picked nodes without those below another picked node.
@@ -2689,6 +2849,13 @@ impl Exporter<'_> {
         use serde_json::{json, Map, Value};
         let mut m = Map::new();
         m.insert("title".into(), json!(p.title));
+        // the user's properties of the node travel with it
+        if let Some((book, path)) = &p.key {
+            let own = self.state.props.get(&self.lib.id, book.as_deref(), path).unwrap_or_default();
+            if !own.is_empty() {
+                m.insert("props".into(), json!(own));
+            }
+        }
         let mut children: Vec<Value> = Vec::new();
         if let Some(id) = p.note {
             let store = self.state.notes(&self.lib)?;
@@ -2882,7 +3049,16 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
         // a whole library comes as one note named like it; picked nodes come as they are
         let wrap = pkg.manifest["scope"] == "library";
         let dir = state.attachments_dir(&lib_id);
-        let notes = smart_library_core::exchange::import_into(&store, &mut pkg, parent, wrap, &mut |name, bytes| keep_picture(&dir, name, &bytes))?;
+        let notes = smart_library_core::exchange::import_into(
+            &store,
+            &mut pkg,
+            parent,
+            wrap,
+            &mut |name, bytes| keep_picture(&dir, name, &bytes),
+            &mut |id, dims| {
+                let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
+            },
+        )?;
         return Ok(ImportDone { status: status_of(&state), title: state.library(&lib_id)?.title, notes });
     }
     let base = pkg.title();
@@ -2907,7 +3083,17 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
         .ok_or("知识库没有建好")?;
     let store = state.notes(&lib)?;
     let dir = state.attachments_dir(&lib.id);
-    let notes = smart_library_core::exchange::import_into(&store, &mut pkg, None, false, &mut |name, bytes| keep_picture(&dir, name, &bytes))?;
+    let lib_id = lib.id.clone();
+    let notes = smart_library_core::exchange::import_into(
+        &store,
+        &mut pkg,
+        None,
+        false,
+        &mut |name, bytes| keep_picture(&dir, name, &bytes),
+        &mut |id, dims| {
+            let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
+        },
+    )?;
     state.titles.write().unwrap().remove(&lib.id);
     Ok(ImportDone { status, title, notes })
 }

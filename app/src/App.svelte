@@ -11,6 +11,7 @@
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import TagDialog from "./lib/TagDialog.svelte";
   import MarksDialog from "./lib/MarksDialog.svelte";
+  import PropsDialog from "./lib/PropsDialog.svelte";
   import AboutDialog from "./lib/AboutDialog.svelte";
   import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
   import { localDate, localTime } from "./lib/diary.js";
@@ -271,6 +272,15 @@
         ping();
       },
     };
+  }
+
+  let propsDlg = $state(null); // { lib, libTitle, bookId, path, title }
+  /** The properties dialog of a node: CBETA the whole book; the others the article / file / folder / note. */
+  function propsFromTree(l, node) {
+    const bookId = l.kind === "cbeta" ? node.book_id : null;
+    const path = l.kind === "cbeta" ? "" : (node.path ?? node.rel);
+    if (l.kind === "cbeta" ? !bookId : path == null) return;
+    propsDlg = { lib: l.id, libTitle: l.title, bookId, path, title: node.title };
   }
 
   function tagFromTree(l, node) {
@@ -647,6 +657,7 @@
             onindex={startIndex}
             onsearchfrom={searchFrom}
             ontag={tagFromTree}
+            onprops={propsFromTree}
             oncopy={copyPath}
             onexport={(lib, sel, label, name) => (exportDlg = { lib, sel, label, name })}
             onimport={importLibrary}
@@ -725,6 +736,11 @@
 
 {#if clipDlg}
   <ClipDialog text={clipDlg.text} vol={clipDlg.vol} onok={(req) => doClip(req, clipDlg)} onclose={() => (clipDlg = null)} />
+{/if}
+
+{#if propsDlg}
+  <PropsDialog {...propsDlg} onclose={() => (propsDlg = null)}
+    onsaved={(r) => (notice = r.updating ? "属性已保存，正在更新索引…" : "属性已保存。建立索引后才能用在搜索过滤里。")} />
 {/if}
 
 {#if tagDlg}

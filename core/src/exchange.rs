@@ -22,6 +22,7 @@ use crate::notes::NotesStore;
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::path::Path;
+use crate::props::Dims;
 
 pub const FORMAT: &str = "smart-library-export";
 
@@ -350,6 +351,7 @@ pub fn import_into(
     parent: Option<i64>,
     wrap: bool,
     attach: &mut dyn FnMut(&str, Vec<u8>) -> Result<(), String>,
+    props: &mut dyn FnMut(i64, &Dims),
 ) -> Result<usize, String> {
     for name in pkg.names() {
         if let Some(file) = name.strip_prefix("attachments/").filter(|f| crate::attach::is_name(f)) {
@@ -364,11 +366,30 @@ pub fn import_into(
         parent = Some(store.create(parent, &pkg.title(), "")?);
         n += 1;
     }
-    import_nodes(store, pkg, parent, &nodes, &mut n)?;
+    import_nodes(store, pkg, parent, &nodes, &mut n, props)?;
     Ok(n)
 }
 
-fn import_nodes(store: &NotesStore, pkg: &mut Package, parent: Option<i64>, nodes: &[Value], n: &mut usize) -> Result<(), String> {
+/// The user properties a manifest node carries: `"props": {"period": ["唐"], ...}`.
+pub fn props_of(node: &Value) -> Dims {
+    let mut out = Dims::new();
+    if let Some(o) = node["props"].as_object() {
+        for (dim, v) in o {
+            let list = v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+            out.insert(dim.clone(), list);
+        }
+    }
+    crate::props::clean(&out)
+}
+
+fn import_nodes(
+    store: &NotesStore,
+    pkg: &mut Package,
+    parent: Option<i64>,
+    nodes: &[Value],
+    n: &mut usize,
+    props: &mut dyn FnMut(i64, &Dims),
+) -> Result<(), String> {
     for node in nodes {
         let title = node["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).unwrap_or("（无标题）");
         let mut content = match node["file"].as_str() {
@@ -389,8 +410,12 @@ fn import_nodes(store: &NotesStore, pkg: &mut Package, parent: Option<i64>, node
             _ => store.create(parent, title, &content)?,
         };
         *n += 1;
+        let own = props_of(node);
+        if !own.is_empty() {
+            props(id, &own);
+        }
         let children = node["children"].as_array().cloned().unwrap_or_default();
-        import_nodes(store, pkg, Some(id), &children, n)?;
+        import_nodes(store, pkg, Some(id), &children, n, props)?;
     }
     Ok(())
 }
@@ -443,7 +468,7 @@ mod tests {
         w.add_file("attachments/0123456789abcdef0123456789abcdef.png", &[9]).unwrap();
         w.add_file("attachments/evil.png", &[9]).unwrap();
         let nodes = vec![json!({
-            "title": "甲/乙:丙", "file": f1,
+            "title": "甲/乙:丙", "file": f1, "props": { "period": ["唐"], "kind": [], "bogus": ["x"] },
             "children": [ { "title": "子", "file": f2 }, { "title": "夹", "children": [] } ]
         })];
         w.finish(&manifest("测试库", "folder", "C:\\x", "nodes", nodes)).unwrap();
@@ -452,7 +477,17 @@ mod tests {
         assert_eq!(p.title(), "测试库");
         let store = NotesStore::memory().unwrap();
         let mut got: Vec<(String, Vec<u8>)> = Vec::new();
-        assert_eq!(import_into(&store, &mut p, None, false, &mut |n, b| (got.push((n.to_string(), b)), Ok(())).1).unwrap(), 3);
+        let mut with_props: Vec<(i64, Dims)> = Vec::new();
+        assert_eq!(
+            import_into(&store, &mut p, None, false, &mut |n, b| (got.push((n.to_string(), b)), Ok(())).1, &mut |id, d| with_props.push((id, d.clone())))
+                .unwrap(),
+            3
+        );
+        // the node's properties come along (unknown dimensions are dropped; "set to nothing" is kept)
+        assert_eq!(with_props.len(), 1);
+        assert_eq!(with_props[0].1.get("period"), Some(&vec!["唐".to_string()]));
+        assert_eq!(with_props[0].1.get("kind"), Some(&Vec::new()));
+        assert!(!with_props[0].1.contains_key("bogus"));
         // only well-formed picture names are handed over
         assert_eq!(got, vec![("0123456789abcdef0123456789abcdef.png".to_string(), vec![9u8])]);
         let top = store.children(None).unwrap();
@@ -463,7 +498,7 @@ mod tests {
         assert_eq!(store.children(Some(top[0].id)).unwrap().len(), 2);
         // below a note, with a note for the library around it
         let mut p2 = Package::open(&path).unwrap();
-        assert_eq!(import_into(&store, &mut p2, Some(top[0].id), true, &mut |_, _| Ok(())).unwrap(), 4);
+        assert_eq!(import_into(&store, &mut p2, Some(top[0].id), true, &mut |_, _| Ok(()), &mut |_, _| {}).unwrap(), 4);
         let under = store.children(Some(top[0].id)).unwrap();
         assert_eq!(under.last().unwrap().title, "测试库");
         assert_eq!(store.children(Some(under.last().unwrap().id)).unwrap()[0].title, "甲/乙:丙");

@@ -18,6 +18,7 @@
 use crate::analyzer::{self, TermKind};
 use crate::bookcase::Bookcase;
 use crate::library::{cbeta_docs, HtmlTree, IndexDoc};
+use crate::props::Overlay;
 use crate::volume::VolumeText;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
@@ -206,16 +207,17 @@ impl SearchIndex {
     pub fn build(
         bc: &Bookcase,
         dir: &Path,
+        overlay: &Overlay,
         progress: impl FnMut(usize, usize),
     ) -> Result<BuildStats, String> {
-        let (total, docs) = cbeta_docs(bc);
+        let (total, docs) = cbeta_docs(bc, None);
         let meta = serde_json::json!({
             "kind": "cbeta",
             "data_version": bc.data_version(),
             "bookcase_version": bc.version,
             "bookcase_date": bc.date,
         });
-        build_index(dir, meta, total, docs, progress)
+        build_index(dir, meta, total, docs, overlay, progress)
     }
 
     /// Build the index of an HTML library (a user-made tree of a bookcase).
@@ -223,9 +225,10 @@ impl SearchIndex {
         bc: &Bookcase,
         lib: &HtmlTree,
         dir: &Path,
+        overlay: &Overlay,
         progress: impl FnMut(usize, usize),
     ) -> Result<BuildStats, String> {
-        let (total, docs) = lib.docs(bc);
+        let (total, docs) = lib.docs(bc, None);
         let meta = serde_json::json!({
             "kind": "html",
             "tree": lib.tree_id,
@@ -233,7 +236,7 @@ impl SearchIndex {
             "bookcase_version": bc.version,
             "bookcase_date": bc.date,
         });
-        build_index(dir, meta, total, docs, progress)
+        build_index(dir, meta, total, docs, overlay, progress)
     }
 
     pub fn open(dir: &Path) -> Result<SearchIndex, String> {
@@ -408,15 +411,41 @@ impl SearchIndex {
     }
 }
 
+/// The Tantivy document of an index document; `tops` collects the first
+/// levels of the two-level facets.
+fn make_doc(f: &Fields, d: &IndexDoc, tops: &mut BTreeMap<String, BTreeSet<String>>) -> TantivyDocument {
+    let mut doc = TantivyDocument::default();
+    doc.add_text(f.path, &d.path);
+    doc.add_text(f.book, &d.book);
+    doc.add_u64(f.juan, d.juan as u64);
+    doc.add_text(f.title, &d.title);
+    // index the punctuated text: punctuation is transparent to `aio`,
+    // and whitespace still separates Latin words
+    doc.add_text(f.body, &d.text);
+    doc.add_text(f.body1, &d.text);
+    for facet in &d.facets {
+        if facet.len() > 1 && facet.iter().all(|c| !c.is_empty()) {
+            let root = format!("/{}", facet[0]);
+            if facet.len() > 2 && is_two_level(&root) {
+                tops.entry(root).or_default().insert(facet[1].clone());
+            }
+            doc.add_facet(f.facet, Facet::from_path(facet.iter().map(|s| s.as_str())));
+        }
+    }
+    doc
+}
+
 /// Write documents into a new index in `dir` (which must be empty or
 /// absent). `meta` is stored next to the index with `index_version` and the
 /// number of documents. Documents that come out as `Err` are skipped
-/// (design-spec A.4: entries without real content are ignored).
+/// (design-spec A.4: entries without real content are ignored). The user's
+/// properties (`overlay`) are put into the facets of each document.
 pub fn build_index(
     dir: &Path,
     mut meta: serde_json::Value,
     total: usize,
     docs: impl Iterator<Item = Result<IndexDoc, String>>,
+    overlay: &Overlay,
     mut progress: impl FnMut(usize, usize),
 ) -> Result<BuildStats, String> {
     let start = std::time::Instant::now();
@@ -434,32 +463,15 @@ pub fn build_index(
         if n % 500 == 0 {
             progress(n, total);
         }
-        let d = match d {
+        let mut d = match d {
             Ok(d) => d,
             Err(e) => {
                 stats.skipped.push(e);
                 continue;
             }
         };
-        let mut doc = TantivyDocument::default();
-        doc.add_text(f.path, &d.path);
-        doc.add_text(f.book, &d.book);
-        doc.add_u64(f.juan, d.juan as u64);
-        doc.add_text(f.title, &d.title);
-        // index the punctuated text: punctuation is transparent to `aio`,
-        // and whitespace still separates Latin words
-        doc.add_text(f.body, &d.text);
-        doc.add_text(f.body1, &d.text);
-        for facet in &d.facets {
-            if facet.len() > 1 && facet.iter().all(|c| !c.is_empty()) {
-                let root = format!("/{}", facet[0]);
-                if facet.len() > 2 && is_two_level(&root) {
-                    tops.entry(root).or_default().insert(facet[1].clone());
-                }
-                doc.add_facet(f.facet, Facet::from_path(facet.iter().map(|s| s.as_str())));
-            }
-        }
-        writer.add_document(doc).map_err(|e| e.to_string())?;
+        overlay.apply(&mut d);
+        writer.add_document(make_doc(&f, &d, &mut tops)).map_err(|e| e.to_string())?;
         stats.volumes += 1;
     }
     progress(total, total);
@@ -471,6 +483,49 @@ pub fn build_index(
     std::fs::write(dir.join(META_FILE), serde_json::to_string_pretty(&meta).unwrap()).map_err(|e| e.to_string())?;
     stats.seconds = start.elapsed().as_secs_f64();
     Ok(stats)
+}
+
+/// Replace some documents of an existing index (same `path`, new facets: the
+/// properties of the user changed). The index must be opened again afterwards.
+/// Returns the number of documents written.
+pub fn update_docs(
+    dir: &Path,
+    docs: impl Iterator<Item = Result<IndexDoc, String>>,
+    overlay: &Overlay,
+) -> Result<usize, String> {
+    let meta_text = std::fs::read_to_string(dir.join(META_FILE)).map_err(|_| format!("no index in {}", dir.display()))?;
+    let mut meta: serde_json::Value = serde_json::from_str(&meta_text).map_err(|e| e.to_string())?;
+    if meta["index_version"].as_u64() != Some(INDEX_VERSION as u64) {
+        return Err("索引版本过旧，请重建索引".into());
+    }
+    let index = Index::open_in_dir(dir).map_err(|e| e.to_string())?;
+    register_tokenizers(&index);
+    let (_, f) = schema();
+    let mut writer = index.writer::<TantivyDocument>(200_000_000).map_err(|e| e.to_string())?;
+    let mut tops: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut n = 0;
+    for d in docs {
+        let Ok(mut d) = d else { continue };
+        overlay.apply(&mut d);
+        writer.delete_term(Term::from_field_text(f.path, &d.path));
+        writer.add_document(make_doc(&f, &d, &mut tops)).map_err(|e| e.to_string())?;
+        n += 1;
+    }
+    writer.commit().map_err(|e| e.to_string())?;
+    writer.wait_merging_threads().map_err(|e| e.to_string())?;
+    // new first-level names join the recorded ones
+    let mut all: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    if let Some(o) = meta["facet_tops"].as_object() {
+        for (k, v) in o {
+            all.insert(k.clone(), v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default());
+        }
+    }
+    for (k, v) in tops {
+        all.entry(k).or_default().extend(v);
+    }
+    meta["facet_tops"] = serde_json::json!(all);
+    std::fs::write(dir.join(META_FILE), serde_json::to_string_pretty(&meta).unwrap()).map_err(|e| e.to_string())?;
+    Ok(n)
 }
 
 // ------------------------------------------------------------ queries
@@ -804,7 +859,7 @@ mod tests {
 
     fn build() -> (tempdir::Dir, SearchIndex) {
         let dir = tempdir::Dir::new();
-        let stats = SearchIndex::build(&fixture(), dir.path(), |_, _| {}).unwrap();
+        let stats = SearchIndex::build(&fixture(), dir.path(), &Overlay::default(), |_, _| {}).unwrap();
         assert_eq!(stats.volumes, 3);
         let idx = SearchIndex::open(dir.path()).unwrap();
         (dir, idx)
@@ -882,9 +937,9 @@ mod tests {
         ]
         .into_iter()
         .map(|(book, path, text)| {
-            Ok(IndexDoc { path: path.into(), book: book.into(), juan: 1, title: book.into(), text: text.into(), facets: vec![] })
+            Ok(IndexDoc { path: path.into(), book: book.into(), juan: 1, title: book.into(), text: text.into(), facets: vec![], keys: vec![] })
         });
-        build_index(d.path(), serde_json::json!({}), 3, docs, |_, _| {}).unwrap();
+        build_index(d.path(), serde_json::json!({}), 3, docs, &Overlay::default(), |_, _| {}).unwrap();
         let idx = SearchIndex::open(d.path()).unwrap();
         let mut req = SearchRequest::new("如是我聞");
         assert_eq!(idx.search(&req).unwrap().total_volumes, 3);
@@ -954,6 +1009,44 @@ mod tests {
         req.filters = vec![filter("/bulei", &["阿含部類"])];
         assert_eq!(books(&idx.search(&req).unwrap()), vec!["T0001_1"]);
         assert_eq!(idx.count(&req).unwrap(), 1);
+    }
+
+    #[test]
+    fn user_properties_change_the_facets_and_can_be_updated_later() {
+        use crate::props::{Dims, Props};
+        let d = tempdir::Dir::new();
+        let bc = fixture();
+        let props = Props::memory().unwrap();
+        let set = |p: &Props, dim: &str, v: &[&str]| {
+            let mut m = Dims::new();
+            m.insert(dim.to_string(), v.iter().map(|s| s.to_string()).collect());
+            p.set("cbeta", Some("T0262"), "", &m).unwrap();
+        };
+        set(&props, "period", &["姚秦"]);
+        SearchIndex::build(&bc, d.path(), &props.overlay("cbeta").unwrap(), |_, _| {}).unwrap();
+        let idx = SearchIndex::open(d.path()).unwrap();
+        let with = |idx: &SearchIndex, dim: &str, v: &str| {
+            let mut req = SearchRequest::new("");
+            req.filters = vec![filter(dim, &[v])];
+            idx.search(&req).unwrap().total_volumes
+        };
+        assert_eq!(with(&idx, "/period", "姚秦"), 2);
+        // change it later: only the book's volumes are written again
+        let mut m = Dims::new();
+        m.insert("period".to_string(), vec!["後秦".to_string()]);
+        m.insert("bulei".to_string(), vec!["新部/子部".to_string()]);
+        props.set("cbeta", Some("T0262"), "", &m).unwrap();
+        let only: HashSet<String> = ["T0262".to_string()].into_iter().collect();
+        let (_, docs) = cbeta_docs(&bc, Some(&only));
+        let n = update_docs(d.path(), docs, &props.overlay("cbeta").unwrap()).unwrap();
+        assert_eq!(n, 2);
+        let idx = SearchIndex::open(d.path()).unwrap();
+        assert_eq!(idx.search(&SearchRequest::new("")).unwrap().total_volumes, 3); // no document twice
+        assert_eq!(with(&idx, "/period", "姚秦"), 0);
+        assert_eq!(with(&idx, "/bulei", "新部/子部"), 2);
+        assert_eq!(with(&idx, "/bulei", "新部"), 2);
+        assert_eq!(with(&idx, "/bulei", "法華部類"), 0);
+        assert_eq!(with(&idx, "/bulei", "阿含部類"), 1); // the other book keeps its own
     }
 
     #[test]

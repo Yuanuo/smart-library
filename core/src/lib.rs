@@ -25,6 +25,7 @@ pub mod markdown;
 pub mod markup;
 pub mod nav;
 pub mod notes;
+pub mod props;
 pub mod render;
 pub mod search;
 pub mod source;

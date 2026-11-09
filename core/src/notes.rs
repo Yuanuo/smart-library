@@ -47,6 +47,8 @@ pub struct NoteRow {
     pub content: String,
     pub content_type: String,
     pub folders: Vec<String>,
+    /// ids of the notes above it, top first
+    pub ancestors: Vec<i64>,
 }
 
 fn now() -> i64 {
@@ -351,14 +353,17 @@ impl NotesStore {
         while let Some(n) = stack.pop() {
             let (id, _, title, content, content_type) = &all[n];
             let mut folders = Vec::new();
+            let mut ancestors = Vec::new();
             let mut cur = info[id].0;
             while let Some(p) = cur {
                 let (up, t) = info[&p];
                 folders.push(t.to_string());
+                ancestors.push(p);
                 cur = up;
             }
             folders.reverse();
-            out.push(NoteRow { id: *id, title: title.clone(), content: content.clone(), content_type: content_type.clone(), folders });
+            ancestors.reverse();
+            out.push(NoteRow { id: *id, title: title.clone(), content: content.clone(), content_type: content_type.clone(), folders, ancestors });
             if let Some(k) = children.get(&Some(*id)) {
                 stack.extend(k.iter().rev());
             }
@@ -407,6 +412,7 @@ pub fn docs(rows: &[NoteRow], library_title: &str) -> Vec<IndexDoc> {
                 title: r.title.clone(),
                 text,
                 facets,
+                keys: r.ancestors.iter().chain(std::iter::once(&r.id)).map(|i| (String::new(), i.to_string())).collect(),
             }
         })
         .collect()

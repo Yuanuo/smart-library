@@ -243,9 +243,9 @@ fn cmd_index(bc: &Bookcase, dir: &Path, tree: Option<&str>) {
     println!("building index for {} ({}) in {}", bc.data_version(), bc.version, dir.display());
     let show = |done: usize, total: usize| eprint!("\r  {}/{} documents", done, total);
     let res = match tree {
-        None => SearchIndex::build(bc, dir, show),
+        None => SearchIndex::build(bc, dir, &Default::default(), show),
         Some(t) => match smart_library_core::library::HtmlTree::open(bc, t) {
-            Ok(lib) => SearchIndex::build_html(bc, &lib, dir, show),
+            Ok(lib) => SearchIndex::build_html(bc, &lib, dir, &Default::default(), show),
             Err(e) => Err(e),
         },
     };

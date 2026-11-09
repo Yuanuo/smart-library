@@ -82,6 +82,8 @@ fn main() {
             commands::mark_delete,
             commands::mark_list,
             commands::mark_tags,
+            commands::props_get,
+            commands::props_set,
             commands::node_tags_get,
             commands::node_tags_set,
             commands::cite_text,

@@ -236,9 +236,24 @@ impl FolderLibrary {
                 title: stem_of(&f.name).to_string(),
                 text: a.text.text,
                 facets,
+                keys: path_keys(&f.rel),
             })
         })
     }
+}
+
+/// The folders above a file and the file, as nodes that can carry properties.
+fn path_keys(rel: &str) -> Vec<(String, String)> {
+    let mut keys = Vec::new();
+    let mut cur = String::new();
+    for part in rel.split('/') {
+        if !cur.is_empty() {
+            cur.push('/');
+        }
+        cur.push_str(part);
+        keys.push((String::new(), cur.clone()));
+    }
+    keys
 }
 
 fn esc(s: &str) -> String {

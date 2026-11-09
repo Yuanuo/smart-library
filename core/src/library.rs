@@ -17,7 +17,7 @@ use crate::bookcase::Bookcase;
 use crate::bookinfo::bookinfo;
 use crate::nav::{NavDoc, NavNode};
 use crate::text::decode_auto;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeGroup {
@@ -90,51 +90,30 @@ pub struct IndexDoc {
     pub text: String,
     /// facet paths, e.g. `["bulei", "阿含部類", "阿含部"]`
     pub facets: Vec<Vec<String>>,
+    /// the node and the nodes above it that can carry properties, as
+    /// (book id, path), the document itself last (`props::Overlay`)
+    pub keys: Vec<(String, String)>,
 }
 
 /// Every existing volume of every registered CBETA book (LC, Y are not
 /// registered). Unreadable volumes come out as `Err` and are skipped.
-pub fn cbeta_docs(bc: &Bookcase) -> (usize, impl Iterator<Item = Result<IndexDoc, String>> + '_) {
+pub fn cbeta_docs<'a>(bc: &'a Bookcase, only: Option<&'a HashSet<String>>) -> (usize, impl Iterator<Item = Result<IndexDoc, String>> + 'a) {
     let mut jobs = Vec::new();
-    for id in &bc.catalog.order {
+    for id in bc.catalog.order.iter().filter(|id| only.is_none_or(|o| o.contains(*id))) {
         for v in bc.volumes(id) {
             if v.exists {
                 jobs.push((id.clone(), v));
             }
         }
     }
-    let info = bookinfo();
     let total = jobs.len();
-    // facets carry the canon's name (大正新脩大藏經), not its code (T)
-    let canon_names: HashMap<String, String> = bc.tripitakas.iter().map(|t| (t.id.clone(), t.name.clone())).collect();
     let iter = jobs.into_iter().filter_map(move |(book_id, vol)| {
         let book = bc.book(&book_id)?;
         let vt = match bc.volume_text(&vol.path) {
             Ok(v) => v,
             Err(e) => return Some(Err(e)),
         };
-        let mut facets = vec![
-            vec!["canon".to_string(), canon_names.get(&book.canon).filter(|n| !n.is_empty()).unwrap_or(&book.canon).clone()],
-            vec!["book".to_string(), book_id.clone()],
-        ];
-        let mut bulei = vec!["bulei".to_string()];
-        bulei.extend(book.catalog.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()));
-        if bulei.len() > 1 {
-            facets.push(bulei);
-        }
-        if let Some(bi) = info.get(&book_id) {
-            if !bi.kind_label.is_empty() {
-                let mut kind = vec!["kind".to_string()];
-                kind.extend(bi.kind_label.split('：').map(|s| s.to_string()));
-                facets.push(kind);
-            }
-            for p in &bi.periods {
-                facets.push(vec!["period".to_string(), p.clone()]);
-            }
-            for a in &bi.authors {
-                facets.push(vec!["person".to_string(), a.clone()]);
-            }
-        }
+        let facets = cbeta_facets(bc, &book_id)?;
         Some(Ok(IndexDoc {
             path: vol.path.clone(),
             book: book_id.clone(),
@@ -142,9 +121,43 @@ pub fn cbeta_docs(bc: &Bookcase) -> (usize, impl Iterator<Item = Result<IndexDoc
             title: book.title.clone(),
             text: vt.text,
             facets,
+            keys: vec![(book_id.clone(), String::new())],
         }))
     });
     (total, iter)
+}
+
+/// The facets of a CBETA book as the data gives them (no user properties).
+pub fn cbeta_facets(bc: &Bookcase, book_id: &str) -> Option<Vec<Vec<String>>> {
+    let book = bc.book(book_id)?;
+    // facets carry the canon's name (大正新脩大藏經), not its code (T)
+    let canon = bc
+        .tripitakas
+        .iter()
+        .find(|t| t.id == book.canon)
+        .map(|t| t.name.clone())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| book.canon.clone());
+    let mut facets = vec![vec!["canon".to_string(), canon], vec!["book".to_string(), book_id.to_string()]];
+    let mut bulei = vec!["bulei".to_string()];
+    bulei.extend(book.catalog.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+    if bulei.len() > 1 {
+        facets.push(bulei);
+    }
+    if let Some(bi) = bookinfo().get(book_id) {
+        if !bi.kind_label.is_empty() {
+            let mut kind = vec!["kind".to_string()];
+            kind.extend(bi.kind_label.split('：').map(|s| s.to_string()));
+            facets.push(kind);
+        }
+        for p in &bi.periods {
+            facets.push(vec!["period".to_string(), p.clone()]);
+        }
+        for a in &bi.authors {
+            facets.push(vec!["person".to_string(), a.clone()]);
+        }
+    }
+    Some(facets)
 }
 
 /// An article of an HTML library, as placed by its tree.
@@ -241,8 +254,10 @@ impl HtmlTree {
     }
 
     /// Index documents for every article of the tree.
-    pub fn docs<'a>(&'a self, bc: &'a Bookcase) -> (usize, impl Iterator<Item = Result<IndexDoc, String>> + 'a) {
-        let iter = self.leaves.iter().map(move |leaf| {
+    pub fn docs<'a>(&'a self, bc: &'a Bookcase, only: Option<&'a HashSet<String>>) -> (usize, impl Iterator<Item = Result<IndexDoc, String>> + 'a) {
+        let leaves: Vec<&HtmlLeaf> = self.leaves.iter().filter(|l| only.is_none_or(|o| o.contains(&l.path))).collect();
+        let total = leaves.len();
+        let iter = leaves.into_iter().map(move |leaf| {
             let bytes = bc.source.read(&leaf.path).ok_or_else(|| format!("{}: not in the bookcase", leaf.path))?;
             let a = read_article(&decode_auto(&bytes), &leaf.path, None);
             let mut facets = Vec::new();
@@ -273,9 +288,10 @@ impl HtmlTree {
                 title: leaf.title.clone(),
                 text: a.text.text,
                 facets,
+                keys: vec![(String::new(), leaf.path.clone())],
             })
         });
-        (self.leaves.len(), iter)
+        (total, iter)
     }
 }
 
@@ -342,7 +358,7 @@ mod tests {
         assert_eq!(lib.leaves.len(), 2);
         assert_eq!(lib.leaf("a/ZB/z/2.html").unwrap().folders, vec!["著作", "悲惨世界"]);
         assert_eq!(lib.siblings("a/ZB/z/1.html").len(), 2);
-        let (total, docs) = lib.docs(&bc);
+        let (total, docs) = lib.docs(&bc, None);
         let docs: Vec<IndexDoc> = docs.map(|d| d.unwrap()).collect();
         assert_eq!(total, 2);
         assert_eq!(docs[0].book, "悲惨世界");
