@@ -36,7 +36,7 @@
   import ContextMenu from "./ContextMenu.svelte";
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
-  import { parseSource } from "./clip.js";
+  import { parseSource, sourceUrl } from "./clip.js";
   import { settings, update } from "./settings.svelte.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
 
@@ -402,7 +402,13 @@
       if (!onjump) return;
       api.resolveZimLink(vol.lib, vol.path, zimLink.dataset.zimHref)
         .then((to) => {
-          if (!to.external_url) return onjump({ lib: to.lib, path: to.path, lb: to.lb });
+          if (!to.external_url) {
+            // Archive-relative links are resolved lazily, then use the same
+            // smartlib address format as source links in notes.
+            const url = sourceUrl({ lib: to.lib, path: to.path, lb: to.lb });
+            zimLink.dataset.src = url;
+            return onjump(parseSource(url));
+          }
           if (settings.zimExternal === "always") return openExternal(to.external_url);
           externalPrompt = to.external_url;
         })

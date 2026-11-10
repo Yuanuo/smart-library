@@ -17,6 +17,35 @@
   background: var(--bg);
 }
 
+/* Link markers inherit the link color and remain aligned with surrounding text. */
+.doc a.src::before,
+.doc a.zim-link[data-link-kind="internal"]::before,
+.note-editor a[data-smartlib]::before,
+.doc a.zim-link[data-link-kind="external"]::before,
+.note-editor a[href^="https://"]::before,
+.note-editor a[href^="http://"]::before {
+  content: "";
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.2em;
+  vertical-align: -0.12em;
+  background: currentColor;
+  mask: center / contain no-repeat;
+}
+
+.doc a.src::before,
+.doc a.zim-link[data-link-kind="internal"]::before,
+.note-editor a[data-smartlib]::before {
+  mask-image: url("./lib/icons/link-document.svg");
+}
+
+.doc a.zim-link[data-link-kind="external"]::before,
+.note-editor a[href^="https://"]::before,
+.note-editor a[href^="http://"]::before {
+  mask-image: url("./lib/icons/link-web.svg");
+}
+
 /* dark: the system's choice unless the settings say light; or chosen */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {

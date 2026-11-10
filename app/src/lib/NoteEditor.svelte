@@ -13,6 +13,7 @@
   import { onMount, onDestroy, untrack } from "svelte";
   import { Crepe } from "@milkdown/crepe";
   import { insert } from "@milkdown/kit/utils";
+  import { linkAttr } from "@milkdown/kit/preset/commonmark";
   import "@milkdown/crepe/theme/common/style.css";
   import "@milkdown/crepe/theme/frame.css";
   import * as api from "./api.js";
@@ -66,6 +67,12 @@
         [F.Placeholder]: { text: "写点什么……（输入 / 选择标题、列表、引文、表格、代码、图片；可以直接粘贴图片）" },
       },
     });
+    // Milkdown sanitizes custom schemes in href; retain our own safe link in
+    // a data attribute while leaving its URL sanitizer in place.
+    c.editor.config((ctx) => ctx.set(linkAttr.key, (mark) => {
+      const href = mark.attrs.href || "";
+      return parseSource(href) ? { "data-smartlib": href } : {};
+    }));
     // the editor writes the text its own way when it loads: only a change after that counts
     c.on((l) =>
       l.markdownUpdated((_, md) => {
@@ -172,7 +179,7 @@
   // ---- clicks and menus
   function click(e) {
     const a = e.target.closest?.("a");
-    const to = a && parseSource(a.getAttribute("href") || "");
+    const to = a && parseSource(a.dataset.smartlib || a.getAttribute("href") || "");
     if (!to) return;
     e.preventDefault();
     e.stopPropagation();
@@ -230,4 +237,5 @@
     min-height: 100%;
   }
   .note-editor :global(.milkdown .ProseMirror) { padding: 24px 56px 80px; font-size: var(--reader-size, 19px); line-height: var(--reader-line, 1.9); }
+  .note-editor :global(a[data-smartlib]) { color: var(--accent); cursor: pointer; }
 </style>

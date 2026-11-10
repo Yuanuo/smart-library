@@ -366,7 +366,9 @@ impl Walker {
             }
             "a" if self.zim && el.attr("href").is_some_and(|href| crate::zim::is_internal_href(href) || crate::zim::external_url(href).is_some()) => {
                 if let Some(h) = self.html.as_mut() {
-                    h.open("a", &[("class", "zim-link"), ("href", "#"), ("data-zim-href", el.attr("href").unwrap())]);
+                    let href = el.attr("href").unwrap();
+                    let kind = if crate::zim::external_url(href).is_some() { "external" } else { "internal" };
+                    h.open("a", &[("class", "zim-link"), ("href", "#"), ("data-zim-href", href), ("data-link-kind", kind)]);
                 }
                 self.walk_children(el);
                 self.close("a");
