@@ -213,7 +213,7 @@
       if (n) {
         n.children = fresh;
         n.lazy = false;
-        (expanded[lib] ??= {})[key] = true;
+        expansionOf(lib)[key] = true;
       }
     } else {
       nodes[lib] = fresh;
@@ -530,7 +530,7 @@
       let k = "";
       for (const i of trail) {
         k += `/${i}`;
-        (expanded[l.id] ??= {})[k] = true;
+        expansionOf(l.id)[k] = true;
       }
       if (k) await refresh(l.id, k); // the target may have been a leaf: read what it holds now
     }
@@ -600,7 +600,7 @@
       let k = "";
       for (const i of trail) {
         k += `/${i}`;
-        (expanded[l.id] ??= {})[k] = true;
+        expansionOf(l.id)[k] = true;
       }
       await reconcile(l.id, null);
     }
@@ -902,6 +902,11 @@
     return trail ? { lib: c.lib, key: "/" + trail.join("/") } : null;
   });
   let expanded = $state({}); // lib id -> { node key -> true }
+  function expansionOf(lib) {
+    // Read back the object after assignment to get Svelte's reactive proxy.
+    if (!expanded[lib]) expanded[lib] = {};
+    return expanded[lib];
+  }
   let current = $state(null); // { lib, key }: the node revealed last
   let panel = $state();
 
@@ -959,7 +964,7 @@
   }
 
   async function toggleNode(lib, key) {
-    const ex = (expanded[lib] ??= {});
+    const ex = expansionOf(lib);
     if (ex[key]) delete ex[key];
     else {
       // opening the current month of the diary makes sure that today's entry is there
@@ -1053,7 +1058,7 @@
     if (!nodes[lib]) await load(lib);
     const trail = await trailOf(lib, bookId, path);
     if (!trail) return false;
-    const ex = (expanded[lib] ??= {});
+    const ex = expansionOf(lib);
     let key = "";
     for (const i of trail.slice(0, -1)) {
       key += `/${i}`;
