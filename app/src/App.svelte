@@ -299,10 +299,15 @@
 
   let propsDlg = $state(null); // { lib, libTitle, bookId, path, title }
   /** The properties dialog of a node: CBETA the whole book; the others the article / file / folder / note. */
-  function propsFromTree(l, node) {
+  function propsFromTree(l, node, treeKey = "") {
+    if (!node) {
+      propsDlg = { lib: l.id, libTitle: l.title, bookId: null, path: "", title: l.title };
+      return;
+    }
     const bookId = l.kind === "cbeta" ? node.book_id : null;
-    const path = l.kind === "cbeta" ? "" : (node.path ?? node.rel);
-    if (l.kind === "cbeta" ? !bookId : path == null) return;
+    const isNavFolder = (l.kind === "cbeta" || l.kind === "html") && !node.book_id && !node.path;
+    const path = isNavFolder ? `@nav${treeKey}` : l.kind === "cbeta" ? "" : (node.path ?? node.rel);
+    if (path == null) return;
     propsDlg = { lib: l.id, libTitle: l.title, bookId, path, title: node.title };
   }
 

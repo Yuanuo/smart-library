@@ -82,7 +82,6 @@ fn main() {
             commands::inspect_folder,
             commands::add_folder,
             commands::add_zim,
-            commands::set_zim_wiki_id,
             commands::set_folder_writable,
             commands::create_folder_file,
             commands::create_folder_dir,

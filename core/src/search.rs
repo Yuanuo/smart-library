@@ -33,7 +33,7 @@ use tantivy::{Index, IndexReader, ReloadPolicy, TantivyDocument, Term};
 
 /// Bumped whenever the schema or the analyzer changes: an index with another
 /// version must be rebuilt.
-pub const INDEX_VERSION: u32 = 4;
+pub const INDEX_VERSION: u32 = 5;
 const META_FILE: &str = "smart-library-index.json";
 
 // ------------------------------------------------------------ tokenizers
@@ -419,6 +419,9 @@ fn make_doc(f: &Fields, d: &IndexDoc, tops: &mut BTreeMap<String, BTreeSet<Strin
     doc.add_text(f.book, &d.book);
     doc.add_u64(f.juan, d.juan as u64);
     doc.add_text(f.title, &d.title);
+    // Titles remain searchable even when the user excludes the body.
+    doc.add_text(f.body, &d.title);
+    doc.add_text(f.body1, &d.title);
     // index the punctuated text: punctuation is transparent to `aio`,
     // and whitespace still separates Latin words
     doc.add_text(f.body, &d.text);
@@ -971,6 +974,26 @@ mod tests {
         assert_eq!(idx.count(&req).unwrap(), 2);
         req.within = Some(Within::default());
         assert_eq!(idx.search(&req).unwrap().total_volumes, 0);
+    }
+
+    #[test]
+    fn root_properties_exclude_bodies_but_keep_titles_and_child_overrides() {
+        let props = crate::props::Props::memory().unwrap();
+        props.set("lib", None, "", &[("index_content".into(), vec!["off".into()]), ("person".into(), vec!["根作者".into()])].into_iter().collect()).unwrap();
+        props.set("lib", None, "allow", &[("index_content".into(), vec!["on".into()])].into_iter().collect()).unwrap();
+        let make = |path: &str, key: &str, title: &str| Ok(IndexDoc {
+            path: path.into(), book: "book".into(), juan: 0, title: title.into(), text: "秘密正文".into(),
+            facets: vec![], keys: vec![(String::new(), key.into())],
+        });
+        let d = tempdir::Dir::new();
+        build_index(d.path(), serde_json::json!({}), 2, vec![make("one", "one", "第一标题"), make("two", "allow", "第二标题")].into_iter(), &props.overlay("lib").unwrap(), |_, _| {}).unwrap();
+        let idx = SearchIndex::open(d.path()).unwrap();
+        let body = idx.search(&SearchRequest::new("秘密正文")).unwrap();
+        assert_eq!(body.total_volumes, 1);
+        assert_eq!(body.hits[0].path, "two");
+        assert_eq!(idx.search(&SearchRequest::new("第一标题")).unwrap().hits[0].path, "one");
+        let all = idx.search(&SearchRequest::new("")).unwrap();
+        assert!(all.facets.iter().any(|f| f.root == "/person" && f.values.iter().any(|v| v.0 == "根作者" && v.1 == 2)));
     }
 
     fn filter(root: &str, values: &[&str]) -> Filter {

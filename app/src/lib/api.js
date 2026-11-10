@@ -4,14 +4,13 @@ import { listen } from "@tauri-apps/api/event";
 
 export const status = () => invoke("status");
 export const inspectSource = (path) => invoke("inspect_source", { path });
-export const bindLibraries = (path, cbetaTree, htmlTrees) =>
-  invoke("bind_libraries", { path, cbetaTree, htmlTrees });
+export const bindLibraries = (path, cbetaTree, htmlTrees, libraryIds = {}) =>
+  invoke("bind_libraries", { path, cbetaTree, htmlTrees, libraryIds });
 export const inspectFolder = (path) => invoke("inspect_folder", { path });
-export const addFolder = (path, title, exts, maxMb, writable = false) => invoke("add_folder", { path, title, exts, maxMb, writable });
+export const addFolder = (path, title, exts, maxMb, writable = false, libraryId = "") => invoke("add_folder", { path, title, exts, maxMb, writable, libraryId });
 /** Read-write mode of a folder library on or off (ask the user to accept the rules first: writable.js). */
 export const setFolderWritable = (id, writable) => invoke("set_folder_writable", { id, writable });
-export const addZim = (path, wikiId = "") => invoke("add_zim", { path, wikiId });
-export const setZimWikiId = (id, wikiId) => invoke("set_zim_wiki_id", { id, wikiId });
+export const addZim = (path, libraryId = "") => invoke("add_zim", { path, libraryId });
 export const resolveZimLink = (lib, path, href) => invoke("resolve_zim_link", { lib, path, href });
 export const openExternalUrl = (url) => invoke("open_external_url", { url });
 /** A new note / mind map / whiteboard file (`kind`: md, mindmap, whiteboard) in a folder (`parent`: path, "" for the top). */
@@ -40,7 +39,7 @@ export const fileNameRules = () => invoke("file_name_rules");
 /** Rejects with the reason when `name` cannot be a local file name. */
 export const checkFileName = (name) => invoke("check_file_name", { name });
 export const folderChildren = (lib, rel) => invoke("folder_children", { lib, rel });
-export const createNotesLibrary = (title) => invoke("create_notes_library", { title });
+export const createNotesLibrary = (title, libraryId = "") => invoke("create_notes_library", { title, libraryId });
 export const createNote = (lib, parent, title) => invoke("create_note", { lib, parent, title });
 export const noteTargets = (query) => invoke("note_targets", { query });
 export const createNoteAt = (defaultLib, position, title = null, kind = null) => invoke("create_note_at", { defaultLib, position, title, kind });

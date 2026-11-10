@@ -246,13 +246,13 @@ impl Zim {
         let path = format!("{}/{}", entry.namespace as char, entry.path);
         let text = self.article(index, None)?.text.plain;
         Ok(crate::library::IndexDoc {
-            path,
+            path: path.clone(),
             book: title.clone(),
             juan: 0,
             title,
             text,
             facets: vec![],
-            keys: vec![],
+            keys: vec![(String::new(), path)],
         })
     }
     pub fn read(&mut self, index: usize) -> Result<Vec<u8>, String> {

@@ -849,10 +849,10 @@
         { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) }) },
         { label: "加入每日一句来源", action: () => onsearchfrom("daily-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) }) },
       ],
-      node.book_id || node.path || node.rel
+      node.book_id || node.path || node.rel || l.kind === "cbeta" || l.kind === "html"
         ? [
-            { label: "属性…", action: () => onprops(l, node) },
-            { label: "标签…", action: () => ontag(l, node) },
+            { label: "属性…", action: () => onprops(l, node, key) },
+            ...(node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node) }] : []),
           ]
         : [],
       [
@@ -1100,7 +1100,7 @@
               ...(l.kind === "folder" ? [{ label: "新建文件夹…", action: () => newFolder(l.id, null) }] : []),
             ]
           : [],
-        [{ label: "重命名…（F2）", action: () => renameLibrary(l) }, ...(l.kind === "zim" ? [{ label: "设置维基关联 ID…", action: () => setZimId(l) }] : [])],
+        [{ label: "重命名…（F2）", action: () => renameLibrary(l) }, { label: "属性…", action: () => onprops(l, null) }],
         [
           ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
           { label: "复制目录树路径", action: () => oncopy(l.title) },
@@ -1126,14 +1126,6 @@
   }
 
   /** Another name for a library; a bound one is only shown under it, its data stays as it is. */
-  function setZimId(l) {
-    nameDlg = {
-      title: "设置维基关联 ID", label: "关联 ID", value: l.tree || "", allowEmpty: true,
-      hint: "例如 wikipedia、wikiquote 或 wikibooks；留空可取消关联。",
-      onok: guard(l.id, async (id) => { await api.setZimWikiId(l.id, id); await onlibs?.(); }),
-    };
-  }
-
   function renameLibrary(l) {
     nameDlg = {
       title: "重命名知识库",

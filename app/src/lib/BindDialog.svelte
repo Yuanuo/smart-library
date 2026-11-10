@@ -27,7 +27,8 @@
   let maxMb = $state(50);
   let writable = $state(false); // read-write mode: the user must accept the rules (confirmWritable)
   let path = $state("");
-  let wikiId = $state("");
+  let libraryId = $state("");
+  let libraryIds = $state({});
   let src = $state(null);
   let error = $state("");
   let busy = $state(false);
@@ -101,21 +102,21 @@
     error = "";
     try {
       if (kind === "notes") {
-        onbound(await api.createNotesLibrary(notesTitle));
+        onbound(await api.createNotesLibrary(notesTitle, libraryId));
         return;
       }
       if (kind === "zim") {
-        onbound(await api.addZim(path, wikiId));
+        onbound(await api.addZim(path, libraryId));
         return;
       }
       if (kind === "folder") {
         if (writable && !(await confirmWritable(folderTitle || folder.name))) return;
-        const st = await api.addFolder(folder.path, folderTitle, exts, Math.max(0, Math.floor(Number(maxMb) || 0)), writable);
+        const st = await api.addFolder(folder.path, folderTitle, exts, Math.max(0, Math.floor(Number(maxMb) || 0)), writable, libraryId);
         onbound(st);
         return;
       }
       const newHtml = htmlTrees.filter((t) => html[t.id] && !t.bound_as).map((t) => t.id);
-      const st = await api.bindLibraries(src.path, cbetaTree || null, newHtml);
+      const st = await api.bindLibraries(src.path, cbetaTree || null, newHtml, libraryIds);
       onbound(st);
     } catch (e) {
       error = String(e);
@@ -139,6 +140,7 @@
     {:else if kind === "notes"}
       <p class="muted">新建一个空的知识库，之后在目录树里右键添加笔记。内容保存在本程序的数据目录里（一个 SQLite 文件）；它是你自己写的内容，没有原始数据可以重新导入，请注意备份。</p>
       <label class="field">名称 <input type="text" bind:value={notesTitle} placeholder="例如：读书笔记" /></label>
+      <label class="field">知识库 ID（可选）<input type="text" bind:value={libraryId} placeholder="留空自动生成" /></label>
       {#if error}<p class="error">{error}</p>{/if}
     {:else if kind === "folder"}
       <p class="muted">链接一个本机文件夹，子目录会按真实结构显示在目录树里。默认只读，Smart Library 不会修改其中的文件；也可以选择读写模式，直接编辑里面的笔记。</p>
@@ -150,6 +152,7 @@
       {#if error}<p class="error">{error}</p>{/if}
       {#if folder && !folder.conflict}
         <label class="field">名称 <input type="text" bind:value={folderTitle} /></label>
+        <label class="field">知识库 ID（可选）<input type="text" bind:value={libraryId} placeholder="留空自动生成" /></label>
         <fieldset>
           <legend>索引哪些文件</legend>
           <label class="field">文件后缀（逗号或空格分隔）<input type="text" bind:value={exts} /></label>
@@ -171,10 +174,10 @@
       <p class="muted">选择 ZIM 文件。数据包只读，绑定后可搜索标题并建立全文索引。</p>
       <div class="row">
         <input type="text" bind:value={path} placeholder="C:\\…\\wikipedia.zim" aria-label="ZIM 文件" />
-        <button type="button" onclick={async () => { const f = await open({ multiple: false, filters: [{ name: "ZIM", extensions: ["zim"] }] }); if (f) { path = f; const name = f.split(/[\\/]/).pop().toLowerCase(); wikiId = ["wikipedia", "wikiquote", "wikibooks", "wikisource", "wiktionary", "wikivoyage", "wikinews", "wikiversity"].find((id) => name.startsWith(id + "_")) ?? ""; } }}>选择文件…</button>
+        <button type="button" onclick={async () => { const f = await open({ multiple: false, filters: [{ name: "ZIM", extensions: ["zim"] }] }); if (f) { path = f; const name = f.split(/[\\/]/).pop().toLowerCase(); libraryId = ["wikipedia", "wikiquote", "wikibooks", "wikisource", "wiktionary", "wikivoyage", "wikinews", "wikiversity"].find((id) => name.startsWith(id + "_")) ?? ""; } }}>选择文件…</button>
       </div>
-      <label class="field">关联 ID（可选）<input type="text" bind:value={wikiId} placeholder="例如 wikipedia、wikiquote" /></label>
-      <p class="hint muted">跨维基站点的链接会先查找对应 ID 的 ZIM 库；每个 ID 只能分配给一个库。</p>
+      <label class="field">知识库 ID（可选）<input type="text" bind:value={libraryId} placeholder="例如 wikipedia、wikiquote" /></label>
+      <p class="hint muted">跨维基站点链接按知识库 ID 查找，例如 wikipedia。</p>
       {#if error}<p class="error">{error}</p>{/if}
     {:else}
     <p class="muted">选择 CBETA 的 bookcase.zip（或已解压的目录）。Smart Library 只读取数据，不会修改它。</p>
@@ -207,6 +210,7 @@
             </label>
           {/if}
         </fieldset>
+        {#if cbetaTree && !cbetaBound}<label class="field">CBETA 知识库 ID（可选）<input type="text" bind:value={libraryIds[cbetaTree]} placeholder="留空自动生成" /></label>{/if}
       {/if}
 
       {#if htmlTrees.length}
@@ -218,6 +222,7 @@
               <input type="checkbox" bind:checked={html[t.id]} disabled={!!t.bound_as} />
               {t.title} <span class="muted">· a/{t.code}/ · {t.leaves} 篇{t.bound_as ? " · 已绑定" : ""}</span>
             </label>
+            {#if html[t.id] && !t.bound_as}<label class="field">{t.title} 的知识库 ID（可选）<input type="text" bind:value={libraryIds[t.id]} placeholder="留空自动生成" /></label>{/if}
           {/each}
         </fieldset>
       {/if}
@@ -228,6 +233,8 @@
     {/if}
 
     {/if}
+
+    {#if kind}<p class="hint muted">知识库 ID 只能使用小写字母、数字、连字符或下划线，创建后不可更改。</p>{/if}
 
     <div class="actions">
       {#if kind && !initialPath}<button onclick={() => { kind = ""; src = null; error = ""; }}>上一步</button>{/if}

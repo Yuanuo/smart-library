@@ -486,11 +486,23 @@ fn zim_version(path: &str) -> Result<String, String> {
 
 /// `lz`, then `lz-2` … if taken.
 fn new_id(base: &str, libs: &[Library]) -> String {
-    let base = base.to_ascii_lowercase();
-    if !libs.iter().any(|l| l.id == base) {
-        return base;
+    let base: String = base.to_ascii_lowercase().bytes().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'_').map(char::from).take(50).collect();
+    let base = base.trim_matches(['-', '_']);
+    let base = if base.is_empty() { "lib" } else { base };
+    if !libs.iter().any(|l| l.id.eq_ignore_ascii_case(base)) {
+        return base.to_string();
     }
-    (2..).map(|n| format!("{}-{}", base, n)).find(|id| !libs.iter().any(|l| &l.id == id)).unwrap()
+    (2..).map(|n| format!("{}-{}", base, n)).find(|id| !libs.iter().any(|l| l.id.eq_ignore_ascii_case(id))).unwrap()
+}
+
+fn library_id(requested: Option<&str>, fallback: &str, libs: &[Library]) -> Result<String, String> {
+    let id = requested.unwrap_or("").trim();
+    if id.is_empty() { return Ok(new_id(fallback, libs)); }
+    if id.len() > 64 || !id.bytes().next().is_some_and(|c| c.is_ascii_alphanumeric()) || !id.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'_') {
+        return Err("知识库 ID 须以小写字母或数字开头，只能包含小写字母、数字、连字符和下划线，最多 64 位".into());
+    }
+    if libs.iter().any(|l| l.id.eq_ignore_ascii_case(id)) { return Err("知识库 ID 已被使用".into()); }
+    Ok(id.to_string())
 }
 
 /// Bytes of an image for the `sl` protocol: `<lib>/<path in the bookcase>`.
@@ -625,39 +637,16 @@ pub async fn status(state: State<'_, AppState>) -> Result<StatusDto, String> {
 // ------------------------------------------------------------ binding
 
 #[tauri::command]
-pub async fn add_zim(path: String, wiki_id: Option<String>, state: State<'_, AppState>) -> Result<StatusDto, String> {
+pub async fn add_zim(path: String, library_id: Option<String>, state: State<'_, AppState>) -> Result<StatusDto, String> {
     let path = std::fs::canonicalize(path.trim().trim_matches('"')).map_err(|e| e.to_string())?;
     smart_library_core::zim::Zim::open(&path)?;
     let path = path.to_string_lossy().into_owned();
-    let wiki_id = validate_wiki_id(wiki_id.as_deref().unwrap_or(""))?;
     {
         let mut libs = state.libraries.write().unwrap();
         if libs.iter().any(|l| l.kind == "zim" && same_path(&l.source, &path)) { return Err("这个 ZIM 数据包已经绑定".into()); }
-        if !wiki_id.is_empty() && libs.iter().any(|l| l.kind == "zim" && l.tree == wiki_id) { return Err("这个关联 ID 已被其他 ZIM 知识库使用".into()); }
         let title = Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "ZIM".into());
-        let id = new_id("zim", &libs);
-        libs.push(Library { id, kind: "zim".into(), title, source: path, tree: wiki_id, exts: vec![], max_mb: 0, writable: false });
-    }
-    state.save_registry()?;
-    Ok(status_of(&state))
-}
-
-fn validate_wiki_id(id: &str) -> Result<String, String> {
-    let id = id.trim().to_ascii_lowercase();
-    if id.len() > 64 || !id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_') {
-        return Err("关联 ID 只能使用英文字母、数字、连字符和下划线".into());
-    }
-    Ok(id)
-}
-
-#[tauri::command]
-pub async fn set_zim_wiki_id(id: String, wiki_id: String, state: State<'_, AppState>) -> Result<StatusDto, String> {
-    let wiki_id = validate_wiki_id(&wiki_id)?;
-    {
-        let mut libs = state.libraries.write().unwrap();
-        if !wiki_id.is_empty() && libs.iter().any(|l| l.kind == "zim" && l.id != id && l.tree == wiki_id) { return Err("这个关联 ID 已被其他 ZIM 知识库使用".into()); }
-        let l = libs.iter_mut().find(|l| l.id == id && l.kind == "zim").ok_or("找不到 ZIM 知识库")?;
-        l.tree = wiki_id;
+        let id = self::library_id(library_id.as_deref(), "zim", &libs)?;
+        libs.push(Library { id, kind: "zim".into(), title, source: path, tree: String::new(), exts: vec![], max_mb: 0, writable: false });
     }
     state.save_registry()?;
     Ok(status_of(&state))
@@ -739,13 +728,16 @@ pub async fn bind_libraries(
     path: String,
     cbeta_tree: Option<String>,
     html_trees: Vec<String>,
+    library_ids: Option<HashMap<String, String>>,
     state: State<'_, AppState>,
 ) -> Result<StatusDto, String> {
     let path = path.trim().trim_matches('"').to_string();
     let bc = state.source(&path)?;
     let choices = classify_trees(&bc);
     {
-        let mut libs = state.libraries.write().unwrap();
+        let mut guard = state.libraries.write().unwrap();
+        let mut libs = guard.clone();
+        let ids = library_ids.unwrap_or_default();
         if let Some(tree) = cbeta_tree {
             let t = choices
                 .iter()
@@ -762,7 +754,7 @@ pub async fn bind_libraries(
                 }
                 Some(_) => {}
                 None => {
-                    let id = new_id("cbeta", &libs);
+                    let id = self::library_id(ids.get(&t.id).map(String::as_str), "cbeta", &libs)?;
                     libs.push(Library {
                         id,
                         kind: "cbeta".into(),
@@ -788,7 +780,7 @@ pub async fn bind_libraries(
             if libs.iter().any(|l| same_path(&l.source, &path) && l.kind == "html" && l.tree == t.id) {
                 continue;
             }
-            let id = new_id(&code, &libs);
+            let id = self::library_id(ids.get(&t.id).map(String::as_str), &code.to_ascii_lowercase(), &libs)?;
             libs.push(Library {
                 id,
                 kind: "html".into(),
@@ -800,6 +792,7 @@ pub async fn bind_libraries(
                 writable: false,
             });
         }
+        *guard = libs;
     }
     state.save_registry()?;
     // titles follow the tree
@@ -876,6 +869,7 @@ pub async fn add_folder(
     exts: String,
     max_mb: u64,
     writable: Option<bool>,
+    library_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<StatusDto, String> {
     let canon = folder::canonical(&path)?;
@@ -890,7 +884,7 @@ pub async fn add_folder(
             return Err(c);
         }
         let name = Path::new(&canon).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "folder".into());
-        let id = new_id("folder", &libs);
+        let id = self::library_id(library_id.as_deref(), "folder", &libs)?;
         libs.push(Library {
             id,
             kind: "folder".into(),
@@ -933,7 +927,7 @@ pub async fn set_folder_writable(id: String, writable: bool, state: State<'_, Ap
 // ------------------------------------------------------------ internal libraries
 
 /// Add an internal (read-write) library; `Err` if the name is taken or empty.
-fn add_notes_library(state: &AppState, title: &str) -> Result<Library, String> {
+fn add_notes_library(state: &AppState, title: &str, requested_id: Option<&str>) -> Result<Library, String> {
     let title = title.trim().to_string();
     if title.is_empty() {
         return Err("请填写知识库名称".into());
@@ -943,7 +937,7 @@ fn add_notes_library(state: &AppState, title: &str) -> Result<Library, String> {
         if libs.iter().any(|l| l.title == title) {
             return Err("已经有同名的知识库".into());
         }
-        let id = new_id("notes", &libs);
+        let id = library_id(requested_id, "notes", &libs)?;
         let lib = Library { id, kind: "notes".into(), title, source: String::new(), tree: String::new(), exts: Vec::new(), max_mb: 0, writable: true };
         libs.push(lib.clone());
         lib
@@ -958,8 +952,8 @@ fn add_notes_library(state: &AppState, title: &str) -> Result<Library, String> {
 
 /// Create an internal (read-write) library.
 #[tauri::command]
-pub async fn create_notes_library(title: String, state: State<'_, AppState>) -> Result<StatusDto, String> {
-    add_notes_library(&state, &title)?;
+pub async fn create_notes_library(title: String, library_id: Option<String>, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    add_notes_library(&state, &title, library_id.as_deref())?;
     Ok(status_of(&state))
 }
 
@@ -1056,7 +1050,7 @@ pub async fn create_note_at(
     let mut libs: Vec<Library> = state.libraries.read().unwrap().iter().filter(|l| l.kind == "notes").cloned().collect();
     if libs.is_empty() {
         // the first note needs a place: make a library for it
-        libs.push(add_notes_library(&state, "我的笔记")?);
+        libs.push(add_notes_library(&state, "我的笔记", None)?);
     }
     let mut parts: Vec<String> = position.split('/').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     // the first part names a library, else the default one (or the first that is not the diary)
@@ -1104,7 +1098,7 @@ fn diary_note(state: &AppState, date: &str) -> Result<(Arc<NotesStore>, NewNoteD
     let existing = state.libraries.read().unwrap().iter().find(|l| l.kind == "notes" && l.title == diary::LIBRARY).cloned();
     let lib = match existing {
         Some(l) => l,
-        None => add_notes_library(state, diary::LIBRARY)?,
+        None => add_notes_library(state, diary::LIBRARY, None)?,
     };
     state.titles.write().unwrap().remove(&lib.id);
     let store = state.notes(&lib)?;
@@ -1637,6 +1631,77 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
     }
 }
 
+fn navigation_nodes(state: &AppState, l: &Library) -> Result<Vec<NodeDto>, String> {
+    let bc = state.bookcase_of(l)?;
+    let html = if l.kind == "html" { Some(state.html_tree(l)?) } else { None };
+    let doc = bc.nav(&l.tree)?;
+    Ok(doc.items.iter().map(|n| node_dto(&bc, html.as_deref(), n)).collect())
+}
+
+fn index_overlay(state: &AppState, l: &Library) -> Result<props::Overlay, String> {
+    let mut overlay = state.props.overlay(&l.id)?;
+    if overlay.is_empty() || !matches!(l.kind.as_str(), "cbeta" | "html") { return Ok(overlay); }
+    let nodes = navigation_nodes(state, l)?;
+    overlay.set_nav_ancestors(navigation_ancestors(&nodes));
+    Ok(overlay)
+}
+
+fn navigation_ancestors(nodes: &[NodeDto]) -> HashMap<String, Vec<(String, String)>> {
+    let mut map = HashMap::new();
+    fn walk(nodes: &[NodeDto], prefix: &str, ancestors: &mut Vec<(String, String)>, map: &mut HashMap<String, Vec<(String, String)>>) {
+        for (i, n) in nodes.iter().enumerate() {
+            let key = format!("{prefix}/{i}");
+            if let Some(doc) = n.book_id.as_ref().or(n.path.as_ref()) {
+                let keys: &mut Vec<_> = map.entry(doc.clone()).or_default();
+                for ancestor in ancestors.iter() { if !keys.contains(ancestor) { keys.push(ancestor.clone()); } }
+            }
+            let prop_key = if let Some(path) = &n.path { (String::new(), path.clone()) }
+                else if let Some(book) = &n.book_id { (book.clone(), String::new()) }
+                else { (String::new(), format!("@nav{key}")) };
+            ancestors.push(prop_key);
+            walk(&n.children, &key, ancestors, map);
+            ancestors.pop();
+        }
+    }
+    walk(&nodes, "", &mut Vec::new(), &mut map);
+    map
+}
+
+fn nav_targets(state: &AppState, l: &Library, path: &str) -> Result<HashSet<String>, String> {
+    let nodes = navigation_nodes(state, l)?;
+    let mut list = nodes.as_slice();
+    let mut selected = None;
+    for part in path.strip_prefix("@nav/").ok_or("目录节点 ID 无效")?.split('/') {
+        let index: usize = part.parse().map_err(|_| "目录节点 ID 无效")?;
+        let node = list.get(index).ok_or("目录节点不存在")?;
+        selected = Some(node);
+        list = &node.children;
+    }
+    fn gather(node: &NodeDto, kind: &str, out: &mut HashSet<String>) {
+        if let Some(value) = if kind == "cbeta" { &node.book_id } else { &node.path } { out.insert(value.clone()); }
+        for child in &node.children { gather(child, kind, out); }
+    }
+    let mut result = HashSet::new();
+    gather(selected.ok_or("目录节点不存在")?, &l.kind, &mut result);
+    Ok(result)
+}
+
+fn nav_document_targets(state: &AppState, l: &Library, document: &str) -> Result<HashSet<String>, String> {
+    let nodes = navigation_nodes(state, l)?;
+    fn walk(nodes: &[NodeDto], kind: &str, document: &str, inside: bool, out: &mut HashSet<String>) {
+        for node in nodes {
+            let id = if kind == "cbeta" { node.book_id.as_deref() } else { node.path.as_deref() };
+            let included = inside || id == Some(document);
+            if included { if let Some(id) = id { out.insert(id.to_string()); } }
+            walk(&node.children, kind, document, included, out);
+        }
+    }
+    let mut result = HashSet::new();
+    walk(&nodes, &l.kind, document, false, &mut result);
+    result.insert(document.to_string());
+    Ok(result)
+}
+
 fn note_nodes(n: &NotesStore, parent: Option<i64>) -> Result<Vec<NodeDto>, String> {
     Ok(n.children(parent)?
         .into_iter()
@@ -2122,7 +2187,10 @@ pub async fn resolve_zim_link(lib: String, path: String, href: String, state: St
     if l.kind != "zim" { return Err("不是 ZIM 知识库".into()); }
     let (target_lib, source_path, target_href) = if let Some(url) = smart_library_core::zim::external_url(&href) {
         if let Some((wiki_id, _)) = smart_library_core::zim::wiki_url(&href) {
-            let candidate = state.libraries.read().unwrap().iter().find(|x| x.kind == "zim" && x.tree == wiki_id).cloned();
+            let libraries = state.libraries.read().unwrap();
+            let candidate = libraries.iter().find(|x| x.kind == "zim" && x.id == wiki_id)
+                .or_else(|| libraries.iter().find(|x| x.kind == "zim" && x.tree == wiki_id)).cloned();
+            drop(libraries);
             if let Some(target) = candidate {
                 if let Ok(z) = state.zim(&target) {
                     let mut z = z.lock().unwrap();
@@ -2868,7 +2936,7 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
         return Err("正在建立这个知识库的索引".to_string());
     }
     let dir = state.index_dir(&lib);
-    let overlay = state.props.overlay(&lib).unwrap_or_default();
+    let overlay = index_overlay(&state, &l)?;
     state.dirty.lock().unwrap().remove(&lib); // the build reads everything
     // drop the open index before deleting its files
     state.indexes.write().unwrap().remove(&lib);
@@ -3154,9 +3222,34 @@ fn derived_dims(state: &AppState, l: &Library, book_id: Option<&str>, path: &str
 #[tauri::command]
 pub async fn props_get(lib: String, book_id: Option<String>, path: String, state: State<'_, AppState>) -> Result<PropsDto, String> {
     let l = state.library(&lib)?;
+    let mut derived = derived_dims(&state, &l, book_id.as_deref(), &path).unwrap_or_default();
+    if book_id.is_some() || !path.is_empty() {
+        let overlay = index_overlay(&state, &l)?;
+        let parents: Vec<(String, String)> = match l.kind.as_str() {
+            "cbeta" | "html" if path.starts_with("@nav/") => {
+                let mut current = "@nav".to_string();
+                let mut parts: Vec<_> = path.trim_start_matches("@nav/").split('/').collect();
+                parts.pop();
+                parts.into_iter().map(|part| { current.push('/'); current.push_str(part); (String::new(), current.clone()) }).collect()
+            }
+            "cbeta" | "html" => overlay.nav_ancestors(book_id.as_deref().unwrap_or(&path)),
+            "folder" => {
+                let mut cur = String::new();
+                let mut parts: Vec<_> = path.split('/').collect();
+                parts.pop();
+                parts.into_iter().map(|part| { if !cur.is_empty() { cur.push('/'); } cur.push_str(part); (String::new(), cur.clone()) }).collect()
+            }
+            "notes" => state.notes(&l)?.rows()?.into_iter().find(|r| r.id.to_string() == path)
+                .map(|r| r.ancestors.into_iter().map(|id| (String::new(), id.to_string())).collect()).unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        for (dim, values) in overlay.merged(&parents) {
+            if props::is_dim(&dim) { derived.insert(dim, values); }
+        }
+    }
     Ok(PropsDto {
         own: state.props.get(&lib, book_id.as_deref(), &path)?,
-        derived: derived_dims(&state, &l, book_id.as_deref(), &path).unwrap_or_default(),
+        derived,
         tags: state.marks.node_tags(&lib, book_id.as_deref(), &path).unwrap_or_default(),
         aliases: state.props.aliases(&lib, book_id.as_deref(), &path).unwrap_or_default(),
     })
@@ -3197,28 +3290,37 @@ pub async fn props_set(
     }
     // the documents the properties apply to
     enum Job {
-        Cbeta(Arc<Bookcase>, HashSet<String>),
-        Html(Arc<Bookcase>, Arc<HtmlTree>, HashSet<String>),
+        Cbeta(Arc<Bookcase>, Option<HashSet<String>>),
+        Html(Arc<Bookcase>, Arc<HtmlTree>, Option<HashSet<String>>),
         Folder(Arc<FolderLibrary>, Vec<folder::FolderFile>),
-        Notes(Arc<NotesStore>, HashSet<i64>),
+        Notes(Arc<NotesStore>, Option<HashSet<i64>>),
+        Zim(Arc<Mutex<smart_library_core::zim::Zim>>, Vec<usize>),
     }
     let job = match l.kind.as_str() {
-        "cbeta" => Job::Cbeta(state.bookcase_of(&l)?, book_id.iter().cloned().collect()),
-        "html" => Job::Html(state.bookcase_of(&l)?, state.html_tree(&l)?, [path.clone()].into_iter().collect()),
+        "cbeta" => Job::Cbeta(state.bookcase_of(&l)?, if path.starts_with("@nav/") { Some(nav_targets(&state, &l, &path)?) } else if let Some(b) = &book_id { Some(nav_document_targets(&state, &l, b)?) } else { None }),
+        "html" => Job::Html(state.bookcase_of(&l)?, state.html_tree(&l)?, if path.is_empty() { None } else if path.starts_with("@nav/") { Some(nav_targets(&state, &l, &path)?) } else { Some(nav_document_targets(&state, &l, &path)?) }),
         "folder" => {
             let f = state.folder(&l)?;
             let prefix = format!("{}/", path);
-            let files = f.files().into_iter().filter(|x| x.rel == path || x.rel.starts_with(&prefix)).collect();
+            let files = f.files().into_iter().filter(|x| path.is_empty() || x.rel == path || x.rel.starts_with(&prefix)).collect();
             Job::Folder(f, files)
         }
         "notes" => {
             let store = state.notes(&l)?;
-            let ids = store.descendants(note_id(&path)?)?.into_iter().collect();
+            let ids = if path.is_empty() { None } else { Some(store.descendants(note_id(&path)?)?.into_iter().collect()) };
             Job::Notes(store, ids)
+        }
+        "zim" => {
+            let z = state.zim(&l)?;
+            let jobs = {
+                let locked = z.lock().unwrap();
+                if path.is_empty() { locked.article_jobs() } else { vec![locked.entry_index(&path).ok_or("ZIM 文章不存在")?] }
+            };
+            Job::Zim(z, jobs)
         }
         _ => return Ok(PropsSaved { updating: 0 }),
     };
-    let overlay = state.props.overlay(&lib)?;
+    let overlay = index_overlay(&state, &l)?;
     let lib_title = l.title.clone();
     state.building.lock().unwrap().insert(lib.clone());
     state.indexes.write().unwrap().remove(&lib);
@@ -3226,12 +3328,16 @@ pub async fn props_set(
         let result = (|| -> Result<usize, String> {
             use smart_library_core::search::update_docs;
             match &job {
-                Job::Cbeta(bc, books) => update_docs(&dir, smart_library_core::library::cbeta_docs(bc, Some(books)).1, &overlay),
-                Job::Html(bc, t, paths) => update_docs(&dir, t.docs(bc, Some(paths)).1, &overlay),
+                Job::Cbeta(bc, books) => update_docs(&dir, smart_library_core::library::cbeta_docs(bc, books.as_ref()).1, &overlay),
+                Job::Html(bc, t, paths) => update_docs(&dir, t.docs(bc, paths.as_ref()).1, &overlay),
                 Job::Folder(f, files) => update_docs(&dir, f.docs(files), &overlay),
                 Job::Notes(store, ids) => {
-                    let rows: Vec<_> = store.rows()?.into_iter().filter(|r| ids.contains(&r.id)).collect();
+                    let rows: Vec<_> = store.rows()?.into_iter().filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r.id))).collect();
                     update_docs(&dir, notes::docs(&rows, &lib_title).into_iter().map(Ok), &overlay)
+                }
+                Job::Zim(z, jobs) => {
+                    let mut z = z.lock().unwrap();
+                    update_docs(&dir, jobs.iter().map(|&i| z.index_doc(i)), &overlay)
                 }
             }
         })();
@@ -3830,7 +3936,7 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
         }
         t
     };
-    let status = create_notes_library(title.clone(), state.clone()).await?;
+    let status = create_notes_library(title.clone(), None, state.clone()).await?;
     let lib = state
         .libraries
         .read()
@@ -3854,4 +3960,42 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
     )?;
     state.titles.write().unwrap().remove(&lib.id);
     Ok(ImportDone { status, title, notes })
+}
+
+#[cfg(test)]
+mod library_id_tests {
+    use super::*;
+
+    #[test]
+    fn validates_unique_immutable_ids_and_safe_defaults() {
+        let libs = vec![Library { id: "wikiquote".into(), kind: "zim".into(), title: "test".into(), source: String::new(), tree: String::new(), exts: vec![], max_mb: 0, writable: false }];
+        assert_eq!(library_id(Some("wikipedia"), "zim", &libs).unwrap(), "wikipedia");
+        assert!(library_id(Some("wikiquote"), "zim", &libs).is_err());
+        assert!(library_id(Some("../private"), "zim", &libs).is_err());
+        assert!(library_id(Some(".hidden"), "zim", &libs).is_err());
+        assert!(library_id(Some("ABC"), "zim", &libs).is_err());
+        assert_eq!(library_id(None, "wikiquote", &libs).unwrap(), "wikiquote-2");
+        assert_eq!(library_id(None, "../坏", &libs).unwrap(), "lib");
+    }
+
+    #[test]
+    fn navigation_groups_inherit_properties_and_descendants_override() {
+        fn node(path: Option<&str>, children: Vec<NodeDto>) -> NodeDto {
+            NodeDto { title: "".into(), book_id: None, start: None, path: path.map(str::to_string), href: None, rel: None, lazy: false, mind: false, board: false, children }
+        }
+        let nodes = vec![node(None, vec![node(Some("article"), vec![node(Some("child"), vec![])])])];
+        let props = Props::memory().unwrap();
+        props.set("lib", None, "@nav/0", &[("index_content".into(), vec!["off".into()])].into_iter().collect()).unwrap();
+        props.set("lib", None, "article", &[("index_content".into(), vec!["on".into()])].into_iter().collect()).unwrap();
+        let mut overlay = props.overlay("lib").unwrap();
+        overlay.set_nav_ancestors(navigation_ancestors(&nodes));
+        let mut doc = smart_library_core::library::IndexDoc { path: "child".into(), book: "".into(), juan: 0, title: "标题".into(), text: "正文".into(), facets: vec![], keys: vec![(String::new(), "child".into())] };
+        overlay.apply(&mut doc);
+        assert_eq!(doc.text, "正文");
+        let mut sibling = doc.clone(); sibling.path = "article".into(); sibling.keys = vec![(String::new(), "article".into())];
+        props.set("lib", None, "article", &Default::default()).unwrap();
+        let mut overlay = props.overlay("lib").unwrap(); overlay.set_nav_ancestors(navigation_ancestors(&nodes));
+        overlay.apply(&mut sibling);
+        assert!(sibling.text.is_empty());
+    }
 }

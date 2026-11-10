@@ -31,6 +31,7 @@
   let tags0 = "";
   let aliases = $state([]);
   let aliases0 = "";
+  let indexContent = $state("inherit");
   let loading = $state(true);
   let busy = $state(false);
   let error = $state("");
@@ -41,6 +42,7 @@
     try {
       const r = await api.propsGet(lib, bookId, path);
       derived = r.derived;
+      indexContent = r.own.index_content?.[0] ?? "inherit";
       for (const [d] of DIMS) {
         const own = r.own[d];
         rows[d] = own ? { values: [...own], own: true } : { values: [...(r.derived[d] ?? [])], own: false };
@@ -79,6 +81,7 @@
         // only what differs from the data is kept as the user's own
         if (r.own && norm(r.values) !== norm(derived[d] ?? [])) dims[d] = r.values;
       }
+      if (indexContent !== "inherit") dims.index_content = [indexContent];
       if (norm(tags) !== tags0) await api.nodeTagsSet(lib, bookId, path, title, tags.join(","));
       const res = await api.propsSet(lib, bookId, path, dims, aliases.join("\u0001") !== aliases0 ? aliases : null);
       onsaved?.(res);
@@ -95,10 +98,23 @@
     onkeydown={(e) => e.key === "Escape" && onclose()}>
     <h2>属性：{title}</h2>
     <p class="muted sub">{libTitle}</p>
+    <p class="muted sub">{!bookId && !path ? "知识库 ID" : "节点 ID"}：{bookId || path || lib}</p>
 
     {#if loading}
       <p class="muted">载入中…</p>
     {:else}
+      <fieldset>
+        <legend>正文索引</legend>
+        <label>正文是否加入全文索引
+          <select bind:value={indexContent}>
+            <option value="inherit">继承上级（根节点默认索引）</option>
+            <option value="on">索引正文</option>
+            <option value="off">不索引正文</option>
+          </select>
+        </label>
+        <p class="muted hint">标题和搜索过滤属性仍会索引；下级节点可以覆盖此设置。</p>
+      </fieldset>
+
       <fieldset>
         <legend>搜索过滤</legend>
         {#each DIMS as [d, label, hint]}
@@ -111,7 +127,7 @@
                   已修改{#if (derived[d] ?? []).length}（默认：{derived[d].join("、")}）{:else}（默认：无）{/if}
                   <button type="button" class="link" onclick={() => restore(d)}>恢复默认</button>
                 {:else if rows[d].values.length}
-                  来自数据
+                  来自上级或数据
                 {/if}
               </div>
             </div>

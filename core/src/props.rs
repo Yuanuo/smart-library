@@ -45,6 +45,12 @@ fn two_level(dim: &str) -> bool {
 pub fn clean(dims: &Dims) -> Dims {
     let mut out = Dims::new();
     for (dim, values) in dims {
+        if dim == "index_content" {
+            if let Some(value) = values.first().filter(|v| *v == "on" || *v == "off") {
+                out.insert(dim.clone(), vec![value.clone()]);
+            }
+            continue;
+        }
         if !is_dim(dim) {
             continue;
         }
@@ -281,7 +287,7 @@ impl Props {
 
     /// The properties of a library, ready to be put into index documents.
     pub fn overlay(&self, lib: &str) -> Result<Overlay, String> {
-        Ok(Overlay { map: self.all(lib)?.into_iter().map(|(b, p, d)| ((b, p), d)).collect() })
+        Ok(Overlay { map: self.all(lib)?.into_iter().map(|(b, p, d)| ((b, p), d)).collect(), nav: HashMap::new() })
     }
 }
 
@@ -289,9 +295,16 @@ impl Props {
 #[derive(Debug, Clone, Default)]
 pub struct Overlay {
     map: HashMap<(String, String), Dims>,
+    nav: HashMap<String, Vec<(String, String)>>,
 }
 
 impl Overlay {
+    pub fn has_nav_properties(&self) -> bool {
+        self.map.keys().any(|(book, path)| book.is_empty() && path.starts_with("@nav/"))
+    }
+
+    pub fn set_nav_ancestors(&mut self, nav: HashMap<String, Vec<(String, String)>>) { self.nav = nav; }
+    pub fn nav_ancestors(&self, id: &str) -> Vec<(String, String)> { self.nav.get(id).cloned().unwrap_or_default() }
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
@@ -300,7 +313,8 @@ impl Overlay {
     /// down (`keys`, itself last); a lower node replaces a higher one.
     pub fn merged(&self, keys: &[(String, String)]) -> Dims {
         let mut out = Dims::new();
-        for k in keys {
+        let root = (String::new(), String::new());
+        for k in std::iter::once(&root).chain(keys.iter()) {
             if let Some(d) = self.map.get(k) {
                 for (dim, v) in d {
                     out.insert(dim.clone(), v.clone());
@@ -315,7 +329,14 @@ impl Overlay {
         if self.map.is_empty() {
             return;
         }
-        for (dim, values) in self.merged(&doc.keys) {
+        let lookup = if doc.keys.iter().any(|(book, _)| !book.is_empty()) { &doc.book } else { &doc.path };
+        let mut keys = self.nav.get(lookup).cloned().unwrap_or_default();
+        keys.extend(doc.keys.iter().cloned());
+        for (dim, values) in self.merged(&keys) {
+            if dim == "index_content" {
+                if values.first().is_some_and(|v| v == "off") { doc.text.clear(); }
+                continue;
+            }
             doc.facets.retain(|f| f.first().map(String::as_str) != Some(dim.as_str()));
             for v in values {
                 if let Some(p) = facet_path(&dim, &v) {
