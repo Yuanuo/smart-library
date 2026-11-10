@@ -3,6 +3,7 @@
 Cargo.lock.bak
 
 # data that must stay outside the repository
+/.env/
 *.zip
 app_data/
 /index/

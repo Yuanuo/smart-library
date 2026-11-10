@@ -92,9 +92,10 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <form class="dialog" role="dialog" aria-modal="true" aria-label="加入笔记" onsubmit={submit}
+  <form class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="加入笔记" onsubmit={submit}
     onkeydown={(e) => e.key === "Escape" && onclose()}>
-    <h2>加入笔记</h2>
+    <header class="dialog-header"><h2>加入笔记</h2></header>
+    <div class="dialog-content">
     <p class="quote">{text.length > 160 ? text.slice(0, 160) + "…" : text}</p>
     <p class="src muted">来源：《{vol.title}》{vol.author ? " " + vol.author : ""}，笔记里的来源链接可以回到原文位置。</p>
 
@@ -143,6 +144,7 @@
 
     <label>我的批注（可不填）<textarea bind:value={comment} rows="2"></textarea></label>
     {#if error}<p class="error">{error}</p>{/if}
+    </div>
     <div class="actions">
       <button type="button" onclick={onclose}>取消</button>
       <button class="primary" disabled={!ready || busy}>{mode === "new" ? "创建并加入" : "追加"}</button>
@@ -155,10 +157,7 @@
     position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.3);
     display: flex; align-items: center; justify-content: center;
   }
-  .dialog {
-    width: min(560px, calc(100vw - 32px)); background: var(--paper); border-radius: 10px;
-    padding: 18px 22px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
-  }
+  .dialog { width: min(560px, calc(100vw - 32px)); }
   h2 { margin: 0 0 8px; font-size: 18px; color: var(--accent); }
   .quote {
     margin: 0; padding: 6px 12px; border-left: 3px solid var(--accent); background: var(--bg);

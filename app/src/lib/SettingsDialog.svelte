@@ -103,9 +103,10 @@
 
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="设置" tabindex="-1"
+  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="设置" tabindex="-1"
     onkeydown={(e) => e.key === "Escape" && onclose()}>
-    <h2>设置</h2>
+    <header class="dialog-header"><h2>设置</h2></header>
+    <div class="dialog-content">
 
     <fieldset>
       <legend>外观</legend>
@@ -216,6 +217,7 @@
       {#if cleanMsg}<p class="hint" style="white-space: pre-line">{cleanMsg}</p>{/if}
     </fieldset>
 
+    </div>
     <div class="actions">
       <button onclick={reset}>恢复默认</button>
       <button class="primary" onclick={onclose}>完成</button>
@@ -229,10 +231,7 @@
     position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.3);
     display: flex; align-items: center; justify-content: center;
   }
-  .dialog {
-    width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; outline: none;
-    background: var(--paper); border-radius: 10px; padding: 18px 24px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
-  }
+  .dialog { width: min(560px, calc(100vw - 32px)); }
   h2 { margin: 0 0 8px; font-size: 20px; color: var(--accent); }
   fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; padding: 6px 14px 10px; }
   legend { padding: 0 6px; font-weight: 600; }

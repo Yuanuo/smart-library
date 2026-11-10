@@ -45,12 +45,14 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <form class="dialog" role="dialog" aria-modal="true" aria-label={title} onsubmit={submit}
+  <form class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={title} onsubmit={submit}
     onkeydown={(e) => e.key === "Escape" && onclose()}>
-    <h2>{title}</h2>
+    <header class="dialog-header"><h2>{title}</h2></header>
+    <div class="dialog-content">
     <label>{label}<input type="text" bind:value={text} bind:this={input} /></label>
     {#if bad}<p class="error">{bad}</p>{:else if error}<p class="error">{error}</p>{/if}
     {#if hint}<p class="hint muted">{hint}</p>{/if}
+    </div>
     <div class="actions">
       <button type="button" onclick={onclose}>取消</button>
       <button class="primary" disabled={(!allowEmpty && !text.trim()) || busy || !!bad}>{okLabel}</button>
@@ -63,10 +65,7 @@
     position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.3);
     display: flex; align-items: center; justify-content: center;
   }
-  .dialog {
-    width: min(420px, calc(100vw - 32px)); background: var(--paper); border-radius: 10px;
-    padding: 18px 22px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
-  }
+  .dialog { width: min(420px, calc(100vw - 32px)); }
   h2 { margin: 0 0 10px; font-size: 18px; color: var(--accent); }
   label { display: flex; flex-direction: column; gap: 4px; }
   .error { color: var(--hl); font-size: 13px; }

@@ -57,9 +57,10 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && !busy && onclose()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="导出" tabindex="-1"
+  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="导出" tabindex="-1"
     onkeydown={(e) => e.key === "Escape" && !busy && onclose()}>
-    <h2>导出</h2>
+    <header class="dialog-header"><h2>导出</h2></header>
+    <div class="dialog-content">
     <p><b>{lib.title}</b>：{sel.whole ? "整个知识库" : label}</p>
     <p class="muted small">
       导出包（<code>.smartlib</code>，内部是 ZIP）：<code>manifest.json</code>（目录树、标题、来源）加上每篇一个 Markdown 文件。
@@ -77,6 +78,7 @@
       <p class="ok">已导出 {result.docs} 篇{result.files ? `、${result.files} 个原文件` : ""}：<span class="path">{result.path}</span></p>
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
+    </div>
     <div class="actions">
       <button onclick={onclose} disabled={busy}>{result ? "关闭" : "取消"}</button>
       {#if !result}<button class="primary" onclick={run} disabled={busy}>选择位置并导出…</button>{/if}
@@ -89,10 +91,7 @@
     position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.3);
     display: flex; align-items: center; justify-content: center;
   }
-  .dialog {
-    width: min(540px, calc(100vw - 32px)); outline: none; background: var(--paper);
-    border-radius: 10px; padding: 18px 22px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
-  }
+  .dialog { width: min(540px, calc(100vw - 32px)); }
   h2 { margin: 0 0 8px; font-size: 18px; color: var(--accent); }
   p { margin: 6px 0; }
   .small { font-size: 13px; }

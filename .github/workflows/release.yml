@@ -1,0 +1,48 @@
+name: Windows release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci --legacy-peer-deps
+      - name: Configure signed updater
+        shell: pwsh
+        env:
+          UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if (-not $env:UPDATER_PUBLIC_KEY -or -not $env:SIGNING_KEY) { throw 'Set TAURI_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY before releasing.' }
+          node tools/configure-release.cjs
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tagName: v__VERSION__
+          releaseName: Smart Library v__VERSION__
+          releaseBody: '请在发布前填写更新说明。'
+          releaseDraft: true
+          prerelease: false
+          args: --bundles nsis
+          updaterJsonPreferNsis: true
+

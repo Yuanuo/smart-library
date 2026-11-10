@@ -94,9 +94,10 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <form class="dialog" role="dialog" aria-modal="true" aria-label="属性" onsubmit={(e) => (e.preventDefault(), save())}
+  <form class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="属性" onsubmit={(e) => (e.preventDefault(), save())}
     onkeydown={(e) => e.key === "Escape" && onclose()}>
-    <h2>属性：{title}</h2>
+    <header class="dialog-header"><h2>属性：{title}</h2></header>
+    <div class="dialog-content">
     <p class="muted sub">{libTitle}</p>
     <p class="muted sub">{!bookId && !path ? "知识库 ID" : "节点 ID"}：{bookId || path || lib}</p>
 
@@ -155,6 +156,7 @@
     {/if}
 
     {#if error}<p class="err">{error}</p>{/if}
+    </div>
     <div class="actions">
       <button type="button" onclick={onclose}>取消</button>
       <button class="primary" disabled={busy || loading}>{busy ? "保存中…" : "保存"}</button>
@@ -167,10 +169,7 @@
     position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.3);
     display: flex; align-items: center; justify-content: center;
   }
-  .dialog {
-    width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto;
-    background: var(--paper); border-radius: 10px; padding: 18px 24px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
-  }
+  .dialog { width: min(620px, calc(100vw - 32px)); }
   h2 { margin: 0; font-size: 20px; color: var(--accent); overflow-wrap: anywhere; }
   .sub { margin: 2px 0 8px; font-size: 13px; }
   fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; padding: 4px 14px 10px; }

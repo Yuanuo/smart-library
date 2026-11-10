@@ -34,8 +34,9 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onkeydown={(e) => e.key === "Escape" && onclose()}>
-    <h2>{title}</h2>
+  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onkeydown={(e) => e.key === "Escape" && onclose()}>
+    <header class="dialog-header"><h2>{title}</h2></header>
+    <div class="dialog-content">
     <p class="muted from">「{from.split("/").pop()}」要移到哪个文件夹？</p>
     <input type="text" bind:value={query} bind:this={box} placeholder="输入文字筛选文件夹" aria-label="筛选文件夹" />
     <ul>
@@ -46,16 +47,17 @@
       {/each}
     </ul>
     {#if error}<p class="error">{error}</p>{/if}
+    </div>
     <div class="actions"><button type="button" onclick={onclose}>取消</button></div>
   </div>
 </div>
 
 <style>
   .backdrop { position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.3); display: flex; align-items: center; justify-content: center; }
-  .dialog { width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 80px); display: flex; flex-direction: column; background: var(--paper); border-radius: 10px; padding: 18px 22px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25); }
+  .dialog { width: min(480px, calc(100vw - 32px)); }
   h2 { margin: 0 0 6px; font-size: 18px; color: var(--accent); }
   .from { margin: 0 0 8px; font-size: 13px; }
-  ul { list-style: none; margin: 8px 0 0; padding: 0; overflow: auto; flex: 1; min-height: 120px; max-height: 360px; border: 1px solid var(--line); border-radius: 6px; }
+  ul { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; }
   li button { width: 100%; text-align: left; border: none; background: none; padding: 6px 10px; border-radius: 0; }
   li button:hover { background: var(--accent-soft); }
   .none { padding: 10px; }

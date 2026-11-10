@@ -34,6 +34,7 @@ fn main() {
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // closing the main window ends the program (also closes the pop-out
         // readers and panel windows)
         .on_window_event(|window, event| {

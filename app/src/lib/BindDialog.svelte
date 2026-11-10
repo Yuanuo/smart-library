@@ -127,8 +127,9 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="bind-title">
-    <h2 id="bind-title">添加知识库</h2>
+  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-labelledby="bind-title">
+    <header class="dialog-header"><h2 id="bind-title">添加知识库</h2></header>
+    <div class="dialog-content">
     {#if !kind}
       <p class="muted">选择知识库的类型：</p>
       {#each KINDS as k}
@@ -236,6 +237,7 @@
 
     {#if kind}<p class="hint muted">知识库 ID 只能使用小写字母、数字、连字符或下划线，创建后不可更改。</p>{/if}
 
+    </div>
     <div class="actions">
       {#if kind && !initialPath}<button onclick={() => { kind = ""; src = null; error = ""; }}>上一步</button>{/if}
       <button onclick={onclose}>取消</button>
@@ -257,10 +259,7 @@
     position: fixed; inset: 0; z-index: 900; background: rgba(0, 0, 0, 0.3);
     display: flex; align-items: center; justify-content: center;
   }
-  .dialog {
-    width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto;
-    background: var(--paper); border-radius: 10px; padding: 20px 24px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
-  }
+  .dialog { width: min(720px, calc(100vw - 32px)); }
   h2 { margin: 0 0 6px; font-size: 20px; color: var(--accent); }
   .row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
   .row input { flex: 1; min-width: 240px; }

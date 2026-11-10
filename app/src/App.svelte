@@ -13,6 +13,8 @@
   import MarksDialog from "./lib/MarksDialog.svelte";
   import PropsDialog from "./lib/PropsDialog.svelte";
   import AboutDialog from "./lib/AboutDialog.svelte";
+  import UpdateDialog from "./lib/UpdateDialog.svelte";
+  import { checkUpdates } from "./lib/updater.svelte.js";
   import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
   import { localDate, localTime } from "./lib/diary.js";
   import { settings, update as updateSettings } from "./lib/settings.svelte.js";
@@ -530,6 +532,7 @@
     };
   });
   onMount(() => {
+    checkUpdates();
     refresh().then(() => st?.libraries.length && api.prepareTitles().catch(() => {}));
     const offKeys = installShortcuts((type) => shortcut(type, readerSelection()));
     api.appInfo().then((i) => (appInfo = i)).catch(() => {});
@@ -784,8 +787,10 @@
   <MarksDialog doc={workspace.ws.current} onopen={openMark} onclose={() => (marksBox = false)} onpopout={() => popoutPanel("marks")} />
 {/if}
 
+<UpdateDialog />
+
 {#if aboutBox}
-  <AboutDialog info={appInfo} onclose={() => (aboutBox = false)} />
+  <AboutDialog info={appInfo} oncheckupdate={() => { aboutBox = false; checkUpdates(true); }} onclose={() => (aboutBox = false)} />
 {/if}
 
 {#if settingsBox}

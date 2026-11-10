@@ -158,3 +158,10 @@ body.scope-dragging, body.scope-dragging * { cursor: copy !important; user-selec
 .move-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .move-no { outline: 2px dashed var(--hl); outline-offset: -2px; }
 body.move-blocked, body.move-blocked * { cursor: not-allowed !important; }
+
+/* Shared structure for title, scrollable content, and dialog actions. */
+.dialog-shell { display: flex; flex-direction: column; max-height: calc(100vh - 48px); overflow: hidden; background: var(--paper); border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25); outline: none; }
+.dialog-shell > .dialog-header { flex: none; padding: 16px 22px 12px; border-bottom: 1px solid var(--line); }
+.dialog-shell > .dialog-header h2 { margin: 0; overflow-wrap: anywhere; }
+.dialog-shell > .dialog-content { min-height: 0; overflow-y: auto; padding: 14px 22px; overscroll-behavior: contain; }
+.dialog-shell > .actions { flex: none; margin: 0; padding: 12px 22px; border-top: 1px solid var(--line); flex-wrap: wrap; }

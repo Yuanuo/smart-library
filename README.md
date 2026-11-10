@@ -51,3 +51,5 @@ npm run tauri dev
 ```
 
 第一次打开时点左侧「＋ 绑定」（或在左侧空白处右键）绑定 bookcase.zip，再右键知识库「建立索引」。
+
+Windows 自动更新与 GitHub Releases 发布步骤见 [发布说明](docs/windows-release.md)。
