@@ -17,7 +17,7 @@
     { id: "notes", name: "内部知识库", desc: "笔记存在程序自己的数据库里，不依赖文件夹：适合大量笔记和日记，保存与搜索都快；Markdown、脑图、白板，可整体导出备份（读写）", ready: true },
     { id: "folder", name: "本地文件夹", desc: "直接使用磁盘上的文件夹和文件：可用 git 或网盘同步备份，别的软件也能打开；默认只读，可解锁后编辑 Markdown、脑图、白板（可控读写）", ready: true },
     { id: "cbeta", name: "CBETA 数据包", desc: "bookcase.zip 或解压后的目录，由其中的菜单关联数据（只读）", ready: true },
-    { id: "zim", name: "Wikipedia 离线包（ZIM）", desc: "只做标题与全文索引，不展开目录（只读）。尚未开发。", ready: false },
+    { id: "zim", name: "Wikipedia 离线包（ZIM）", desc: "只做标题与全文索引，不展开目录（只读）。", ready: true },
   ];
   let notesTitle = $state("");
   // external folder
@@ -27,6 +27,7 @@
   let maxMb = $state(50);
   let writable = $state(false); // read-write mode: the user must accept the rules (confirmWritable)
   let path = $state("");
+  let wikiId = $state("");
   let src = $state(null);
   let error = $state("");
   let busy = $state(false);
@@ -103,6 +104,10 @@
         onbound(await api.createNotesLibrary(notesTitle));
         return;
       }
+      if (kind === "zim") {
+        onbound(await api.addZim(path, wikiId));
+        return;
+      }
       if (kind === "folder") {
         if (writable && !(await confirmWritable(folderTitle || folder.name))) return;
         const st = await api.addFolder(folder.path, folderTitle, exts, Math.max(0, Math.floor(Number(maxMb) || 0)), writable);
@@ -162,6 +167,15 @@
           </p>
         </fieldset>
       {/if}
+    {:else if kind === "zim"}
+      <p class="muted">选择 ZIM 文件。数据包只读，绑定后可搜索标题并建立全文索引。</p>
+      <div class="row">
+        <input type="text" bind:value={path} placeholder="C:\\…\\wikipedia.zim" aria-label="ZIM 文件" />
+        <button type="button" onclick={async () => { const f = await open({ multiple: false, filters: [{ name: "ZIM", extensions: ["zim"] }] }); if (f) { path = f; const name = f.split(/[\\/]/).pop().toLowerCase(); wikiId = ["wikipedia", "wikiquote", "wikibooks", "wikisource", "wiktionary", "wikivoyage", "wikinews", "wikiversity"].find((id) => name.startsWith(id + "_")) ?? ""; } }}>选择文件…</button>
+      </div>
+      <label class="field">关联 ID（可选）<input type="text" bind:value={wikiId} placeholder="例如 wikipedia、wikiquote" /></label>
+      <p class="hint muted">跨维基站点的链接会先查找对应 ID 的 ZIM 库；每个 ID 只能分配给一个库。</p>
+      {#if error}<p class="error">{error}</p>{/if}
     {:else}
     <p class="muted">选择 CBETA 的 bookcase.zip（或已解压的目录）。Smart Library 只读取数据，不会修改它。</p>
     <form class="row" onsubmit={(e) => { e.preventDefault(); inspect(); }}>
@@ -222,6 +236,8 @@
         <button class="primary" disabled={!notesTitle.trim() || busy} onclick={bind}>创建</button>
       {:else if kind === "folder"}
         <button class="primary" disabled={!folder || !!folder.conflict || busy || !exts.trim()} onclick={bind}>绑定</button>
+      {:else if kind === "zim"}
+        <button class="primary" disabled={!path.trim() || busy} onclick={bind}>绑定</button>
       {:else if kind}
         <button class="primary" disabled={!src || busy} onclick={bind}>绑定</button>
       {/if}

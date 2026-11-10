@@ -36,3 +36,4 @@ pub mod text;
 pub mod titles;
 pub mod toc;
 pub mod volume;
+pub mod zim;

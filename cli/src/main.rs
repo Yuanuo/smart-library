@@ -25,6 +25,11 @@ fn usage() {
   smart-library index <bookcase.zip|dir> [--index DIR] [--tree <id of an HTML tree, e.g. longzang>]
   smart-library search <bookcase.zip|dir> <query> [--phrase] [--scope bulei/阿含部類 ...] [--page N] [--limit N]
                        [--index DIR]     (an empty query lists everything)
+  smart-library zim-info <file.zim> [entry number]
+  smart-library zim-index <file.zim> <empty index directory>
+  smart-library zim-search <file.zim> <index directory> <query>
+  smart-library zim-link <file.zim> <article path> <relative link>
+  smart-library zim-catalog <file.zim>
 
   The index directory defaults to app_data/repos/cbeta/index (it can be deleted and rebuilt).
   search: loose match by default (every bigram in the same volume; a space separates
@@ -39,6 +44,60 @@ fn main() {
         std::process::exit(2);
     }
     let cmd = args[1].as_str();
+    if cmd == "zim-info" || cmd == "zim-index" || cmd == "zim-search" || cmd == "zim-link" || cmd == "zim-catalog" {
+        let result = (|| -> Result<(), String> {
+            let mut zim = smart_library_core::zim::Zim::open(Path::new(&args[2]))?;
+            if cmd == "zim-catalog" {
+                let mut counts = BTreeMap::new();
+                for entry in &zim.entries { *counts.entry(entry.namespace as char).or_insert(0usize) += 1; }
+                println!("namespaces: {counts:?}");
+                for (i, e) in zim.entries.iter().enumerate().filter(|(_, e)| e.path.to_ascii_lowercase().contains("category") || e.path.contains("分类") || e.path.contains("分類")).take(12) { println!("{i} {}/{}", e.namespace as char, e.path); }
+                return Ok(());
+            }
+            if cmd == "zim-link" {
+                let source = args.get(3).ok_or("missing article path")?;
+                let href = args.get(4).ok_or("missing link")?;
+                let (target, fragment) = zim.resolve_link(source, href)?;
+                let index = zim.entry_index(&target).ok_or("missing target")?;
+                let article = zim.article(index, None)?;
+                println!("target: {target}; title: {}; fragment: {:?}; paragraph: {:?}", zim.entries[index].title, fragment, fragment.as_ref().and_then(|f| article.anchors.get(f)));
+                return Ok(());
+            }
+            if cmd == "zim-search" {
+                let dir = args.get(3).ok_or("usage: zim-search <file.zim> <index directory> <query>")?;
+                let query = args.get(4).ok_or("missing query")?;
+                let result = SearchIndex::open(Path::new(dir))?.search(&SearchRequest::new(query))?;
+                println!("matches: {}", result.total_volumes);
+                for hit in result.hits {
+                    let i = zim.entry_index(&hit.path).ok_or("index refers to a missing ZIM entry")?;
+                    let article = zim.article(i, None)?;
+                    println!("{} | {} | occurrences: {}", hit.title, hit.path, locate(&article.text, query, MatchMode::Loose).len());
+                }
+                return Ok(());
+            }
+            if cmd == "zim-index" {
+                let dir = args.get(3).ok_or("usage: zim-index <file.zim> <empty index directory>")?;
+                let jobs = zim.article_jobs();
+                let total = jobs.len();
+                let docs = jobs.into_iter().map(|i| zim.index_doc(i));
+                let stats = smart_library_core::search::build_index(Path::new(dir), serde_json::json!({"kind": "zim"}), total, docs, &Default::default(), |n, total| eprintln!("{n}/{total}"))?;
+                println!("indexed: {}, skipped: {}, seconds: {:.1}", stats.volumes, stats.skipped.len(), stats.seconds);
+                for e in stats.skipped.iter().take(10) { eprintln!("skipped: {e}"); }
+                return Ok(());
+            }
+            let articles: Vec<usize> = zim.article_indices().collect();
+            println!("entries: {}, HTML articles: {}", zim.entries.len(), articles.len());
+            for &i in articles.iter().take(5) { println!("{}: {}", i, zim.entries[i].title); }
+            if let Some(i) = args.get(3) {
+                let i = i.parse::<usize>().map_err(|e| e.to_string())?;
+                let data = zim.read(i)?;
+                println!("{}", String::from_utf8_lossy(&data));
+            }
+            Ok(())
+        })();
+        if let Err(e) = result { eprintln!("error: {e}"); std::process::exit(1); }
+        return;
+    }
     let bc = match open(&args[2]) {
         Ok(b) => b,
         Err(e) => {

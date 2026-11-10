@@ -4,7 +4,7 @@
 
   // `hint`: a rule shown under the box; `validate(text)`: resolves to the reason
   // the text is not acceptable (or "" when it is), checked as the user types.
-  let { title, label = "名称", value = "", okLabel = "确定", hint = "", validate = null, onok, onclose } = $props();
+  let { title, label = "名称", value = "", okLabel = "确定", hint = "", validate = null, allowEmpty = false, onok, onclose } = $props();
   let text = $state(value);
   let input = $state();
   let busy = $state(false);
@@ -31,7 +31,7 @@
 
   async function submit(e) {
     e.preventDefault();
-    if (!text.trim() || busy || bad) return;
+    if ((!allowEmpty && !text.trim()) || busy || bad) return;
     busy = true;
     error = "";
     try {
@@ -53,7 +53,7 @@
     {#if hint}<p class="hint muted">{hint}</p>{/if}
     <div class="actions">
       <button type="button" onclick={onclose}>取消</button>
-      <button class="primary" disabled={!text.trim() || busy || !!bad}>{okLabel}</button>
+      <button class="primary" disabled={(!allowEmpty && !text.trim()) || busy || !!bad}>{okLabel}</button>
     </div>
   </form>
 </div>

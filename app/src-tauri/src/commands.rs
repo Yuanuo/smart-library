@@ -49,7 +49,7 @@ pub struct Library {
     pub title: String,
     /// path of the bookcase (zip or folder)
     pub source: String,
-    /// tree shown for this library (`bulei`, `longzang` …)
+    /// Tree shown for CBETA/HTML; for ZIM, the optional Wikimedia project ID.
     pub tree: String,
     /// folder libraries: suffixes that are indexed, and the size limit in MB (0 = none)
     #[serde(default)]
@@ -71,6 +71,7 @@ pub struct AppState {
     sources: RwLock<HashMap<String, Arc<Bookcase>>>,
     html: RwLock<HashMap<String, Arc<HtmlTree>>>,
     folders: RwLock<HashMap<String, Arc<FolderLibrary>>>,
+    zims: RwLock<HashMap<String, (String, Arc<Mutex<smart_library_core::zim::Zim>>) >>,
     notes: RwLock<HashMap<String, Arc<NotesStore>>>,
     /// read-write folder libraries: the stamp of each open file as last read or
     /// saved (`<lib>|<path>`), to notice changes made outside
@@ -104,6 +105,7 @@ impl AppState {
             sources: RwLock::new(HashMap::new()),
             html: RwLock::new(HashMap::new()),
             folders: RwLock::new(HashMap::new()),
+            zims: RwLock::new(HashMap::new()),
             notes: RwLock::new(HashMap::new()),
             stamps: Mutex::new(HashMap::new()),
             dirty: Mutex::new(HashMap::new()),
@@ -163,6 +165,18 @@ impl AppState {
         Ok(f)
     }
 
+    fn zim(&self, lib: &Library) -> Result<Arc<Mutex<smart_library_core::zim::Zim>>, String> {
+        let stamp = zim_version(&lib.source)?;
+        if let Some((old, z)) = self.zims.read().unwrap().get(&lib.id) {
+            if *old == stamp { return Ok(z.clone()); }
+        }
+        let z = Arc::new(Mutex::new(smart_library_core::zim::Zim::open(Path::new(&lib.source))?));
+        self.zims.write().unwrap().insert(lib.id.clone(), (stamp, z.clone()));
+        self.titles.write().unwrap().remove(&lib.id);
+        self.indexes.write().unwrap().remove(&lib.id);
+        Ok(z)
+    }
+
     /// The notes of an internal library (kind `notes`).
     fn notes(&self, lib: &Library) -> Result<Arc<NotesStore>, String> {
         if let Some(n) = self.notes.read().unwrap().get(&lib.id) {
@@ -203,10 +217,13 @@ impl AppState {
     }
 
     fn titles(&self, lib: &Library) -> Result<Arc<TitleIndex>, String> {
+        if lib.kind == "zim" { self.zim(lib)?; }
         if let Some(t) = self.titles.read().unwrap().get(&lib.id) {
             return Ok(t.clone());
         }
-        let mut built = if lib.kind == "notes" {
+        let mut built = if lib.kind == "zim" {
+            TitleIndex::zim(&self.zim(lib)?.lock().unwrap(), &lib.title)
+        } else if lib.kind == "notes" {
             TitleIndex::notes(&self.notes(lib)?.rows()?, &lib.title)
         } else if lib.kind == "folder" {
             let f = self.folder(lib)?;
@@ -362,6 +379,8 @@ impl AppState {
     }
 
     fn index(&self, id: &str) -> Option<Arc<SearchIndex>> {
+        let lib = self.library(id).ok()?;
+        if lib.kind == "zim" && (zim_version(&lib.source).ok()? != SearchIndex::data_version(&self.index_dir(id))?) { return None; }
         if let Some(i) = self.indexes.read().unwrap().get(id) {
             return Some(i.clone());
         }
@@ -429,7 +448,12 @@ fn article_of(
     path: &str,
     render: Option<&RenderOptions>,
 ) -> Result<smart_library_core::article::Article, String> {
-    if l.kind == "folder" {
+    if l.kind == "zim" {
+        let z = state.zim(l)?;
+        let mut z = z.lock().unwrap();
+        let i = z.entry_index(path).ok_or("ZIM 文章不存在")?;
+        z.article(i, render)
+    } else if l.kind == "folder" {
         state.folder(l)?.article(path, render)
     } else if l.kind == "notes" {
         let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
@@ -454,6 +478,12 @@ fn same_path(a: &str, b: &str) -> bool {
     a.replace('/', "\\").eq_ignore_ascii_case(&b.replace('/', "\\"))
 }
 
+fn zim_version(path: &str) -> Result<String, String> {
+    let m = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    let modified = m.modified().map_err(|e| e.to_string())?.duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
+    Ok(format!("{}-{}-{}-content2", m.len(), modified.as_secs(), modified.subsec_nanos()))
+}
+
 /// `lz`, then `lz-2` … if taken.
 fn new_id(base: &str, libs: &[Library]) -> String {
     let base = base.to_ascii_lowercase();
@@ -468,6 +498,15 @@ pub fn asset(state: &AppState, url_path: &str) -> Option<(Vec<u8>, &'static str)
     let decoded = percent_decode(url_path);
     let (lib, path) = decoded.split_once('/')?;
     let lib = state.library(lib).ok()?;
+    if lib.kind == "zim" {
+        let z = state.zim(&lib).ok()?;
+        let mut z = z.lock().ok()?;
+        let i = z.entry_index(path)?;
+        let mime = match z.entries[i].mime.as_deref()? {
+            "image/png" => "image/png", "image/jpeg" => "image/jpeg", "image/gif" => "image/gif", "image/webp" => "image/webp", _ => return None,
+        };
+        return Some((z.read(i).ok()?, mime));
+    }
     if lib.kind == "notes" || lib.kind == "folder" {
         // a picture pasted into a note
         let name = path.strip_prefix("attachments/")?;
@@ -541,7 +580,9 @@ fn status_of(state: &AppState) -> StatusDto {
     let libraries = libs
         .into_iter()
         .map(|l| {
-            let (error, data_version) = if l.kind == "notes" {
+            let (error, data_version) = if l.kind == "zim" {
+                (state.zim(&l).err(), zim_version(&l.source).ok())
+            } else if l.kind == "notes" {
                 match state.notes(&l) {
                     Ok(n) => (None, Some(n.fingerprint())),
                     Err(e) => (Some(e), None),
@@ -554,12 +595,14 @@ fn status_of(state: &AppState) -> StatusDto {
             };
             let dir = state.index_dir(&l.id);
             let writable = l.writable || l.kind == "notes";
+            let index_data_version = SearchIndex::data_version(&dir);
+            let index_ready = state.index(&l.id).is_some() && (l.kind != "zim" || data_version.is_some() && data_version == index_data_version);
             LibraryDto {
                 writable,
                 error,
                 data_version,
-                index_ready: state.index(&l.id).is_some(),
-                index_data_version: SearchIndex::data_version(&dir),
+                index_ready,
+                index_data_version,
                 building: building.contains(&l.id),
                 id: l.id,
                 kind: l.kind,
@@ -580,6 +623,45 @@ pub async fn status(state: State<'_, AppState>) -> Result<StatusDto, String> {
 }
 
 // ------------------------------------------------------------ binding
+
+#[tauri::command]
+pub async fn add_zim(path: String, wiki_id: Option<String>, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    let path = std::fs::canonicalize(path.trim().trim_matches('"')).map_err(|e| e.to_string())?;
+    smart_library_core::zim::Zim::open(&path)?;
+    let path = path.to_string_lossy().into_owned();
+    let wiki_id = validate_wiki_id(wiki_id.as_deref().unwrap_or(""))?;
+    {
+        let mut libs = state.libraries.write().unwrap();
+        if libs.iter().any(|l| l.kind == "zim" && same_path(&l.source, &path)) { return Err("这个 ZIM 数据包已经绑定".into()); }
+        if !wiki_id.is_empty() && libs.iter().any(|l| l.kind == "zim" && l.tree == wiki_id) { return Err("这个关联 ID 已被其他 ZIM 知识库使用".into()); }
+        let title = Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "ZIM".into());
+        let id = new_id("zim", &libs);
+        libs.push(Library { id, kind: "zim".into(), title, source: path, tree: wiki_id, exts: vec![], max_mb: 0, writable: false });
+    }
+    state.save_registry()?;
+    Ok(status_of(&state))
+}
+
+fn validate_wiki_id(id: &str) -> Result<String, String> {
+    let id = id.trim().to_ascii_lowercase();
+    if id.len() > 64 || !id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_') {
+        return Err("关联 ID 只能使用英文字母、数字、连字符和下划线".into());
+    }
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn set_zim_wiki_id(id: String, wiki_id: String, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    let wiki_id = validate_wiki_id(&wiki_id)?;
+    {
+        let mut libs = state.libraries.write().unwrap();
+        if !wiki_id.is_empty() && libs.iter().any(|l| l.kind == "zim" && l.id != id && l.tree == wiki_id) { return Err("这个关联 ID 已被其他 ZIM 知识库使用".into()); }
+        let l = libs.iter_mut().find(|l| l.id == id && l.kind == "zim").ok_or("找不到 ZIM 知识库")?;
+        l.tree = wiki_id;
+    }
+    state.save_registry()?;
+    Ok(status_of(&state))
+}
 
 #[derive(Serialize)]
 pub struct TreeChoiceDto {
@@ -748,6 +830,7 @@ pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<St
     state.indexes.write().unwrap().remove(&id);
     state.html.write().unwrap().remove(&id);
     state.folders.write().unwrap().remove(&id);
+    state.zims.write().unwrap().remove(&id);
     state.notes.write().unwrap().remove(&id);
     let _ = state.history.remove_lib(&id);
     if own_lib {
@@ -1610,6 +1693,7 @@ pub async fn folder_children(lib: String, rel: String, state: State<'_, AppState
 #[tauri::command]
 pub async fn tree(lib: String, state: State<'_, AppState>) -> Result<Vec<NodeDto>, String> {
     let l = state.library(&lib)?;
+    if l.kind == "zim" { return Ok(Vec::new()); }
     if l.kind == "notes" {
         let n = state.notes(&l)?;
         return note_nodes(&n, None);
@@ -1684,6 +1768,7 @@ pub struct ReaderDto {
     raw: Option<String>,
     /// `mindmap` for a mind map note, else empty
     content_type: String,
+    attribution: Option<String>,
 }
 
 fn flatten_chapters(items: &[TocItem], depth: usize, out: &mut Vec<ChapterDto>) {
@@ -1755,6 +1840,20 @@ pub async fn open_node(
     let l = state.library(&lib)?;
     let asset_prefix = format!("{}{}/", ASSET_PREFIX, l.id);
 
+    if l.kind == "zim" {
+        let path = path.ok_or("没有指定文章")?;
+        let z = state.zim(&l)?;
+        let mut z = z.lock().unwrap();
+        let i = z.entry_index(&path).ok_or("ZIM 文章不存在")?;
+        let title = z.entries[i].title.clone();
+        let plain = z.article(i, None)?;
+        let (ranges, hits, first_hit_lb) = hits_of(&plain.text, query.as_deref(), phrase);
+        let a = z.article(i, Some(&RenderOptions { highlights: ranges.clone(), asset_prefix }))?;
+        return Ok(ReaderDto { lib: l.id.clone(), kind: l.kind.clone(), book_id: None, title, author: String::new(), path: path.clone(), juan: 0, label: String::new(), volumes: vec![],
+            chapters: a.headings.iter().map(|h| ChapterDto { title: h.text.clone(), path: path.clone(), lb: Some(h.lb.clone()), depth: h.level.saturating_sub(1) as usize }).collect(),
+            lines: line_view(&a.text, &ranges), html: a.html.unwrap_or_default(), hits, first_hit_lb, raw: None, content_type: String::new(), attribution: a.attribution });
+    }
+
     if l.kind == "notes" {
         let store = state.notes(&l)?;
         let path = path.ok_or("没有指定笔记")?;
@@ -1779,6 +1878,7 @@ pub async fn open_node(
                 first_hit_lb: None,
                 raw: Some(note.content),
                 content_type: if note.content_type == smart_library_core::mindmap::TYPE { "mindmap" } else { "whiteboard" }.into(),
+                attribution: None,
             });
         }
         let plain = notes::article(&note.content, None);
@@ -1815,6 +1915,7 @@ pub async fn open_node(
             first_hit_lb,
             raw: Some(note.content),
             content_type: String::new(),
+            attribution: None,
         });
     }
     if l.kind == "folder" {
@@ -1849,6 +1950,7 @@ pub async fn open_node(
                 first_hit_lb: None,
                 raw,
                 content_type: edit_kind.unwrap().content_type().into(),
+                attribution: None,
             });
         }
         let plain = f.article(&path, None)?;
@@ -1892,6 +1994,7 @@ pub async fn open_node(
             first_hit_lb,
             raw,
             content_type: String::new(),
+            attribution: None,
         });
     }
     let bc = state.bookcase_of(&l)?;
@@ -1943,6 +2046,7 @@ pub async fn open_node(
             first_hit_lb,
             raw: None,
             content_type: String::new(),
+            attribution: None,
         });
     }
 
@@ -1989,6 +2093,7 @@ pub async fn open_node(
         first_hit_lb,
         raw: None,
         content_type: String::new(),
+        attribution: None,
     })
 }
 
@@ -2003,6 +2108,66 @@ pub struct NodeIdDto {
     title: String,
 }
 
+#[derive(Serialize)]
+pub struct ZimLinkDto {
+    lib: Option<String>,
+    path: Option<String>,
+    lb: Option<String>,
+    external_url: Option<String>,
+}
+
+#[tauri::command]
+pub async fn resolve_zim_link(lib: String, path: String, href: String, state: State<'_, AppState>) -> Result<ZimLinkDto, String> {
+    let l = state.library(&lib)?;
+    if l.kind != "zim" { return Err("不是 ZIM 知识库".into()); }
+    let (target_lib, source_path, target_href) = if let Some(url) = smart_library_core::zim::external_url(&href) {
+        if let Some((wiki_id, _)) = smart_library_core::zim::wiki_url(&href) {
+            let candidate = state.libraries.read().unwrap().iter().find(|x| x.kind == "zim" && x.tree == wiki_id).cloned();
+            if let Some(target) = candidate {
+                if let Ok(z) = state.zim(&target) {
+                    let mut z = z.lock().unwrap();
+                    let found = z.resolve_wiki_url(&href);
+                    if let Ok((target_path, fragment)) = found {
+                        let lb = if let Some(f) = &fragment {
+                            z.entry_index(&target_path).and_then(|i| z.article(i, None).ok()).and_then(|a| a.anchors.get(f).cloned())
+                        } else { None };
+                        if fragment.is_none() || lb.is_some() {
+                            return Ok(ZimLinkDto { lib: Some(target.id), path: Some(target_path), lb, external_url: None });
+                        }
+                    }
+                }
+            }
+        }
+        return Ok(ZimLinkDto { lib: None, path: None, lb: None, external_url: Some(url.to_string()) });
+    } else { (l, path, href) };
+    let z = state.zim(&target_lib)?;
+    let mut z = z.lock().unwrap();
+    let (path, fragment) = z.resolve_link(&source_path, &target_href)?;
+    let lb = if let Some(fragment) = fragment {
+        let i = z.entry_index(&path).ok_or("ZIM 文章不存在")?;
+        let article = z.article(i, None)?;
+        Some(article.anchors.get(&fragment).cloned().ok_or_else(|| format!("文章中没有找到章节：{fragment}"))?)
+    } else { None };
+    Ok(ZimLinkDto { lib: Some(target_lib.id), path: Some(path), lb, external_url: None })
+}
+
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<(), String> {
+    let url = smart_library_core::zim::external_url(&url).ok_or("不支持的外部链接")?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        let operation: Vec<u16> = std::ffi::OsStr::new("open").encode_wide().chain(Some(0)).collect();
+        let target: Vec<u16> = std::ffi::OsStr::new(url.as_str()).encode_wide().chain(Some(0)).collect();
+        let result = unsafe { ShellExecuteW(std::ptr::null_mut(), operation.as_ptr(), target.as_ptr(), std::ptr::null(), std::ptr::null(), 1) };
+        if result as isize <= 32 { return Err("无法打开系统浏览器".into()); }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    { let _ = url; Err("当前系统暂不支持打开外部链接".into()) }
+}
+
 /// Which document a request means (the first readable volume of a book when
 /// `path` is absent), without reading it: the tab id is `<lib>|<path>`.
 #[tauri::command]
@@ -2013,6 +2178,13 @@ pub async fn resolve_node(
     state: State<'_, AppState>,
 ) -> Result<NodeIdDto, String> {
     let l = state.library(&lib)?;
+    if l.kind == "zim" {
+        let path = path.ok_or("没有指定文章")?;
+        let z = state.zim(&l)?;
+        let z = z.lock().unwrap();
+        let i = z.entry_index(&path).ok_or("ZIM 文章不存在")?;
+        return Ok(NodeIdDto { tab: format!("{}|{}", l.id, path), lib: l.id.clone(), book_id: None, path, title: z.entries[i].title.clone() });
+    }
     if l.kind == "notes" {
         let path = path.ok_or("没有指定笔记")?;
         let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
@@ -2420,6 +2592,7 @@ pub async fn search(
                 .and_then(|id| state.notes(&l).ok()?.folders_of(id).ok())
                 .map(|f| f.join(" / "))
                 .unwrap_or_default(),
+            None if l.kind == "zim" => String::new(),
             None if l.kind == "folder" => h.path.rsplit_once('/').map(|(d, _)| d.replace('/', " / ")).unwrap_or_default(),
             None => format!("卷{}", smart_library_core::bookcase::chinese_number(h.juan as u32)),
         };
@@ -2677,6 +2850,7 @@ struct IndexDoneDto {
 #[tauri::command]
 pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let l = state.library(&lib)?;
+    let zim = if l.kind == "zim" { Some(state.zim(&l)?) } else { None };
     let notes_store = if l.kind == "notes" { Some(state.notes(&l)?) } else { None };
     let lib_title = l.title.clone();
     state.titles.write().unwrap().remove(&lib);
@@ -2688,7 +2862,7 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
     } else {
         None
     };
-    let bc = if folder.is_some() || notes_store.is_some() { None } else { Some(state.bookcase_of(&l)?) };
+    let bc = if folder.is_some() || notes_store.is_some() || zim.is_some() { None } else { Some(state.bookcase_of(&l)?) };
     let html = if l.kind == "html" { Some(state.html_tree(&l)?) } else { None };
     if !state.building.lock().unwrap().insert(lib.clone()) {
         return Err("正在建立这个知识库的索引".to_string());
@@ -2709,6 +2883,13 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
                 let _ = app2.emit("index-progress", ProgressDto { lib: lib2.clone(), done, total });
             };
             let stats = match (&folder, &bc, &html) {
+                _ if zim.is_some() => {
+                    let mut z = zim.as_ref().unwrap().lock().unwrap();
+                    let jobs = z.article_jobs();
+                    let total = jobs.len();
+                    let docs = jobs.into_iter().map(|i| z.index_doc(i));
+                    smart_library_core::search::build_index(&dir, serde_json::json!({"kind": "zim", "data_version": zim_version(&l.source)?}), total, docs, &overlay, progress)?
+                }
                 _ if notes_store.is_some() => {
                     let n = notes_store.as_ref().unwrap();
                     let docs = notes::docs(&n.rows()?, &lib_title);

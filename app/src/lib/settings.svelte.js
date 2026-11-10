@@ -23,6 +23,7 @@ const DEFAULTS = {
   readerSize: 19, // px
   readerLine: 2, // line height
   readerScript: "orig", // orig: as the text is | simp: shown in simplified characters
+  zimExternal: "ask", // ask | always
   quickLimit: 200, // title quick search: results per batch
   dailyOn: true, // the sentence of the day
   dailySources: [], // its sources (search range items); none = every library

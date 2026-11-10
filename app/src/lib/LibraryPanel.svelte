@@ -1100,7 +1100,7 @@
               ...(l.kind === "folder" ? [{ label: "新建文件夹…", action: () => newFolder(l.id, null) }] : []),
             ]
           : [],
-        [{ label: "重命名…（F2）", action: () => renameLibrary(l) }],
+        [{ label: "重命名…（F2）", action: () => renameLibrary(l) }, ...(l.kind === "zim" ? [{ label: "设置维基关联 ID…", action: () => setZimId(l) }] : [])],
         [
           ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
           { label: "复制目录树路径", action: () => oncopy(l.title) },
@@ -1118,7 +1118,7 @@
           ...(l.kind === "folder"
             ? [l.writable ? { label: "锁定知识库（改为只读）", action: () => setWritable(l, false), disabled: building } : { label: "解锁知识库（可读写）…", action: () => setWritable(l, true), disabled: building }]
             : []),
-          ...(l.kind === "folder" ? [] : [{ label: "绑定知识库…", action: () => onrebind(l) }]),
+          ...(l.kind === "folder" || l.kind === "zim" ? [] : [{ label: "绑定知识库…", action: () => onrebind(l) }]),
           { label: notes ? "删除知识库…" : "解除绑定", action: () => onunbind(l), disabled: building },
         ],
       ),
@@ -1126,6 +1126,14 @@
   }
 
   /** Another name for a library; a bound one is only shown under it, its data stays as it is. */
+  function setZimId(l) {
+    nameDlg = {
+      title: "设置维基关联 ID", label: "关联 ID", value: l.tree || "", allowEmpty: true,
+      hint: "例如 wikipedia、wikiquote 或 wikibooks；留空可取消关联。",
+      onok: guard(l.id, async (id) => { await api.setZimWikiId(l.id, id); await onlibs?.(); }),
+    };
+  }
+
   function renameLibrary(l) {
     nameDlg = {
       title: "重命名知识库",

@@ -57,6 +57,17 @@
     onjump = null,
   } = $props();
   let scroller = $state();
+  let externalPrompt = $state(null);
+
+  async function openExternal(url, always = false) {
+    externalPrompt = null;
+    try {
+      await api.openExternalUrl(url);
+      if (always) update({ zimExternal: "always" });
+    } catch (err) {
+      onaction?.({ type: "error", text: String(err) });
+    }
+  }
 
   const load = (k, d) => {
     try {
@@ -385,6 +396,19 @@
 
   /** A click on the source link of a clipping goes to the place it came from. */
   function docClick(e) {
+    const zimLink = e.target.closest?.("a.zim-link");
+    if (zimLink && vol?.kind === "zim") {
+      e.preventDefault();
+      if (!onjump) return;
+      api.resolveZimLink(vol.lib, vol.path, zimLink.dataset.zimHref)
+        .then((to) => {
+          if (!to.external_url) return onjump({ lib: to.lib, path: to.path, lb: to.lb });
+          if (settings.zimExternal === "always") return openExternal(to.external_url);
+          externalPrompt = to.external_url;
+        })
+        .catch((err) => onaction?.({ type: "error", text: String(err) }));
+      return;
+    }
     const a = e.target.closest?.("a.src");
     if (!a) return;
     e.preventDefault();
@@ -404,12 +428,14 @@
   <div class="reader">
     <header>
       <div class="nav">
-        <TitleLink title={vol.label ? `${vol.title} ${vol.label}` : vol.title} text={shownTitle} {onlocate} />
+        <TitleLink title={vol.label ? `${vol.title} ${vol.label}` : vol.title} text={shownTitle} onlocate={vol.kind === "zim" ? null : onlocate} />
+        {#if vol.volumes.length}
         <select aria-label={vol.kind !== "cbeta" ? "同一目录的文章" : "卷"} class="vols" value={vol.path} onchange={(e) => onvolume(e.target.value)}>
           {#each vol.volumes as v}
             <option value={v.path} disabled={!v.exists}>{v.label}{v.exists ? "" : "（缺）"}</option>
           {/each}
         </select>
+        {/if}
         {#if vol.chapters.length}
           <select aria-label="目次" onchange={chapterChange}>
             <option value="">目次…</option>
@@ -463,6 +489,23 @@
           {/each}
         </div>
       {/if}
+      {#if vol.attribution}<footer class="attribution">{vol.attribution}</footer>{/if}
+    </div>
+  </div>
+{/if}
+
+{#if externalPrompt}
+  <div class="external-backdrop" role="presentation" onmousedown={(e) => { if (e.target === e.currentTarget) externalPrompt = null; }}>
+    <div class="external-dialog" role="dialog" aria-modal="true" aria-label="打开外部链接">
+      <h2>打开外部链接？</h2>
+      <p>未在已关联的本地知识库中找到对应文章。是否在系统浏览器中打开？</p>
+      <p class="external-url">{externalPrompt}</p>
+      <div class="external-actions">
+        <button onclick={() => (externalPrompt = null)}>取消</button>
+        <button onclick={() => openExternal(externalPrompt)}>这次打开</button>
+        <button onclick={() => openExternal(externalPrompt, true)}>打开并不再询问</button>
+      </div>
+      <p class="muted">之后可在设置中改回每次询问。</p>
     </div>
   </div>
 {/if}
@@ -508,6 +551,11 @@
   .tip tr.sep td { padding: 0; height: 9px; border-bottom: 1px solid color-mix(in srgb, var(--paper) 35%, transparent); }
   .tip tr.sep + tr td { padding-top: 6px; }
   .reader { display: flex; flex-direction: column; height: 100%; }
+  .external-backdrop { position: fixed; inset: 0; z-index: 950; background: rgba(0,0,0,.3); display: flex; align-items: center; justify-content: center; }
+  .external-dialog { width: min(560px, calc(100vw - 32px)); background: var(--paper); border-radius: 10px; padding: 20px 24px; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+  .external-dialog h2 { margin: 0 0 8px; }
+  .external-url { overflow-wrap: anywhere; font-size: 13px; }
+  .external-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
   /* title, author and path are in the tab's tooltip */
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
@@ -524,6 +572,7 @@
   .check { display: flex; gap: 4px; align-items: center; }
   .locate { padding: 3px 9px; line-height: 1; display: inline-flex; align-items: center; }
   .scroll { flex: 1; overflow: auto; background: var(--paper); }
+  .attribution { margin: 12px 24px 32px; padding: 12px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.5; }
 
   /* original lines */
   .lines { padding: 16px 24px 48px; }
@@ -551,6 +600,7 @@
   .doc :global(p.p) { margin: 0.35em 0; }
   .doc :global(p.quote) { margin: 0.2em 0; padding: 0.1em 0 0.1em 14px; border-left: 3px solid var(--accent-soft); color: var(--muted); }
   .doc :global(a.src) { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
+  .doc :global(a.zim-link) { color: var(--accent); cursor: pointer; text-decoration: underline; }
   .doc :global(p.r-text-right) { text-align: right; }
   .doc :global(p.t-pre) { white-space: pre; line-height: 1.5; overflow-x: auto; font-size: 0.9em; }
   .doc :global(p.t-dharani) { color: var(--ink); }

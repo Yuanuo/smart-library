@@ -10,6 +10,10 @@ export const inspectFolder = (path) => invoke("inspect_folder", { path });
 export const addFolder = (path, title, exts, maxMb, writable = false) => invoke("add_folder", { path, title, exts, maxMb, writable });
 /** Read-write mode of a folder library on or off (ask the user to accept the rules first: writable.js). */
 export const setFolderWritable = (id, writable) => invoke("set_folder_writable", { id, writable });
+export const addZim = (path, wikiId = "") => invoke("add_zim", { path, wikiId });
+export const setZimWikiId = (id, wikiId) => invoke("set_zim_wiki_id", { id, wikiId });
+export const resolveZimLink = (lib, path, href) => invoke("resolve_zim_link", { lib, path, href });
+export const openExternalUrl = (url) => invoke("open_external_url", { url });
 /** A new note / mind map / whiteboard file (`kind`: md, mindmap, whiteboard) in a folder (`parent`: path, "" for the top). */
 export const createFolderFile = (lib, parent, kind = "md", title = null) => invoke("create_folder_file", { lib, parent, kind, title });
 /** A new folder inside a folder (`parent`: path, "" for the top) of a read-write folder library. */

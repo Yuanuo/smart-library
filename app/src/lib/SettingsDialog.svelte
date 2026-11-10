@@ -148,6 +148,12 @@
         <output>{settings.readerLine}</output>
       </div>
       <p class="sample" aria-label="预览">如是我聞。一時佛在舍衛國祇樹給孤獨園。Sample 0123</p>
+      <div class="row">
+        <span>ZIM 外部链接</span>
+        <select value={settings.zimExternal} onchange={(e) => update({ zimExternal: e.currentTarget.value })}>
+          <option value="ask">每次询问</option><option value="always">直接在浏览器打开</option>
+        </select>
+      </div>
     </fieldset>
 
     <fieldset>

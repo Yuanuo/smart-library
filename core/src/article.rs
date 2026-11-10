@@ -45,11 +45,24 @@ pub struct Article {
     pub headings: Vec<Heading>,
     /// structured HTML when rendering was asked for
     pub html: Option<String>,
+    /// Source attribution, separated from the searchable document text.
+    pub attribution: Option<String>,
+    /// Original HTML fragment identifiers mapped to reading paragraphs.
+    pub anchors: std::collections::HashMap<String, String>,
 }
 
 /// Read an article. `path` is its path in the bookcase (for relative images);
 /// `render` asks for the structured HTML too.
 pub fn read_article(html: &str, path: &str, render: Option<&RenderOptions>) -> Article {
+    read_article_inner(html, path, render, false)
+}
+
+/// ZIM articles retain safe, inert internal-link data for the reader to resolve.
+pub fn read_zim_html(html: &str, path: &str, render: Option<&RenderOptions>) -> Article {
+    read_article_inner(html, path, render, true)
+}
+
+fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, zim: bool) -> Article {
     let root = markup::parse(html);
     let meta = read_meta(&root);
     let body = root.find_descendant("body").unwrap_or(&root);
@@ -61,6 +74,9 @@ pub fn read_article(html: &str, path: &str, render: Option<&RenderOptions>) -> A
         html: render.map(HtmlOut::new),
         dir,
         headings: Vec::new(),
+        zim,
+        anchors: std::collections::HashMap::new(),
+        pending_anchors: Vec::new(),
     };
     w.walk_children(body);
     let text = assemble(String::new(), &w.pieces, &w.lbs, &[]);
@@ -69,6 +85,8 @@ pub fn read_article(html: &str, path: &str, render: Option<&RenderOptions>) -> A
         meta,
         headings: w.headings,
         html: w.html.map(|h| h.buf),
+        attribution: None,
+        anchors: w.anchors,
     }
 }
 
@@ -157,6 +175,9 @@ struct Walker {
     html: Option<HtmlOut>,
     dir: String,
     headings: Vec<Heading>,
+    zim: bool,
+    anchors: std::collections::HashMap<String, String>,
+    pending_anchors: Vec<String>,
 }
 
 impl Walker {
@@ -168,6 +189,9 @@ impl Walker {
             self.pieces.push((" ".to_string(), self.cur_lb));
         }
         let lb = format!("¶{}", self.lbs.len() + 1);
+        for id in self.pending_anchors.drain(..) {
+            self.anchors.entry(id).or_insert_with(|| lb.clone());
+        }
         self.lbs.push(lb.clone());
         self.cur_lb = Some(self.lbs.len() - 1);
         if let Some(h) = self.html.as_mut() {
@@ -228,6 +252,15 @@ impl Walker {
         let name = el.name.as_str();
         if SKIP.contains(&name) || el.attr("data-trilium-h1").is_some() {
             return;
+        }
+        if self.zim {
+            if let Some(id) = el.attr("id").filter(|id| !id.is_empty()) {
+                if let Some(i) = self.cur_lb {
+                    self.anchors.entry(id.to_string()).or_insert_with(|| self.lbs[i].clone());
+                } else {
+                    self.pending_anchors.push(id.to_string());
+                }
+            }
         }
         match name {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
@@ -327,6 +360,13 @@ impl Walker {
             "a" if el.attr("data-src").is_some_and(|s| s.starts_with("smartlib://")) => {
                 if let Some(h) = self.html.as_mut() {
                     h.open("a", &[("class", "src"), ("data-src", el.attr("data-src").unwrap_or(""))]);
+                }
+                self.walk_children(el);
+                self.close("a");
+            }
+            "a" if self.zim && el.attr("href").is_some_and(|href| crate::zim::is_internal_href(href) || crate::zim::external_url(href).is_some()) => {
+                if let Some(h) = self.html.as_mut() {
+                    h.open("a", &[("class", "zim-link"), ("href", "#"), ("data-zim-href", el.attr("href").unwrap())]);
                 }
                 self.walk_children(el);
                 self.close("a");

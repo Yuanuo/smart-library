@@ -369,6 +369,18 @@ impl TitleIndex {
         t
     }
 
+    /// Article titles from a ZIM archive, with stable archive paths.
+    pub fn zim(zim: &crate::zim::Zim, root_name: &str) -> TitleIndex {
+        let mut t = TitleIndex::new();
+        let g = t.add_group(root_name.to_string(), "", None, &[]);
+        for i in zim.article_indices() {
+            let e = &zim.entries[i];
+            let path = format!("{}/{}", e.namespace as char, e.path);
+            t.push(TitleEntry { kind: TitleKind::Article, title: e.title.clone(), group: g, path: Some(path), lb: None }, &e.title, &[]);
+        }
+        t
+    }
+
     /// The files of a folder library, grouped by their folder.
     pub fn folder(files: &[crate::folder::FolderFile], dirs: &[String], root_name: &str) -> TitleIndex {
         let mut t = TitleIndex::new();
