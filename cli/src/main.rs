@@ -71,7 +71,7 @@ fn main() {
                 for hit in result.hits {
                     let i = zim.entry_index(&hit.path).ok_or("index refers to a missing ZIM entry")?;
                     let article = zim.article(i, None)?;
-                    println!("{} | {} | occurrences: {}", hit.title, hit.path, locate(&article.text, query, MatchMode::Loose).len());
+                    println!("{} | {} | occurrences: {}", hit.title, hit.path, locate(&article.search_view(), query, MatchMode::Loose).len());
                 }
                 return Ok(());
             }

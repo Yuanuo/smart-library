@@ -996,6 +996,48 @@ mod tests {
         assert!(all.facets.iter().any(|f| f.root == "/person" && f.values.iter().any(|v| v.0 == "根作者" && v.1 == 2)));
     }
 
+    #[test]
+    fn zim_generic_headings_are_not_indexed_or_highlighted_but_body_and_positions_remain() {
+        let html = include_str!("../../samples/zim/sections.html");
+        let a = crate::article::read_zim_html(html, "A/音樂", None);
+        let view = a.search_view();
+        assert_eq!(a.text.plain.chars().count(), view.plain.chars().count());
+        assert_eq!(a.search_exclusions.len(), 4);
+        assert!(a.headings.iter().any(|h| h.text == "參見"));
+        assert!(a.anchors.contains_key("參見"));
+        let occ = locate(&view, "语录", MatchMode::Phrase);
+        assert_eq!(occ.len(), 1);
+        let parts = snippets(&view, &occ, 10, 1);
+        assert_eq!(parts[0].parts.iter().filter(|(_, marked)| *marked).map(|(s, _)| s.as_str()).collect::<String>(), "語錄");
+        let rendered = crate::article::read_zim_html(html, "A/音樂", Some(&crate::render::RenderOptions {
+            highlights: occ.iter().map(|o| (o.from, o.to)).collect(), ..Default::default()
+        }));
+        let rendered_html = rendered.html.unwrap();
+        assert!(rendered_html.contains("语录"));
+        assert_eq!(rendered_html.matches("<mark>語錄</mark>").count(), 1);
+        assert_eq!(occ[0].lb, rendered.text.locate(occ[0].from).unwrap().0.lb.clone().unwrap());
+        assert_eq!(locate(&view, "参考文献", MatchMode::Phrase).len(), 1);
+        assert_eq!(locate(&view, "孔子", MatchMode::Phrase).len(), 1);
+        assert!(locate(&view, "alpha beta", MatchMode::Phrase).is_empty());
+
+        let other = crate::article::read_zim_html("<body><h2>語錄</h2><p>無關內容</p></body>", "A/other", None);
+        let article_title = crate::article::read_zim_html("<body><h1>语录</h1><p>正文</p></body>", "A/title", None);
+        assert_eq!(locate(&article_title.search_view(), "语录", MatchMode::Phrase).len(), 1);
+        let ordinary_html = crate::article::read_article("<body><h2>语录</h2><p>正文</p></body>", "a/article", None);
+        assert_eq!(locate(&ordinary_html.search_view(), "语录", MatchMode::Phrase).len(), 1);
+        let doc = |path: &str, text: String| Ok(IndexDoc { path: path.into(), book: path.into(), juan: 0, title: "测试条目".into(), text, facets: vec![], keys: vec![] });
+        let dir = tempdir::Dir::new();
+        build_index(dir.path(), serde_json::json!({}), 2, vec![doc("A/音樂", view.plain.clone()), doc("A/other", other.search_view().plain)].into_iter(), &Overlay::default(), |_, _| {}).unwrap();
+        let index = SearchIndex::open(dir.path()).unwrap();
+        let hits = index.search(&SearchRequest::new("语录")).unwrap();
+        assert_eq!(hits.total_volumes, 1);
+        assert_eq!(hits.hits[0].path, "A/音樂");
+        assert_eq!(index.search(&SearchRequest::new("孔子")).unwrap().total_volumes, 1);
+        let mut phrase = SearchRequest::new("alpha beta");
+        phrase.mode = MatchMode::Phrase;
+        assert_eq!(index.search(&phrase).unwrap().total_volumes, 0);
+    }
+
     fn filter(root: &str, values: &[&str]) -> Filter {
         Filter { root: root.to_string(), values: values.iter().map(|v| v.to_string()).collect() }
     }

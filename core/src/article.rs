@@ -49,6 +49,24 @@ pub struct Article {
     pub attribution: Option<String>,
     /// Original HTML fragment identifiers mapped to reading paragraphs.
     pub anchors: std::collections::HashMap<String, String>,
+    /// Plain-text ranges displayed normally but omitted from full-text search.
+    pub search_exclusions: Vec<(usize, usize)>,
+}
+
+impl Article {
+    /// Preserve every original plain-text offset while preventing matches in
+    /// excluded headings and across their boundaries.
+    pub fn search_view(&self) -> VolumeText {
+        let mut text = self.text.clone();
+        if !self.search_exclusions.is_empty() {
+            let mut ranges = self.search_exclusions.iter().peekable();
+            text.plain = text.plain.chars().enumerate().map(|(i, c)| {
+                while ranges.peek().is_some_and(|&&(_, end)| end <= i) { ranges.next(); }
+                if ranges.peek().is_some_and(|&&(start, end)| start <= i && i < end) { crate::analyzer::INDEX_GAP } else { c }
+            }).collect();
+        }
+        text
+    }
 }
 
 /// Read an article. `path` is its path in the bookcase (for relative images);
@@ -77,6 +95,8 @@ fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, zi
         zim,
         anchors: std::collections::HashMap::new(),
         pending_anchors: Vec::new(),
+        plain_len: 0,
+        search_exclusions: Vec::new(),
     };
     w.walk_children(body);
     let text = assemble(String::new(), &w.pieces, &w.lbs, &[]);
@@ -87,6 +107,7 @@ fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, zi
         html: w.html.map(|h| h.buf),
         attribution: None,
         anchors: w.anchors,
+        search_exclusions: w.search_exclusions,
     }
 }
 
@@ -168,6 +189,10 @@ const SKIP: [&str; 12] = [
 const BLOCKS: [&str; 10] = ["p", "li", "blockquote", "pre", "dt", "dd", "figcaption", "td", "th", "caption"];
 const CONTAINERS: [&str; 9] = ["div", "section", "article", "main", "body", "header", "footer", "aside", "nav"];
 
+fn generic_zim_heading(text: &str) -> bool {
+    matches!(crate::analyzer::match_key(text).into_iter().collect::<String>().as_str(), "语录" | "参考文献" | "参见")
+}
+
 struct Walker {
     pieces: Vec<(String, Option<usize>)>,
     lbs: Vec<String>,
@@ -178,6 +203,8 @@ struct Walker {
     zim: bool,
     anchors: std::collections::HashMap<String, String>,
     pending_anchors: Vec<String>,
+    plain_len: usize,
+    search_exclusions: Vec<(usize, usize)>,
 }
 
 impl Walker {
@@ -212,6 +239,7 @@ impl Walker {
         if self.cur_lb.is_none() {
             self.start_block();
         }
+        self.plain_len += s.chars().filter(|&c| !crate::volume::is_dropped(c)).count();
         self.pieces.push((s.clone(), self.cur_lb));
         if let Some(h) = self.html.as_mut() {
             h.text(&s);
@@ -266,12 +294,17 @@ impl Walker {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 let level = name[1..].parse::<u8>().unwrap_or(2);
                 let text = el.text().trim().to_string();
+                let exclude = self.zim && level >= 2 && generic_zim_heading(&text);
                 self.open("div", &format!("head h{}", level));
                 let lb = self.start_block();
                 if !text.is_empty() {
                     self.headings.push(Heading { text, lb, level });
                 }
+                let start = self.plain_len;
                 self.walk_children(el);
+                if exclude && self.plain_len > start {
+                    self.search_exclusions.push((start, self.plain_len));
+                }
                 self.close("div");
                 self.cur_lb = None;
             }

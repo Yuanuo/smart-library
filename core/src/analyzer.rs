@@ -26,6 +26,9 @@ use crate::volume::is_punct;
 use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization;
 
+/// Internal separator for omitted ZIM headings, never emitted as an index term.
+pub const INDEX_GAP: char = '\u{fdd0}';
+
 /// Traditional -> simplified pairs, from fast2s (MIT, see data/t2s.LICENSE.md).
 /// All of them are inside U+3400..U+9FFF, and no target is itself a source.
 const T2S: &str = include_str!("../../data/t2s.txt");
@@ -258,6 +261,7 @@ pub fn terms(text: &str) -> Vec<Term> {
                 if !run.is_empty() {
                     flush_run(&mut run, &mut out, &mut pos);
                 }
+                if c == INDEX_GAP { pos += 1; }
             }
         }
     }

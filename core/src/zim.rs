@@ -244,7 +244,7 @@ impl Zim {
         let entry = self.entries.get(index).ok_or("Invalid ZIM entry index")?;
         let title = entry.title.clone();
         let path = format!("{}/{}", entry.namespace as char, entry.path);
-        let text = self.article(index, None)?.text.plain;
+        let text = self.article(index, None)?.search_view().plain;
         Ok(crate::library::IndexDoc {
             path: path.clone(),
             book: title.clone(),

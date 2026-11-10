@@ -481,7 +481,7 @@ fn same_path(a: &str, b: &str) -> bool {
 fn zim_version(path: &str) -> Result<String, String> {
     let m = std::fs::metadata(path).map_err(|e| e.to_string())?;
     let modified = m.modified().map_err(|e| e.to_string())?.duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
-    Ok(format!("{}-{}-{}-content2", m.len(), modified.as_secs(), modified.subsec_nanos()))
+    Ok(format!("{}-{}-{}-content3", m.len(), modified.as_secs(), modified.subsec_nanos()))
 }
 
 /// `lz`, then `lz-2` … if taken.
@@ -1912,7 +1912,7 @@ pub async fn open_node(
         let i = z.entry_index(&path).ok_or("ZIM 文章不存在")?;
         let title = z.entries[i].title.clone();
         let plain = z.article(i, None)?;
-        let (ranges, hits, first_hit_lb) = hits_of(&plain.text, query.as_deref(), phrase);
+        let (ranges, hits, first_hit_lb) = hits_of(&plain.search_view(), query.as_deref(), phrase);
         let a = z.article(i, Some(&RenderOptions { highlights: ranges.clone(), asset_prefix }))?;
         return Ok(ReaderDto { lib: l.id.clone(), kind: l.kind.clone(), book_id: None, title, author: String::new(), path: path.clone(), juan: 0, label: String::new(), volumes: vec![],
             chapters: a.headings.iter().map(|h| ChapterDto { title: h.text.clone(), path: path.clone(), lb: Some(h.lb.clone()), depth: h.level.saturating_sub(1) as usize }).collect(),
@@ -2631,7 +2631,7 @@ pub async fn search(
         let text = if browsing {
             Err(String::new())
         } else if is_article(&l) {
-            article_of(&state, &l, &h.path, None).map(|a| a.text)
+            article_of(&state, &l, &h.path, None).map(|a| a.search_view())
         } else {
             state.bookcase_of(&l)?.volume_text(&h.path)
         };
