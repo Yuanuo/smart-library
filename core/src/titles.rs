@@ -22,8 +22,10 @@
 use crate::analyzer::match_key;
 use crate::bookcase::Bookcase;
 use crate::library::HtmlTree;
+use crate::pinyin::pinyin_key;
 use crate::toc::TocItem;
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TitleKind {
@@ -80,6 +82,13 @@ pub struct TitleEntry {
     pub lb: Option<String>,
 }
 
+struct PinyinTitleIndex {
+    names: Vec<(String, String)>,
+    extras: Vec<(String, String)>,
+    groups: Vec<(String, String)>,
+    aliases: HashMap<usize, Vec<(String, String)>>,
+}
+
 pub struct TitleIndex {
     pub entries: Vec<TitleEntry>,
     pub groups: Vec<TitleGroup>,
@@ -89,11 +98,15 @@ pub struct TitleIndex {
     extras: Vec<String>,
     /// other names the user gave an entry (folded): entry index -> names
     aliases: HashMap<usize, Vec<String>>,
+    /// lazily built pinyin keys (`full`, `initials`) when pinyin search is enabled
+    pinyin: RwLock<Option<Arc<PinyinTitleIndex>>>,
 }
 
 /// Quality of a match, smaller is better; ties keep the tree order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Rank {
+    /// 0 direct text match, 1 matched via pinyin
+    pub pinyin: u8,
     /// 0 the title starts with the first keyword, 1 every keyword is in the
     /// title, 2 some keywords only match the context (book, folders, author)
     pub tier: u8,
@@ -137,6 +150,7 @@ impl TitleIndex {
             names: Vec::new(),
             extras: Vec::new(),
             aliases: HashMap::new(),
+            pinyin: RwLock::new(None),
         }
     }
 
@@ -422,34 +436,120 @@ impl TitleIndex {
         t
     }
 
+    fn pinyin_index(&self) -> Arc<PinyinTitleIndex> {
+        if let Some(p) = self.pinyin.read().unwrap().as_ref() {
+            return p.clone();
+        }
+        let built = Arc::new(PinyinTitleIndex {
+            names: self.names.iter().map(|s| pinyin_key(s)).collect(),
+            extras: self.extras.iter().map(|s| pinyin_key(s)).collect(),
+            groups: self.groups.iter().map(|g| pinyin_key(&g.key)).collect(),
+            aliases: self
+                .aliases
+                .iter()
+                .map(|(&k, v)| (k, v.iter().map(|s| pinyin_key(s)).collect()))
+                .collect(),
+        });
+        *self.pinyin.write().unwrap() = Some(built.clone());
+        built
+    }
+
+    /// Drop the cached pinyin keys so the next pinyin search rebuilds them
+    /// (called after the user updates their custom pinyin dictionary).
+    pub fn invalidate_pinyin(&self) {
+        *self.pinyin.write().unwrap() = None;
+    }
+
     /// Every entry matching all `words`, with its rank, in tree order (the
     /// caller sorts). No words: every entry, all with the same rank.
     pub fn search(&self, words: &[String]) -> Vec<(Rank, usize)> {
+        self.search_with_pinyin(words, false)
+    }
+
+    /// Like [`TitleIndex::search`], optionally matching ASCII alphabetic keywords
+    /// against full pinyin and pinyin initials.
+    pub fn search_with_pinyin(&self, words: &[String], use_pinyin: bool) -> Vec<(Rank, usize)> {
         if words.is_empty() {
-            let r = Rank { tier: 0, kind: 0, inexact: 0, len: 0 };
+            let r = Rank { pinyin: 0, tier: 0, kind: 0, inexact: 0, len: 0 };
             return (0..self.entries.len()).map(|i| (r, i)).collect();
         }
+        let py_arc = if use_pinyin { Some(self.pinyin_index()) } else { None };
+        let py = py_arc.as_deref();
+        let is_py_word = |w: &str| !w.is_empty() && w.bytes().all(|b| b.is_ascii_alphabetic());
+        let py_contains = |pair: &(String, String), w: &str| pair.0.contains(w) || pair.1.contains(w);
+
         let joined: String = words.concat();
         let mut out = Vec::new();
         for (i, name) in self.names.iter().enumerate() {
             let e = &self.entries[i];
             let mut in_name = true;
+            let mut used_py = false;
             let all = words.iter().all(|w| {
-                if name.contains(w.as_str()) {
+                let ws = w.as_str();
+                if name.contains(ws) {
                     return true;
                 }
+                if let Some(py) = py {
+                    if is_py_word(ws) && py_contains(&py.names[i], ws) {
+                        used_py = true;
+                        return true;
+                    }
+                }
                 in_name = false;
-                self.extras[i].contains(w.as_str()) || self.groups[e.group as usize].key.contains(w.as_str())
+                if self.extras[i].contains(ws) || self.groups[e.group as usize].key.contains(ws) {
+                    return true;
+                }
+                if let Some(py) = py {
+                    if is_py_word(ws)
+                        && (py_contains(&py.extras[i], ws)
+                            || py_contains(&py.groups[e.group as usize], ws))
+                    {
+                        used_py = true;
+                        return true;
+                    }
+                }
+                false
             });
             // another name of the entry may match better than the title
             let by_alias = self.aliases.get(&i).and_then(|list| {
+                let py_list = py.and_then(|p| p.aliases.get(&i));
                 list.iter()
-                    .filter(|a| words.iter().all(|w| a.contains(w.as_str())))
-                    .map(|a| Rank {
-                        tier: (!a.starts_with(words[0].as_str())) as u8,
-                        kind: e.kind.order(),
-                        inexact: (*a != joined) as u8,
-                        len: a.chars().count() as u32,
+                    .enumerate()
+                    .filter_map(|(ai, a)| {
+                        let mut a_py = false;
+                        let ok = words.iter().all(|w| {
+                            let ws = w.as_str();
+                            if a.contains(ws) {
+                                return true;
+                            }
+                            if let Some(pl) = py_list {
+                                if is_py_word(ws) && py_contains(&pl[ai], ws) {
+                                    a_py = true;
+                                    return true;
+                                }
+                            }
+                            false
+                        });
+                        if !ok {
+                            return None;
+                        }
+                        let w0 = words[0].as_str();
+                        let starts = a.starts_with(w0)
+                            || (a_py
+                                && py_list.is_some_and(|pl| {
+                                    pl[ai].0.starts_with(w0) || pl[ai].1.starts_with(w0)
+                                }));
+                        let exact = *a == joined
+                            || (a_py
+                                && py_list
+                                    .is_some_and(|pl| pl[ai].0 == joined || pl[ai].1 == joined));
+                        Some(Rank {
+                            pinyin: a_py as u8,
+                            tier: (!starts) as u8,
+                            kind: e.kind.order(),
+                            inexact: (!exact) as u8,
+                            len: a.chars().count() as u32,
+                        })
                     })
                     .min()
             });
@@ -459,17 +559,25 @@ impl TitleIndex {
                 }
                 continue;
             }
+            let w0 = words[0].as_str();
             let tier = if !in_name {
                 2
-            } else if name.starts_with(words[0].as_str()) {
+            } else if name.starts_with(w0)
+                || (used_py
+                    && py.is_some_and(|p| p.names[i].0.starts_with(w0) || p.names[i].1.starts_with(w0)))
+            {
                 0
             } else {
                 1
             };
+            let exact = *name == joined
+                || (used_py
+                    && py.is_some_and(|p| p.names[i].0 == joined || p.names[i].1 == joined));
             let own = Rank {
+                pinyin: used_py as u8,
                 tier,
                 kind: e.kind.order(),
-                inexact: (*name != joined) as u8,
+                inexact: (!exact) as u8,
                 len: if tier < 2 { name.chars().count() as u32 } else { 0 },
             };
             out.push((by_alias.map_or(own, |a| a.min(own)), i));
@@ -479,7 +587,12 @@ impl TitleIndex {
 
     /// Best matches first, at most `limit`; also the number of matches.
     pub fn top(&self, query: &str, limit: usize) -> (usize, Vec<&TitleEntry>) {
-        let mut m = self.search(&query_words(query));
+        self.top_with_pinyin(query, limit, false)
+    }
+
+    /// Like [`TitleIndex::top`], optionally matching pinyin.
+    pub fn top_with_pinyin(&self, query: &str, limit: usize, use_pinyin: bool) -> (usize, Vec<&TitleEntry>) {
+        let mut m = self.search_with_pinyin(&query_words(query), use_pinyin);
         let total = m.len();
         m.sort();
         (total, m.into_iter().take(limit).map(|(_, i)| &self.entries[i]).collect())
@@ -618,5 +731,29 @@ mod tests {
         let (n, top) = t.top("乙", 5);
         assert_eq!(n, 2); // the folder, and the file inside it (its folder is context)
         assert_eq!((top[0].kind, top[0].path.as_deref(), t.context(top[0])), (TitleKind::Folder, Some("甲/乙"), "甲"));
+    }
+
+    #[test]
+    fn matches_titles_by_pinyin_when_enabled() {
+        let bc = fixture();
+        let t = TitleIndex::cbeta(&bc, "bulei").unwrap();
+        // disabled by default
+        assert_eq!(t.top_with_pinyin("miaofa", 5, false).0, 0);
+        // full pinyin
+        let (n, top) = t.top_with_pinyin("miaofalianhua", 5, true);
+        assert!(n >= 1);
+        assert_eq!(top[0].kind, TitleKind::Book);
+        assert!(top[0].title.contains("妙法蓮華經"));
+        // pinyin initials
+        let (n, top) = t.top_with_pinyin("xp", 5, true);
+        assert!(n >= 1);
+        assert_eq!(top[0].title, "1 序品");
+        // mixed book pinyin + chapter Chinese, and polyphone 大般若 -> bore
+        let (n, top) = t.top_with_pinyin("miaofa 普门品", 5, true);
+        assert_eq!(n, 2);
+        assert!(top.iter().any(|e| e.title == "25 觀世音菩薩普門品"));
+        let (n, top) = t.top_with_pinyin("dabore", 5, true);
+        assert!(n >= 1);
+        assert!(top[0].title.contains("大般若"));
     }
 }

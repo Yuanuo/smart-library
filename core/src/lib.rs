@@ -29,6 +29,7 @@ pub mod markdown;
 pub mod markup;
 pub mod nav;
 pub mod notes;
+pub mod pinyin;
 pub mod props;
 pub mod render;
 pub mod search;
