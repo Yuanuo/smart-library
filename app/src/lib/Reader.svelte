@@ -504,7 +504,7 @@
         {#if onaction}<button class="locate" onclick={() => onaction({ type: "tag", vol })} title="为本卷（本篇）加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
       </div>
     </header>
-    <!-- svelte-ignore a11y_mouse_events_have_key_events -->
+    <!-- svelte-ignore a11y_mouse_events_have_key_events, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))} oncontextmenu={readerMenu} onclick={docClick}
       onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para"}
@@ -526,7 +526,7 @@
 
 {#if tip}
   {@const above = tip.top > 160}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div class="tip" class:below={!above} bind:this={tipEl} role="tooltip"
     onmouseenter={() => clearTimeout(hideTimer)} onmouseleave={hideSoon} onmousedown={() => (pinned = true)}
     style="left: {tipLeft}px; {above ? `bottom: ${window.innerHeight - tip.top + 10}px` : `top: ${tip.bottom + 10}px`}; --arrow: {tip.x - tipLeft}px">
@@ -565,11 +565,6 @@
   .tip tr.sep td { padding: 0; height: 9px; border-bottom: 1px solid color-mix(in srgb, var(--paper) 35%, transparent); }
   .tip tr.sep + tr td { padding-top: 6px; }
   .reader { display: flex; flex-direction: column; height: 100%; }
-  .external-backdrop { position: fixed; inset: 0; z-index: 950; background: rgba(0,0,0,.3); display: flex; align-items: center; justify-content: center; }
-  .external-dialog { width: min(560px, calc(100vw - 32px)); background: var(--paper); border-radius: 10px; padding: 20px 24px; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
-  .external-dialog h2 { margin: 0 0 8px; }
-  .external-url { overflow-wrap: anywhere; font-size: 13px; }
-  .external-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
   /* title, author and path are in the tab's tooltip */
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;

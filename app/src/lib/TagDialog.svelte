@@ -51,8 +51,8 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <form class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={heading} onsubmit={submit}
-    onkeydown={(e) => e.key === "Escape" && onclose()}>
+  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={heading} tabindex="-1" onkeydown={(e) => e.key === "Escape" && onclose()}><form style="display:contents" onsubmit={submit}>
+    <!-- close dialog -->
     <header class="dialog-header"><h2>{heading}</h2></header>
     <div class="dialog-content">
     {#if subtitle}<p class="muted sub">{subtitle}</p>{/if}
@@ -76,7 +76,7 @@
       <button type="button" onclick={onclose}>取消</button>
       <button class="primary" disabled={busy}>{okLabel}</button>
     </div>
-  </form>
+  </form></div>
 </div>
 
 <style>

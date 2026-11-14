@@ -3,7 +3,7 @@
   // A CBETA bookcase: its official trees show the same data, so only one of
   // them can be bound (default 部類); its user-made trees are libraries of
   // their own and can be bound together.
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import * as api from "./api.js";
   import { confirmWritable } from "./writable.js";
@@ -12,7 +12,7 @@
 
   // step 1: kind of library; step 2: its parameters. Opening with a path
   // (bind more from the same bookcase) skips step 1.
-  let kind = $state(initialPath ? "cbeta" : "");
+  let kind = $state(untrack(() => (initialPath ? "cbeta" : "")));
   const KINDS = [
     { id: "notes", name: "内部知识库", desc: "笔记存在程序自己的数据库里，不依赖文件夹：适合大量笔记和日记，保存与搜索都快；Markdown、脑图、白板，可整体导出备份（读写）", ready: true },
     { id: "folder", name: "本地文件夹", desc: "直接使用磁盘上的文件夹和文件：可用 git 或网盘同步备份，别的软件也能打开；默认只读，可解锁后编辑 Markdown、脑图、白板（可控读写）", ready: true },

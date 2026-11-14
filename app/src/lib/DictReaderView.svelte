@@ -8,6 +8,7 @@
   import { settings } from "./settings.svelte.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
   import { openDictWindow, openDictEntryWindow } from "./dictWindow.js";
+  import { sanitizeHtml } from "./sanitize.js";
 
   let {
     detail = null,
@@ -28,7 +29,8 @@
 
   const shownHtml = $derived.by(() => {
     if (!detail?.html) return "";
-    return scriptMode === "simp" ? simplifyHtml(detail.html) : detail.html;
+    const safe = sanitizeHtml(detail.html);
+    return scriptMode === "simp" ? simplifyHtml(safe) : safe;
   });
 
   const clip = (s, n = 14) => (s.length > n ? s.slice(0, n) + "…" : s);

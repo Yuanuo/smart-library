@@ -2,7 +2,7 @@
   // Add the selected text to a note: a new one (at a place in an internal
   // library) or an existing one. The text goes in as a quote with a link back
   // to its source; a remark of your own can follow it.
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
 
@@ -11,7 +11,7 @@
   const last = getLast();
   let mode = $state(last ? "append" : "new");
   let where = $state("");
-  let title = $state(`摘录：${vol.title}`);
+  let title = $state(untrack(() => `摘录：${vol.title}`));
   let find = $state(last ? last.title : ""); // append: what is typed to find the note
   let target = $state(last); // { lib, id, title }
   let comment = $state("");
@@ -92,8 +92,8 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <form class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="加入笔记" onsubmit={submit}
-    onkeydown={(e) => e.key === "Escape" && onclose()}>
+  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="加入笔记" tabindex="-1" onkeydown={(e) => e.key === "Escape" && onclose()}><form style="display:contents" onsubmit={submit}>
+    <!-- close dialog -->
     <header class="dialog-header"><h2>加入笔记</h2></header>
     <div class="dialog-content">
     <p class="quote">{text.length > 160 ? text.slice(0, 160) + "…" : text}</p>
@@ -149,7 +149,7 @@
       <button type="button" onclick={onclose}>取消</button>
       <button class="primary" disabled={!ready || busy}>{mode === "new" ? "创建并加入" : "追加"}</button>
     </div>
-  </form>
+  </form></div>
 </div>
 
 <style>

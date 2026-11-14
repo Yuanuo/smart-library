@@ -1172,7 +1172,7 @@
 
 <svelte:window onkeydown={f2} />
 
-<div class="panel" bind:this={panel} role="tree" aria-label="知识库" oncontextmenu={panelMenu}>
+<div class="panel" bind:this={panel} role="tree" aria-label="知识库" tabindex="-1" oncontextmenu={panelMenu}>
   {#each libraries as l (l.id)}
     {@const b = badge(l)}
     <div class="lib" data-lib={l.id}>

@@ -93,13 +93,14 @@
   class="backdrop"
   role="presentation"
   onmousedown={(e) => e.target === e.currentTarget && onClose?.()}>
-  <form
+  <div
     class="dialog dialog-shell"
     role="dialog"
     aria-modal="true"
     aria-label={kind === "mindmap" ? "保存为新脑图" : "保存为新笔记"}
-    onsubmit={submit}
+    tabindex="-1"
     onkeydown={(e) => e.key === "Escape" && onClose?.()}>
+    <form style="display:contents" onsubmit={submit}>
     <header class="dialog-header">
       <h2>{kind === "mindmap" ? "保存为新脑图" : "保存为新笔记"}</h2>
     </header>
@@ -166,7 +167,8 @@
         {saving ? "保存中…" : "确定创建"}
       </button>
     </div>
-  </form>
+    </form>
+  </div>
 </div>
 
 <style>

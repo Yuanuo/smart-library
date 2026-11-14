@@ -11,12 +11,13 @@
   import { setLast } from "./clipTarget.js";
   import { settings, update, isAiReady } from "./settings.svelte.js";
   import Reader from "./Reader.svelte";
-  import MindMapView from "./MindMapView.svelte";
-  import WhiteboardView from "./WhiteboardView.svelte";
   import TitleLink from "./TitleLink.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import { makePinyinItem } from "./pinyinMenu.svelte.js";
   import Icon from "./Icon.svelte";
+
+  const loadMindMap = () => import("./MindMapView.svelte");
+  const loadWhiteboard = () => import("./WhiteboardView.svelte");
 
   let { p, onopen, onprogress, ontitle, onlocate = null, onaction = null, onai = null, ondocstate = null } = $props();
 
@@ -132,7 +133,8 @@
           draft = v.raw ?? "";
           loaded = true;
           seenReload = reload;
-          dirty = false;
+          editSeq = 0;
+          savedSeq = 0;
           ver += 1;
         }
         // the tab shows the title; its tooltip also the id, author and path
@@ -151,13 +153,14 @@
   });
 
   // ---- notes: saved a moment after every change
-  let dirty = false;
+  let editSeq = 0;
+  let savedSeq = 0;
   let status = $state("");
   let saveTimer = null;
 
   function changed(md) {
     draft = md;
-    dirty = true;
+    editSeq += 1;
     status = "未保存";
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 1000);
@@ -165,22 +168,22 @@
 
   async function saveNow() {
     clearTimeout(saveTimer);
-    if (!dirty || !vol) return;
-    dirty = false;
+    if (editSeq === savedSeq || !vol) return;
+    const targetSeq = editSeq;
     const text = draft;
     try {
       await api.saveNote(p.lib, p.path, text);
       if (vol.kind === "notes") setLast({ lib: p.lib, id: p.path, title: vol.title }); // the note clippings go to by default
-      status = "已保存";
+      if (savedSeq < targetSeq) savedSeq = targetSeq;
+      if (editSeq === savedSeq) status = "已保存";
     } catch (e) {
-      dirty = true;
-      status = "保存失败：" + String(e);
+      if (editSeq === targetSeq) status = "保存失败：" + String(e);
     }
   }
 
   onDestroy(() => {
     clearTimeout(saveTimer);
-    if (dirty && vol) api.saveNote(p.lib, p.path, draft).catch(() => {});
+    if (editSeq !== savedSeq && vol) api.saveNote(p.lib, p.path, draft).catch(() => {});
   });
 
   // the workspace asks whether this note is open in its editor (then a clipping goes into it)
@@ -338,30 +341,42 @@
 {:else if vol}
   {#if vol.content_type === "mindmap"}
     {#key vol}
-      <MindMapView
-        bind:this={mindRef}
-        {vol}
-        title={p.retitled ?? vol.title}
-        {onlocate}
-        ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
-        lib={p.lib}
-        path={p.path}
-        onjump={onopen}
-        onexternal={handleExternal}
-        extra={aiBtn}
-        onai={(req) => sendToAi(req)} />
+      {#await loadMindMap()}
+        <p class="muted loading">载入脑图…</p>
+      {:then m}
+        <m.default
+          bind:this={mindRef}
+          {vol}
+          title={p.retitled ?? vol.title}
+          {onlocate}
+          ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
+          lib={p.lib}
+          path={p.path}
+          onjump={onopen}
+          onexternal={handleExternal}
+          extra={aiBtn}
+          onai={(req) => sendToAi(req)} />
+      {:catch e}
+        <p class="error">{String(e)}</p>
+      {/await}
     {/key}
   {:else if vol.content_type === "whiteboard"}
     {#key vol}
-      <WhiteboardView
-        bind:this={boardRef}
-        {vol}
-        title={p.retitled ?? vol.title}
-        {onlocate}
-        ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
-        lib={p.lib}
-        path={p.path}
-        extra={aiBtn} />
+      {#await loadWhiteboard()}
+        <p class="muted loading">载入白板…</p>
+      {:then m}
+        <m.default
+          bind:this={boardRef}
+          {vol}
+          title={p.retitled ?? vol.title}
+          {onlocate}
+          ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
+          lib={p.lib}
+          path={p.path}
+          extra={aiBtn} />
+      {:catch e}
+        <p class="error">{String(e)}</p>
+      {/await}
     {/key}
   {:else if isNote(vol)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->

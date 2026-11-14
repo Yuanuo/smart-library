@@ -94,8 +94,9 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <form class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="属性" onsubmit={(e) => (e.preventDefault(), save())}
+  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="属性" tabindex="-1"
     onkeydown={(e) => e.key === "Escape" && onclose()}>
+    <form style="display:contents" onsubmit={(e) => (e.preventDefault(), save())}>
     <header class="dialog-header"><h2>属性：{title}</h2></header>
     <div class="dialog-content">
     <p class="muted sub">{libTitle}</p>
@@ -161,7 +162,8 @@
       <button type="button" onclick={onclose}>取消</button>
       <button class="primary" disabled={busy || loading}>{busy ? "保存中…" : "保存"}</button>
     </div>
-  </form>
+    </form>
+  </div>
 </div>
 
 <style>

@@ -1,11 +1,11 @@
 <script>
   // A small dialog asking for one line of text (a note title, a library name).
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
 
   // `hint`: a rule shown under the box; `validate(text)`: resolves to the reason
   // the text is not acceptable (or "" when it is), checked as the user types.
   let { title, label = "名称", value = "", okLabel = "确定", hint = "", validate = null, allowEmpty = false, onok, onclose } = $props();
-  let text = $state(value);
+  let text = $state(untrack(() => value));
   let input = $state();
   let busy = $state(false);
   let error = $state("");
@@ -45,8 +45,9 @@
 </script>
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <form class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={title} onsubmit={submit}
+  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={title} tabindex="-1"
     onkeydown={(e) => e.key === "Escape" && onclose()}>
+    <form style="display:contents" onsubmit={submit}>
     <header class="dialog-header"><h2>{title}</h2></header>
     <div class="dialog-content">
     <label>{label}<input type="text" bind:value={text} bind:this={input} /></label>
@@ -57,7 +58,8 @@
       <button type="button" onclick={onclose}>取消</button>
       <button class="primary" disabled={(!allowEmpty && !text.trim()) || busy || !!bad}>{okLabel}</button>
     </div>
-  </form>
+    </form>
+  </div>
 </div>
 
 <style>

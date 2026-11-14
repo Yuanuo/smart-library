@@ -58,7 +58,7 @@
       {:else if loading}
         <p class="muted">正在转换…</p>
       {:else}
-        <div class="py-box" tabindex="0" aria-label="拼音转换结果">{pinyin}</div>
+        <div class="py-box" role="region" aria-label="拼音转换结果">{pinyin}</div>
       {/if}
     </div>
     <div class="actions">
