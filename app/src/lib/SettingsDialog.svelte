@@ -12,11 +12,127 @@
     ["appearance", "外观"],
     ["reader", "阅读与链接"],
     ["search", "搜索与时域"],
+    ["dict", "词典"],
     ["daily", "每日一句"],
     ["ai", "AI 助手"],
     ["clean", "数据清理"],
   ];
   let activeTab = $state("appearance");
+
+  // Dictionary settings
+  let dictPaths = $state([]);
+  let dictDisabled = $state([]);
+  let dictList = $state([]);
+  let dictFilter = $state("");
+  let dictLoading = $state(false);
+  let dictMsg = $state("");
+
+  const filteredDicts = $derived.by(() => {
+    const q = dictFilter.trim().toLowerCase();
+    if (!q) return dictList;
+    return dictList.filter((d) => d.name.toLowerCase().includes(q) || d.path.toLowerCase().includes(q));
+  });
+  const enabledDictCount = $derived(dictList.filter((d) => d.enabled).length);
+  const enabledEntriesCount = $derived(dictList.filter((d) => d.enabled).reduce((n, d) => n + (d.size || 0), 0));
+
+  async function loadDictConfig() {
+    dictLoading = true;
+    dictMsg = "";
+    try {
+      const st = await api.dictConfigGet();
+      dictPaths = st.paths || [];
+      dictDisabled = st.disabled || [];
+      dictList = st.dicts || [];
+    } catch (e) {
+      dictMsg = String(e);
+    } finally {
+      dictLoading = false;
+    }
+  }
+
+  async function saveDictConfig(nextPaths, nextDisabled) {
+    dictLoading = true;
+    dictMsg = "";
+    try {
+      const st = await api.dictConfigSet(nextPaths, nextDisabled);
+      dictPaths = st.paths || [];
+      dictDisabled = st.disabled || [];
+      dictList = st.dicts || [];
+    } catch (e) {
+      dictMsg = String(e);
+    } finally {
+      dictLoading = false;
+    }
+  }
+
+  async function addDictDir() {
+    const picked = await openDialog({ directory: true, multiple: false, title: "选择词典目录（将扫描目录下所有 .words 文件）" });
+    if (!picked || typeof picked !== "string") return;
+    if (dictPaths.includes(picked)) return;
+    await saveDictConfig([...dictPaths, picked], dictDisabled);
+  }
+
+  async function addDictFile() {
+    const picked = await openDialog({
+      multiple: true,
+      title: "选择词典文件（*.words）",
+      filters: [{ name: "词典文件", extensions: ["words"] }],
+    });
+    if (!picked) return;
+    const files = Array.isArray(picked) ? picked : [picked];
+    const next = [...dictPaths];
+    for (const f of files) {
+      if (f && !next.includes(f)) next.push(f);
+    }
+    await saveDictConfig(next, dictDisabled);
+  }
+
+  async function removeDictPath(p) {
+    await saveDictConfig(dictPaths.filter((x) => x !== p), dictDisabled);
+  }
+
+  async function reloadDicts() {
+    dictLoading = true;
+    dictMsg = "";
+    try {
+      const st = await api.dictReload();
+      dictPaths = st.paths || [];
+      dictDisabled = st.disabled || [];
+      dictList = st.dicts || [];
+    } catch (e) {
+      dictMsg = String(e);
+    } finally {
+      dictLoading = false;
+    }
+  }
+
+  async function toggleDict(id) {
+    const set = new Set(dictDisabled);
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    await saveDictConfig(dictPaths, [...set]);
+  }
+
+  async function selectAllDicts() {
+    const visible = new Set(filteredDicts.map((d) => d.id));
+    const next = dictDisabled.filter((id) => !visible.has(id));
+    await saveDictConfig(dictPaths, next);
+  }
+
+  async function clearDicts() {
+    const set = new Set(dictDisabled);
+    for (const d of filteredDicts) set.add(d.id);
+    await saveDictConfig(dictPaths, [...set]);
+  }
+
+  async function invertDicts() {
+    const set = new Set(dictDisabled);
+    for (const d of filteredDicts) {
+      if (set.has(d.id)) set.delete(d.id);
+      else set.add(d.id);
+    }
+    await saveDictConfig(dictPaths, [...set]);
+  }
 
   // AI presets management & connection test
   let showKey = $state(false);
@@ -34,6 +150,7 @@
         (l) => l.kind === "notes" || (l.kind === "folder" && l.writable),
       );
     }).catch(() => {});
+    loadDictConfig();
   });
 
   function patchPreset(field, val) {
@@ -331,6 +448,68 @@
             </div>
           </div>
 
+        {:else if activeTab === "dict"}
+          <div class="sec-head">
+            <h3>词典配置</h3>
+            <p class="muted">添加 .words 词典文件或目录（自动扫描子目录），并选择默认启用的词典。</p>
+          </div>
+          <div class="card">
+            <div class="card-block">
+              <div class="block-title">词库路径</div>
+              <div class="row-plain">
+                <button type="button" onclick={addDictDir} disabled={dictLoading}>添加目录…</button>
+                <button type="button" onclick={addDictFile} disabled={dictLoading}>添加文件 (*.words)…</button>
+                <button type="button" onclick={reloadDicts} disabled={dictLoading}>{dictLoading ? "扫描中…" : "重新扫描"}</button>
+              </div>
+              {#if !dictPaths.length}
+                <p class="muted hint">尚未添加词典目录或文件。</p>
+              {:else}
+                <div class="dict-paths">
+                  {#each dictPaths as p (p)}
+                    <div class="src">
+                      <span class="lab" title={p}>{p}</span>
+                      <button type="button" class="link" onclick={() => removeDictPath(p)}>移除</button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-block">
+              <div class="dict-list-head">
+                <div class="block-title" style="margin:0">
+                  可加载词典（已启用 {enabledDictCount}/{dictList.length}，共 {enabledEntriesCount.toLocaleString()} 词条）
+                </div>
+                <div class="row-plain" style="margin:0">
+                  <button type="button" onclick={selectAllDicts} disabled={!filteredDicts.length || dictLoading}>全选</button>
+                  <button type="button" onclick={clearDicts} disabled={!filteredDicts.length || dictLoading}>清空</button>
+                  <button type="button" onclick={invertDicts} disabled={!filteredDicts.length || dictLoading}>反选</button>
+                </div>
+              </div>
+              {#if dictList.length > 6}
+                <div class="row-plain">
+                  <input type="text" bind:value={dictFilter} placeholder="过滤词典名称或路径…" style="flex:1; min-width:160px" />
+                </div>
+              {/if}
+              {#if !dictList.length}
+                <p class="muted hint" style="margin-top:8px">未发现 .words 词典文件。</p>
+              {:else}
+                <div class="dict-items">
+                  {#each filteredDicts as d (d.id)}
+                    <label class="dict-item" title={d.path}>
+                      <input type="checkbox" checked={d.enabled} onchange={() => toggleDict(d.id)} />
+                      <span class="dict-name">{d.name}</span>
+                      {#if d.has_extra}<span class="dict-badge">图</span>{/if}
+                      <span class="muted dict-count">{d.size.toLocaleString()} 条</span>
+                    </label>
+                  {/each}
+                </div>
+              {/if}
+              {#if dictMsg}<p class="hint err-text">{dictMsg}</p>{/if}
+            </div>
+          </div>
+
         {:else if activeTab === "daily"}
           <div class="sec-head">
             <h3>每日一句</h3>
@@ -550,4 +729,12 @@
   .src .lab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hint { margin: 0 0 6px; font-size: 13px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .dict-paths { max-height: 120px; overflow-y: auto; margin-top: 6px; }
+  .dict-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .dict-items { max-height: 240px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: var(--bg); }
+  .dict-item { display: flex; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px dashed var(--line); cursor: pointer; font-size: 13px; }
+  .dict-item:last-child { border-bottom: none; }
+  .dict-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dict-badge { font-size: 11px; padding: 0 4px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); flex: none; }
+  .dict-count { font-size: 12px; flex: none; }
 </style>

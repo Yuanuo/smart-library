@@ -170,4 +170,14 @@ export async function* aiStreamGenerator(config, system, messages, signal = null
     signal?.removeEventListener("abort", onAbort);
     unlisten();
   }
-}
+}
+
+// ------------------------------------------------------------ dictionaries
+export const dictConfigGet = () => invoke("dict_config_get");
+export const dictConfigSet = (paths, disabled) => invoke("dict_config_set", { paths, disabled });
+export const dictReload = () => invoke("dict_reload");
+export const dictSearch = (query, scopeIds = null, offset = 0, limit = 50) =>
+  invoke("dict_search", { query, scopeIds, offset, limit });
+export const dictEntry = (dictId, entryId) => invoke("dict_entry", { dictId, entryId });
+export const dictLookup = (word, scopeIds = null, limit = 50) =>
+  invoke("dict_lookup", { word, scopeIds, limit });

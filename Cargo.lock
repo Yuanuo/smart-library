@@ -3780,11 +3780,15 @@ dependencies = [
 name = "smart-library-core"
 version = "26.11.8"
 dependencies = [
+ "base64 0.23.1",
  "encoding_rs",
+ "flate2",
+ "memmap2",
  "pdf-extract",
  "quick-xml",
  "rusqlite",
  "ruzstd",
+ "serde",
  "serde_json",
  "tantivy",
  "unicode-normalization",

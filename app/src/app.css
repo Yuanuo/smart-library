@@ -23,7 +23,9 @@
 .note-editor a[data-smartlib]::before,
 .doc a.zim-link[data-link-kind="external"]::before,
 .note-editor a[href^="https://"]::before,
-.note-editor a[href^="http://"]::before {
+.note-editor a[href^="http://"]::before,
+.dict-entry-body a[href^="https://"]::before,
+.dict-entry-body a[href^="http://"]::before {
   content: "";
   display: inline-block;
   width: 0.95em;
@@ -36,13 +38,16 @@
 
 .doc a.src::before,
 .doc a.zim-link[data-link-kind="internal"]::before,
-.note-editor a[data-smartlib]::before {
+.note-editor a[data-smartlib]::before,
+.dict-entry-body a.dict-seealso::before {
   mask-image: url("./lib/icons/link-document.svg");
 }
 
 .doc a.zim-link[data-link-kind="external"]::before,
 .note-editor a[href^="https://"]::before,
-.note-editor a[href^="http://"]::before {
+.note-editor a[href^="http://"]::before,
+.dict-entry-body a[href^="https://"]::before,
+.dict-entry-body a[href^="http://"]::before {
   mask-image: url("./lib/icons/link-web.svg");
 }
 

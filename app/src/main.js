@@ -6,6 +6,8 @@ import Popout from "./Popout.svelte";
 import PanelWindow from "./PanelWindow.svelte";
 import SearchWindow from "./SearchWindow.svelte";
 import AiChatWindow from "./AiChatWindow.svelte";
+import DictWindow from "./DictWindow.svelte";
+import DictEntryWindow from "./DictEntryWindow.svelte";
 import { initSettings } from "./lib/settings.svelte.js";
 
 initSettings();
@@ -16,8 +18,14 @@ const popout = params.get("popout");
 const panel = params.get("panel");
 const searchWin = params.get("search");
 const aiChatWin = params.get("aichat");
+const dictWin = params.get("dict");
+const dictEntryWin = params.get("dictentry");
 const target = document.getElementById("app");
-if (aiChatWin) {
+if (dictEntryWin) {
+  mount(DictEntryWindow, { target, props: { info: JSON.parse(dictEntryWin) } });
+} else if (dictWin) {
+  mount(DictWindow, { target, props: { info: JSON.parse(dictWin) } });
+} else if (aiChatWin) {
   mount(AiChatWindow, { target, props: { info: JSON.parse(aiChatWin) } });
 } else if (searchWin) {
   mount(SearchWindow, { target, props: { info: JSON.parse(searchWin) } });

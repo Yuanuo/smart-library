@@ -7,7 +7,8 @@
     "reader-*",
     "panel-*",
     "search-*",
-    "aichat-*"
+    "aichat-*",
+    "dict-*"
   ],
   "permissions": [
     "core:default",

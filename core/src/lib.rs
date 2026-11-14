@@ -14,6 +14,7 @@ pub mod bookcase;
 pub mod bookinfo;
 pub mod catalog;
 pub mod cite;
+pub mod dict;
 pub mod doctext;
 pub mod dynasty;
 pub mod exchange;

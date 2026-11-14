@@ -227,6 +227,12 @@ fn main() {
             commands::ai_session_delete,
             commands::ai_session_rename,
             commands::ai_session_clear,
+            commands::dict_config_get,
+            commands::dict_config_set,
+            commands::dict_reload,
+            commands::dict_search,
+            commands::dict_entry,
+            commands::dict_lookup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Smart Library");

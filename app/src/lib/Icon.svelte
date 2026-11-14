@@ -58,6 +58,10 @@
     <circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="1.5" fill="currentColor" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
   {:else if name === "sparkles"}
     <path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z" fill="currentColor" fill-opacity="0.22" /><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" /><path d="M5 16l.7 1.6L7.3 18.3l-1.6.7L5 20.6l-.7-1.6-1.6-.7 1.6-.7z" />
+  {:else if name === "dict"}
+    <path d="M5 4.5A2 2 0 0 1 7 2.5h11.5v16H7a2 2 0 0 0-2 2z" fill="currentColor" fill-opacity="0.18" /><path d="M5 18.5v1A2 2 0 0 0 7 21.5h11.5" /><path d="M9 7h6M9 10.5h4" />
+  {:else if name === "open-window"}
+    <path d="M14 4h6v6" /><path d="M20 4 11 13" /><path d="M18 13v5.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H11" />
   {/if}
 </svg>
 

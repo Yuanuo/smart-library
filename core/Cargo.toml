@@ -11,6 +11,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 encoding_rs = "0.8"
 quick-xml = "0.42"
 unicode-normalization = "0.1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # internal (read-write) libraries; bundled SQLite is C code, checked to build with the gnu gcc
 rusqlite = { version = "0.41", features = ["bundled"] }
@@ -18,3 +19,6 @@ tantivy = { version = "0.27", default-features = false, features = ["mmap", "lz4
 pdf-extract = "0.12.1"
 ruzstd = "0.9.1"
 url = "2"
+memmap2 = "0.9"
+flate2 = "1"
+base64 = "0.23"
