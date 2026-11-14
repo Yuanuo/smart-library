@@ -266,6 +266,7 @@
 
   // the table of periods (时域): the user's rows on top of the preset ones
   let dyn = $state(null); // null: closed; otherwise { text, preset, msg }
+  let pyDict = $state(null); // null: closed; otherwise { text, msg }
   async function openDyn() {
     try {
       const [user, preset] = await api.dynastyText();
@@ -300,6 +301,46 @@
       dyn.msg = "已读入，核对后点「保存」。";
     } catch (e) {
       dyn.msg = String(e);
+    }
+  }
+
+  async function openPyDict() {
+    try {
+      const text = await api.pinyinText();
+      pyDict = {
+        text,
+        msg: text ? "" : "当前无自定义条目。格式：词=pin1,yin1（如 阿弥陀佛=e1,mi2,tuo2,fo2），# 开头为注释。",
+      };
+    } catch (e) {
+      pyDict = { text: "", msg: String(e) };
+    }
+  }
+  async function savePyDict() {
+    try {
+      const n = await api.setPinyinText(pyDict.text);
+      pyDict.msg = n ? `已保存 ${n} 条自定义拼音，立即生效。` : "已清空自定义拼音，恢复仅使用默认词库。";
+    } catch (e) {
+      pyDict.msg = String(e);
+    }
+  }
+  async function exportPyDict() {
+    const path = await saveDialog({ defaultPath: "自定义拼音.txt", filters: [{ name: "文本", extensions: ["txt"] }] });
+    if (!path) return;
+    try {
+      await api.saveBytes(path, new TextEncoder().encode(pyDict.text));
+      pyDict.msg = `已导出：${path}`;
+    } catch (e) {
+      pyDict.msg = String(e);
+    }
+  }
+  async function importPyDict() {
+    const path = await openDialog({ multiple: false, filters: [{ name: "文本", extensions: ["txt"] }] });
+    if (!path) return;
+    try {
+      pyDict.text = await api.readTextFile(path);
+      pyDict.msg = "已读入，核对后点「保存」。";
+    } catch (e) {
+      pyDict.msg = String(e);
     }
   }
 
@@ -427,6 +468,11 @@
               <output>{settings.quickLimit} 项</output>
             </div>
             <p class="muted hint card-note">标题快搜先显示这么多条，列表滚到底（或用键盘走到末尾）时自动再加载一批。</p>
+            <label class="check row-top">
+              <input type="checkbox" checked={settings.quickPinyin}
+                onchange={(e) => update({ quickPinyin: e.currentTarget.checked })} />
+              <span>标题快搜支持拼音匹配（可输入全拼或首字母，如 <code>miaofa</code> 或 <code>mflhj</code>）</span>
+            </label>
           </div>
           <div class="card">
             <div class="card-block">
@@ -444,6 +490,26 @@
                   <button onclick={() => (dyn = null)}>收起</button>
                 </div>
                 {#if dyn.msg}<p class="muted hint">{dyn.msg}</p>{/if}
+              {/if}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-block">
+              <div class="block-title">自定义拼音词典</div>
+              <p class="muted hint">在内置词库之外增补或覆盖字词读音（先加载默认词库，再加载此处条目）。</p>
+              {#if !pyDict}
+                <div class="row-plain"><button onclick={openPyDict}>编辑自定义拼音…</button></div>
+              {:else}
+                <textarea class="dyn" bind:value={pyDict.text} spellcheck="false" aria-label="自定义拼音词典"
+                  placeholder={"# 示例：\n阿弥陀经=e1,mi2,tuo2,jing1\n般若=bo1,re3"}></textarea>
+                <div class="row-plain">
+                  <button onclick={savePyDict}>保存</button>
+                  <button onclick={() => (pyDict.text = "")}>清空</button>
+                  <button onclick={importPyDict}>导入…</button>
+                  <button onclick={exportPyDict}>导出…</button>
+                  <button onclick={() => (pyDict = null)}>收起</button>
+                </div>
+                {#if pyDict.msg}<p class="muted hint">{pyDict.msg}</p>{/if}
               {/if}
             </div>
           </div>

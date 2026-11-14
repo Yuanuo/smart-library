@@ -37,6 +37,7 @@ const DEFAULTS = {
   readerScript: "orig", // orig: as the text is | simp: shown in simplified characters
   externalLink: "window", // window | ask | browser
   quickLimit: 200, // title quick search: results per batch
+  quickPinyin: false, // title quick search: allow matching by pinyin (full or initials)
   dailyOn: true, // the sentence of the day
   dailySources: [], // its sources (search range items); none = every library
   aiOn: false, // AI assistant master switch

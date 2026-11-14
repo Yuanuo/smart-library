@@ -74,7 +74,7 @@
     loading = true;
     try {
       const limit = more && result ? result.items.length + settings.quickLimit : settings.quickLimit;
-      const r = await api.quickSearch(query, lib, limit, quote, scope?.within ?? null);
+      const r = await api.quickSearch(query, lib, limit, quote, scope?.within ?? null, settings.quickPinyin);
       if (my !== seq) return;
       result = r;
       error = "";

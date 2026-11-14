@@ -89,10 +89,13 @@ export const openNode = (lib, bookId, path, query = null, phrase = false) =>
 export const resolveNode = (lib, bookId = null, path = null) => invoke("resolve_node", { lib, bookId, path });
 export const search = (args) => invoke("search", args);
 export const randomSentence = (args) => invoke("random_sentence", args);
-export const quickSearch = (query, lib = null, limit = 200, quote = null, within = null) =>
-  invoke("quick_search", { query, lib, limit, quote, within });
+export const quickSearch = (query, lib = null, limit = 200, quote = null, within = null, pinyin = false) =>
+  invoke("quick_search", { query, lib, limit, quote, within, pinyin });
 export const citationCommand = (text) => invoke("citation_command", { text });
 export const prepareTitles = () => invoke("prepare_titles");
+export const toPinyin = (text) => invoke("to_pinyin", { text });
+export const pinyinText = () => invoke("pinyin_text");
+export const setPinyinText = (text) => invoke("set_pinyin_text", { text });
 export const buildIndex = (lib) => invoke("build_index", { lib });
 export const onIndexProgress = (fn) => listen("index-progress", (e) => fn(e.payload));
 export const onIndexDone = (fn) => listen("index-done", (e) => fn(e.payload));

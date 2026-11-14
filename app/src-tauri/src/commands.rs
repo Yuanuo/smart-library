@@ -112,6 +112,7 @@ impl AppState {
     pub fn new(config_dir: PathBuf, data_dir: PathBuf) -> Self {
         let libraries = load_registry(&config_dir);
         smart_library_core::dynasty::set_user(&std::fs::read_to_string(config_dir.join("dynasties.txt")).unwrap_or_default());
+        smart_library_core::pinyin::set_user(&std::fs::read_to_string(config_dir.join("pinyin.txt")).unwrap_or_default());
         let data_dir_for_history = data_dir.join("history.db");
         let window_file = data_dir.join("window.json");
         let window_state = std::fs::read_to_string(&window_file)
@@ -3037,10 +3038,12 @@ pub async fn quick_search(
     limit: Option<usize>,
     quote: Option<String>,
     within: Option<WithinDto>,
+    pinyin: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<QuickDto, String> {
     let start = std::time::Instant::now();
     let limit = limit.unwrap_or(200).clamp(1, 5000);
+    let use_pinyin = pinyin.unwrap_or(false);
     // `#...`: a command to go to a CBETA book, juan or line, nothing else
     let command = query.trim_start().starts_with('#');
     let words = query_words(&query);
@@ -3053,7 +3056,7 @@ pub async fn quick_search(
     let mut counts = Vec::new();
     let mut all = Vec::new(); // (rank, library order, entry)
     for (n, (l, t)) in indexes.iter().enumerate() {
-        let mut m = if command { Vec::new() } else { t.search(&words) };
+        let mut m = if command { Vec::new() } else { t.search_with_pinyin(&words, use_pinyin) };
         if let Some((wl, w)) = &within {
             if &l.id != wl {
                 m.clear();
@@ -3179,6 +3182,32 @@ fn titles_of(state: &AppState, libs: &[Library]) -> Vec<(Library, Arc<TitleIndex
             .filter_map(|(l, j)| j.join().ok().flatten().map(|t| (l.clone(), t)))
             .collect()
     })
+}
+
+#[tauri::command]
+pub fn to_pinyin(text: String) -> String {
+    smart_library_core::pinyin::to_pinyin(&text)
+}
+
+#[tauri::command]
+pub async fn pinyin_text(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(std::fs::read_to_string(state.config_dir.join("pinyin.txt")).unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn set_pinyin_text(text: String, state: State<'_, AppState>) -> Result<usize, String> {
+    std::fs::create_dir_all(&state.config_dir).map_err(|e| e.to_string())?;
+    let path = state.config_dir.join("pinyin.txt");
+    if text.trim().is_empty() {
+        let _ = std::fs::remove_file(&path);
+    } else {
+        std::fs::write(&path, &text).map_err(|e| e.to_string())?;
+    }
+    let n = smart_library_core::pinyin::set_user(&text);
+    for t in state.titles.read().unwrap().values() {
+        t.invalidate_pinyin();
+    }
+    Ok(n)
 }
 
 /// Build the title lists in the background, so that the first quick search

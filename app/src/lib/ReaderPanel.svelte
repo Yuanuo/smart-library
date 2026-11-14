@@ -15,6 +15,7 @@
   import WhiteboardView from "./WhiteboardView.svelte";
   import TitleLink from "./TitleLink.svelte";
   import ContextMenu from "./ContextMenu.svelte";
+  import { makePinyinItem } from "./pinyinMenu.svelte.js";
   import Icon from "./Icon.svelte";
 
   let { p, onopen, onprogress, ontitle, onlocate = null, onaction = null, onai = null, ondocstate = null } = $props();
@@ -287,6 +288,7 @@
     if (onaction) {
       items.push(
         "separator",
+        makePinyinItem(text, act("pinyin")),
         { label: `查词典：${q}`, action: act("dict") },
       );
     }

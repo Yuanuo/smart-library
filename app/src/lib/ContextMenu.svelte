@@ -7,6 +7,19 @@
   let el = $state();
   let pos = $state({ left: 0, top: 0 });
 
+  $effect(() => {
+    // Re-clamp if an item's label updates asynchronously (e.g. pinyin preview).
+    for (const it of items) {
+      if (it && typeof it === "object") void it.label;
+    }
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    pos = {
+      left: Math.min(x, window.innerWidth - r.width - 8),
+      top: Math.min(y, window.innerHeight - r.height - 8),
+    };
+  });
+
   onMount(() => {
     // keep the menu inside the window
     const r = el.getBoundingClientRect();

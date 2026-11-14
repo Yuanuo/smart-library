@@ -2,6 +2,8 @@
   import { emit } from "@tauri-apps/api/event";
   import * as api from "./api.js";
   import ContextMenu from "./ContextMenu.svelte";
+  import PinyinDialog from "./PinyinDialog.svelte";
+  import { makePinyinItem } from "./pinyinMenu.svelte.js";
   import Icon from "./Icon.svelte";
   import { settings } from "./settings.svelte.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
@@ -18,6 +20,7 @@
   let scroller = $state();
   let menu = $state(null);
   let copied = $state(false);
+  let pinyinDlg = $state("");
 
   $effect(() => {
     if (scriptMode === "simp") ensureSimplifier();
@@ -74,6 +77,7 @@
         { label: `标题快搜：${q}`, action: () => forwardAction("quick", text) },
         { label: `页内查找：${q}`, action: () => findInPage(text) },
         "separator",
+        makePinyinItem(text, () => (pinyinDlg = text)),
         {
           label: `查词典：${q}`,
           action: () => (onlookup ? onlookup(text) : openDictWindow(text)),
@@ -178,6 +182,10 @@
 
 {#if menu}
   <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
+{/if}
+
+{#if pinyinDlg}
+  <PinyinDialog text={pinyinDlg} onclose={() => (pinyinDlg = "")} />
 {/if}
 
 <style>

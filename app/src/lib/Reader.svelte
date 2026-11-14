@@ -34,6 +34,7 @@
   import Icon from "./Icon.svelte";
   import TitleLink from "./TitleLink.svelte";
   import ContextMenu from "./ContextMenu.svelte";
+  import { makePinyinItem } from "./pinyinMenu.svelte.js";
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
   import { parseSource, sourceUrl } from "./clip.js";
@@ -373,7 +374,7 @@
       items.push({ label: `页内查找：${q}`, action: () => findInPage(text) });
       items.push(
         "separator",
-        { label: "查拼音（待支持）", action: () => {}, disabled: true },
+        makePinyinItem(text, act("pinyin")),
         { label: `查词典：${q}`, action: act("dict") },
         "separator",
       );

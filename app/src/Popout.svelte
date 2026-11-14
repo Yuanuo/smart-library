@@ -7,6 +7,7 @@
   import { emit } from "@tauri-apps/api/event";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import ReaderPanel from "./lib/ReaderPanel.svelte";
+  import PinyinDialog from "./lib/PinyinDialog.svelte";
   import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
 
   let { info } = $props();
@@ -60,8 +61,14 @@
     };
   });
 
+  let pinyinDlg = $state("");
+
   /** Menu actions (search, bookmarks, tags) are carried out by the main window. */
   function forward(a) {
+    if (a.type === "pinyin" && a.text) {
+      pinyinDlg = a.text;
+      return;
+    }
     const v = a.vol || {};
     emit("popout-action", {
       type: a.type, text: a.text, lb: a.lb, excerpt: a.excerpt,
@@ -98,6 +105,10 @@
       }} />
   </div>
 </div>
+
+{#if pinyinDlg}
+  <PinyinDialog text={pinyinDlg} onclose={() => (pinyinDlg = "")} />
+{/if}
 
 <style>
   .popout { display: flex; flex-direction: column; height: 100%; }

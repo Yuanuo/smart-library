@@ -15,6 +15,7 @@
   import PropsDialog from "./lib/PropsDialog.svelte";
   import AboutDialog from "./lib/AboutDialog.svelte";
   import UpdateDialog from "./lib/UpdateDialog.svelte";
+  import PinyinDialog from "./lib/PinyinDialog.svelte";
   import { checkUpdates } from "./lib/updater.svelte.js";
   import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
   import { localDate, localTime } from "./lib/diary.js";
@@ -33,6 +34,7 @@
 
   let st = $state(null);
   let error = $state("");
+  let pinyinDlg = $state("");
   let notice = $state("");
 
   // Messages appear as a toast over the window (the layout never moves) and
@@ -159,6 +161,8 @@
       quickQuery = a.text;
       recentBox = false;
       quick = true;
+    } else if (a.type === "pinyin") {
+      if (a.text) pinyinDlg = a.text;
     } else if (a.type === "dict" || a.type === "dict-search" || a.type === "dict-lookup") {
       openDictWindow(a.text || "");
     } else {
@@ -919,6 +923,10 @@
 
 {#if marksBox}
   <MarksDialog doc={workspace.ws.current} onopen={openMark} onclose={() => (marksBox = false)} onpopout={() => popoutPanel("marks")} />
+{/if}
+
+{#if pinyinDlg}
+  <PinyinDialog text={pinyinDlg} onclose={() => (pinyinDlg = "")} />
 {/if}
 
 <UpdateDialog />
