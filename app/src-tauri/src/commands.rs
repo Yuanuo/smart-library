@@ -75,6 +75,8 @@ pub struct WindowState {
     pub maximized: bool,
 }
 
+type ZimEntry = (String, Arc<Mutex<smart_library_core::zim::Zim>>);
+
 pub struct AppState {
     config_dir: PathBuf,
     data_dir: PathBuf,
@@ -85,7 +87,7 @@ pub struct AppState {
     sources: RwLock<HashMap<String, Arc<Bookcase>>>,
     html: RwLock<HashMap<String, Arc<HtmlTree>>>,
     folders: RwLock<HashMap<String, Arc<FolderLibrary>>>,
-    zims: RwLock<HashMap<String, (String, Arc<Mutex<smart_library_core::zim::Zim>>) >>,
+    zims: RwLock<HashMap<String, ZimEntry>>,
     notes: RwLock<HashMap<String, Arc<NotesStore>>>,
     /// read-write folder libraries: the stamp of each open file as last read or
     /// saved (`<lib>|<path>`), to notice changes made outside
@@ -100,6 +102,8 @@ pub struct AppState {
     /// title quick search, per library (built on first use)
     titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
     building: Mutex<HashSet<String>>,
+    /// true if `marks.db` or `props.db` failed to open on disk and fell back to in-memory
+    db_degraded: bool,
     history: History,
     marks: Marks,
     /// user properties of nodes (部类, 时域, 人物, 藏经, 典类)
@@ -110,6 +114,8 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config_dir: PathBuf, data_dir: PathBuf) -> Self {
+        let _ = std::fs::create_dir_all(&config_dir);
+        let _ = std::fs::create_dir_all(&data_dir);
         let libraries = load_registry(&config_dir);
         smart_library_core::dynasty::set_user(&std::fs::read_to_string(config_dir.join("dynasties.txt")).unwrap_or_default());
         smart_library_core::pinyin::set_user(&std::fs::read_to_string(config_dir.join("pinyin.txt")).unwrap_or_default());
@@ -118,6 +124,25 @@ impl AppState {
         let window_state = std::fs::read_to_string(&window_file)
             .ok()
             .and_then(|s| serde_json::from_str::<WindowState>(&s).ok());
+        let mut db_degraded = false;
+        let history = History::open(&data_dir_for_history).unwrap_or_else(|e| {
+            eprintln!("failed to open history.db: {e}");
+            History::memory().unwrap()
+        });
+        let marks = Marks::open(&data_dir_for_history.with_file_name("marks.db")).unwrap_or_else(|e| {
+            eprintln!("failed to open marks.db: {e}");
+            db_degraded = true;
+            Marks::memory().unwrap()
+        });
+        let props = Props::open(&data_dir_for_history.with_file_name("props.db")).unwrap_or_else(|e| {
+            eprintln!("failed to open props.db: {e}");
+            db_degraded = true;
+            Props::memory().unwrap()
+        });
+        let ai_chat = AiChatStore::open(&data_dir_for_history.with_file_name("ai_chat.db")).unwrap_or_else(|e| {
+            eprintln!("failed to open ai_chat.db: {e}");
+            AiChatStore::memory().unwrap()
+        });
         AppState {
             workspace_file: data_dir.join("workspace.json"),
             window_file,
@@ -136,10 +161,11 @@ impl AppState {
             indexes: RwLock::new(HashMap::new()),
             titles: RwLock::new(HashMap::new()),
             building: Mutex::new(HashSet::new()),
-            history: History::open(&data_dir_for_history).unwrap_or_else(|_| History::memory().unwrap()),
-            marks: Marks::open(&data_dir_for_history.with_file_name("marks.db")).unwrap_or_else(|_| Marks::memory().unwrap()),
-            props: Props::open(&data_dir_for_history.with_file_name("props.db")).unwrap_or_else(|_| Props::memory().unwrap()),
-            ai_chat: AiChatStore::open(&data_dir_for_history.with_file_name("ai_chat.db")).unwrap_or_else(|_| AiChatStore::memory().unwrap()),
+            db_degraded,
+            history,
+            marks,
+            props,
+            ai_chat,
             dicts: RwLock::new(None),
         }
     }
@@ -343,6 +369,9 @@ impl AppState {
     /// Called after each change; a failure (a folder on a read-only disk …)
     /// does not stop the change, the data stays in our own files.
     fn sidecar_sync(&self) {
+        if self.db_degraded {
+            return;
+        }
         let libs: Vec<Library> = self.libraries.read().unwrap().iter().filter(|l| l.kind == "folder" && l.writable).cloned().collect();
         for l in libs {
             let _ = self.sidecar_write(&l);
@@ -350,6 +379,9 @@ impl AppState {
     }
 
     fn sidecar_write(&self, l: &Library) -> Result<bool, String> {
+        if self.db_degraded {
+            return Err("本地属性或收藏数据库处于只读降级状态，已跳过同步以保护文件夹元数据".into());
+        }
         let props = self.props.all(&l.id)?.into_iter().filter(|(b, _, _)| b.is_empty()).map(|(_, p, d)| (p, d)).collect();
         let marks = self.marks.export_lib(&l.id)?;
         let root = Path::new(&l.source);
@@ -403,14 +435,14 @@ impl AppState {
     /// the index only matters when it is used. Failures are left for a rebuild.
     fn flush_dirty(&self, libs: &[Library]) {
         for l in libs {
+            let dir = self.index_dir(&l.id);
+            if !dir.join("smart-library-index.json").exists() || self.building.lock().unwrap().contains(&l.id) {
+                continue; // no index to update yet, or a build is running; keep dirty paths for later
+            }
             let paths: HashSet<String> = match self.dirty.lock().unwrap().get_mut(&l.id) {
                 Some(s) if !s.is_empty() => std::mem::take(s),
                 _ => continue,
             };
-            let dir = self.index_dir(&l.id);
-            if !dir.join("smart-library-index.json").exists() || self.building.lock().unwrap().contains(&l.id) {
-                continue; // no index to update (a build reads everything anyway)
-            }
             let result = (|| -> Result<(), String> {
                 let overlay = self.props.overlay(&l.id).unwrap_or_default();
                 let mut removed = Vec::new();
@@ -1257,10 +1289,8 @@ pub async fn delete_folder_dir(lib: String, rel: String, state: State<'_, AppSta
         stamps.retain(|k, _| !k.starts_with(&format!("{}|{}", lib, prefix)));
     }
     state.mark_dirty(&lib, before.iter().cloned());
-    let _ = state.props.remove_nodes(&lib, &[rel.clone()]);
-    for p in &before {
-        let _ = state.props.remove_nodes(&lib, &[p.clone()]);
-    }
+    let _ = state.props.remove_nodes(&lib, std::slice::from_ref(&rel));
+    let _ = state.props.remove_nodes(&lib, &before);
     state.sidecar_sync();
     Ok(before.len())
 }
@@ -1728,7 +1758,7 @@ fn navigation_ancestors(nodes: &[NodeDto]) -> HashMap<String, Vec<(String, Strin
             ancestors.pop();
         }
     }
-    walk(&nodes, "", &mut Vec::new(), &mut map);
+    walk(nodes, "", &mut Vec::new(), &mut map);
     map
 }
 
@@ -2305,18 +2335,19 @@ pub async fn open_external_url(url: String) -> Result<(), String> {
     open_external_url_sync(&url)
 }
 
-fn external_context_menu_script(ai_on: bool) -> String {
+fn external_context_menu_script(ai_on: bool, token: &str) -> String {
     let ai_flag = if ai_on { "true" } else { "false" };
     format!(
         r#"(function() {{
   if (window.__slExtMenuInstalled) return;
   window.__slExtMenuInstalled = true;
   const AI_ON = {ai_flag};
+  const TOKEN = "{token}";
   const clip = (s, n = 18) => s.length > n ? s.slice(0, n) + "…" : s;
   const pageVol = () => ({{ title: document.title || location.href, url: location.href }});
   const sendAction = (payload) => {{
     try {{
-      location.href = "http://smartlib-action.localhost/?data=" + encodeURIComponent(JSON.stringify(payload));
+      location.href = "http://smartlib-action.localhost/?token=" + encodeURIComponent(TOKEN) + "&data=" + encodeURIComponent(JSON.stringify(payload));
     }} catch (_) {{}}
   }};
   const copyStr = async (s) => {{
@@ -2336,7 +2367,7 @@ fn external_context_menu_script(ai_on: bool) -> String {
     host = document.createElement("div");
     host.id = "__sl_ext_ctx_host";
     host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
-    shadow = host.attachShadow({{ mode: "open" }});
+    shadow = host.attachShadow({{ mode: "closed" }});
     const style = document.createElement("style");
     style.textContent = `
       .menu {{
@@ -2484,9 +2515,46 @@ fn external_context_menu_script(ai_on: bool) -> String {
 
 static EXT_WIN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+fn next_external_token(seq: u64) -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let mut h1 = RandomState::new().build_hasher();
+    h1.write_u64(seq);
+    h1.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    );
+    let mut h2 = RandomState::new().build_hasher();
+    h2.write_u64(h1.finish() ^ (std::process::id() as u64));
+    format!("{:016x}{:016x}", h1.finish(), h2.finish())
+}
+
+fn parse_external_action_url(nav_url: &tauri::Url, expected_token: &str) -> Option<serde_json::Value> {
+    if nav_url.scheme() != "http" || nav_url.host_str() != Some("smartlib-action.localhost") {
+        return None;
+    }
+    let mut token_ok = false;
+    let mut raw_data = None;
+    for (k, v) in nav_url.query_pairs() {
+        if k == "token" && v == expected_token && !expected_token.is_empty() {
+            token_ok = true;
+        } else if k == "data" {
+            raw_data = Some(v.into_owned());
+        }
+    }
+    if !token_ok {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(&raw_data?).ok()
+}
+
 fn create_external_window(app: &AppHandle, parsed: tauri::Url, ai_on: bool) -> Result<(), String> {
     let seq = EXT_WIN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let label = format!("ext-{seq}");
+    let token = next_external_token(seq);
+    let expected_token = token.clone();
     let title = parsed.host_str().unwrap_or("外部链接").to_string();
     let app_for_nav = app.clone();
     let app_for_new = app.clone();
@@ -2494,18 +2562,16 @@ fn create_external_window(app: &AppHandle, parsed: tauri::Url, ai_on: bool) -> R
         .title(&title)
         .inner_size(1100.0, 780.0)
         .min_inner_size(640.0, 480.0)
-        .initialization_script(&external_context_menu_script(ai_on))
+        .initialization_script(external_context_menu_script(ai_on, &token))
         .on_navigation(move |nav_url| {
             if nav_url.scheme() == "http" && nav_url.host_str() == Some("smartlib-action.localhost") {
-                if let Some((_, data)) = nav_url.query_pairs().find(|(k, _)| k == "data") {
-                    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&data) {
-                        if payload.get("type").and_then(|v| v.as_str()) == Some("open-system-browser") {
-                            if let Some(u) = payload.get("url").and_then(|v| v.as_str()) {
-                                let _ = open_external_url_sync(u);
-                            }
-                        } else {
-                            let _ = app_for_nav.emit_to("main", "popout-action", payload);
+                if let Some(payload) = parse_external_action_url(nav_url, &expected_token) {
+                    if payload.get("type").and_then(|v| v.as_str()) == Some("open-system-browser") {
+                        if let Some(u) = payload.get("url").and_then(|v| v.as_str()) {
+                            let _ = open_external_url_sync(u);
                         }
+                    } else {
+                        let _ = app_for_nav.emit_to("main", "popout-action", payload);
                     }
                 }
                 return false;
@@ -3243,7 +3309,12 @@ struct IndexDoneDto {
 #[tauri::command]
 pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let l = state.library(&lib)?;
-    let zim = if l.kind == "zim" { Some(state.zim(&l)?) } else { None };
+    let zim_source = if l.kind == "zim" {
+        let _ = state.zim(&l)?; // verify the ZIM file is valid and openable
+        Some(l.source.clone())
+    } else {
+        None
+    };
     let notes_store = if l.kind == "notes" { Some(state.notes(&l)?) } else { None };
     let lib_title = l.title.clone();
     state.titles.write().unwrap().remove(&lib);
@@ -3255,7 +3326,7 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
     } else {
         None
     };
-    let bc = if folder.is_some() || notes_store.is_some() || zim.is_some() { None } else { Some(state.bookcase_of(&l)?) };
+    let bc = if folder.is_some() || notes_store.is_some() || zim_source.is_some() { None } else { Some(state.bookcase_of(&l)?) };
     let html = if l.kind == "html" { Some(state.html_tree(&l)?) } else { None };
     if !state.building.lock().unwrap().insert(lib.clone()) {
         return Err("正在建立这个知识库的索引".to_string());
@@ -3276,12 +3347,13 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
                 let _ = app2.emit("index-progress", ProgressDto { lib: lib2.clone(), done, total });
             };
             let stats = match (&folder, &bc, &html) {
-                _ if zim.is_some() => {
-                    let mut z = zim.as_ref().unwrap().lock().unwrap();
+                _ if zim_source.is_some() => {
+                    let src = zim_source.as_deref().unwrap();
+                    let mut z = smart_library_core::zim::Zim::open(Path::new(src))?;
                     let jobs = z.article_jobs();
                     let total = jobs.len();
                     let docs = jobs.into_iter().map(|i| z.index_doc(i));
-                    smart_library_core::search::build_index(&dir, serde_json::json!({"kind": "zim", "data_version": zim_version(&l.source)?}), total, docs, &overlay, progress)?
+                    smart_library_core::search::build_index(&dir, serde_json::json!({"kind": "zim", "data_version": zim_version(src)?}), total, docs, &overlay, progress)?
                 }
                 _ if notes_store.is_some() => {
                     let n = notes_store.as_ref().unwrap();
@@ -3839,11 +3911,18 @@ pub async fn list_fonts() -> Result<Vec<FontDto>, String> {
 /// Open the browser's own find bar (what Ctrl+F does) by pressing the keys:
 /// the page cannot do it, and the bar takes the selected text as its input.
 #[tauri::command]
-pub async fn find_in_page() -> Result<(), String> {
+pub async fn find_in_page(window: tauri::WebviewWindow) -> Result<(), String> {
+    if !window.is_focused().unwrap_or(false) {
+        let _ = window.set_focus();
+        if !window.is_focused().unwrap_or(false) {
+            return Err("当前窗口未处于活动焦点".into());
+        }
+    }
     #[cfg(windows)]
     {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL,
+            GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+            VK_CONTROL, VK_MENU, VK_SHIFT,
         };
         fn key(vk: u16, up: bool) -> INPUT {
             INPUT {
@@ -3853,8 +3932,17 @@ pub async fn find_in_page() -> Result<(), String> {
                 },
             }
         }
+        let mut inputs = Vec::with_capacity(6);
+        unsafe {
+            if GetAsyncKeyState(VK_SHIFT as i32) < 0 {
+                inputs.push(key(VK_SHIFT, true));
+            }
+            if GetAsyncKeyState(VK_MENU as i32) < 0 {
+                inputs.push(key(VK_MENU, true));
+            }
+        }
         let f = b'F' as u16;
-        let inputs = [key(VK_CONTROL, false), key(f, false), key(f, true), key(VK_CONTROL, true)];
+        inputs.extend_from_slice(&[key(VK_CONTROL, false), key(f, false), key(f, true), key(VK_CONTROL, true)]);
         let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
         if sent as usize == inputs.len() {
             return Ok(());
@@ -3867,868 +3955,17 @@ pub async fn find_in_page() -> Result<(), String> {
     }
 }
 
-// ------------------------------------------------------------ export / import
+#[path = "commands/export_cmds.rs"]
+mod export_cmds;
+pub use export_cmds::*;
 
-#[derive(Deserialize)]
-pub struct ExportReq {
-    lib: String,
-    /// the whole library
-    #[serde(default)]
-    whole: bool,
-    /// CBETA / HTML libraries: index paths (`/0/3/5`) of the picked nodes
-    #[serde(default)]
-    keys: Vec<String>,
-    /// folder / notes libraries: paths or note ids of the picked nodes
-    #[serde(default)]
-    rels: Vec<String>,
-    /// folder libraries: also keep the original files
-    #[serde(default)]
-    with_files: bool,
-    /// the ZIP file to write
-    out: String,
-}
+#[path = "commands/ai_cmds.rs"]
+mod ai_cmds;
+pub use ai_cmds::*;
 
-#[derive(Serialize)]
-pub struct ExportDone {
-    path: String,
-    docs: usize,
-    files: usize,
-}
-
-/// What one node of the export stands for.
-enum Src {
-    None,
-    /// CBETA book: its volumes from `from` up to (not including) `to`
-    Cbeta { book: String, from: Option<String>, to: Option<String> },
-    Html(String),
-    Folder(String),
-}
-
-struct Plan {
-    title: String,
-    src: Src,
-    /// internal libraries: the note
-    note: Option<i64>,
-    /// the node as the user properties know it: (book id, path)
-    key: Option<(Option<String>, String)>,
-    children: Vec<Plan>,
-}
-
-/// Parts of big CBETA books start at their `start` volume: book id -> starts.
-fn part_starts(nodes: &[NodeDto], out: &mut HashMap<String, Vec<String>>) {
-    for n in nodes {
-        if let (Some(b), Some(s)) = (&n.book_id, &n.start) {
-            out.entry(b.clone()).or_default().push(s.clone());
-        }
-        part_starts(&n.children, out);
-    }
-}
-
-fn plan_of_dto(n: &NodeDto, kind: &str, parts: &HashMap<String, Vec<String>>) -> Plan {
-    let src = if kind == "html" {
-        n.path.clone().map(Src::Html).unwrap_or(Src::None)
-    } else if let Some(book) = &n.book_id {
-        let to = parts
-            .get(book)
-            .and_then(|v| v.iter().filter(|s| n.start.as_ref().is_none_or(|f| *s > f)).min().cloned());
-        Src::Cbeta { book: book.clone(), from: n.start.clone(), to }
-    } else {
-        Src::None
-    };
-    // CBETA: the whole book only (a part of a big book is not a node of its own)
-    let key = if kind == "html" {
-        n.path.clone().map(|p| (None, p))
-    } else {
-        n.book_id.clone().filter(|_| n.start.is_none()).map(|b| (Some(b), String::new()))
-    };
-    Plan {
-        title: n.title.clone(),
-        src,
-        note: None,
-        key,
-        children: n.children.iter().map(|c| plan_of_dto(c, kind, parts)).collect(),
-    }
-}
-
-fn plan_of_folder(f: &FolderLibrary, rel: &str, name: &str, is_dir: bool) -> Result<Plan, String> {
-    let title = if is_dir {
-        name.to_string()
-    } else {
-        name.rsplit_once('.').map(|(s, _)| s.to_string()).filter(|s| !s.is_empty()).unwrap_or(name.to_string())
-    };
-    if !is_dir {
-        return Ok(Plan { title, src: Src::Folder(rel.to_string()), note: None, key: Some((None, rel.to_string())), children: Vec::new() });
-    }
-    let mut children = Vec::new();
-    for e in f.children(rel)? {
-        children.push(plan_of_folder(f, &e.rel, &e.name, e.is_dir)?);
-    }
-    Ok(Plan { title, src: Src::None, note: None, key: Some((None, rel.to_string())), children })
-}
-
-fn plan_of_note(s: &NotesStore, id: i64) -> Result<Plan, String> {
-    let n = s.get(id)?.ok_or("笔记不存在")?;
-    let mut children = Vec::new();
-    for c in s.children(Some(id))? {
-        children.push(plan_of_note(s, c.id)?);
-    }
-    Ok(Plan { title: n.title, src: Src::None, note: Some(id), key: Some((None, id.to_string())), children })
-}
-
-/// The picked nodes without those below another picked node.
-fn drop_nested(keys: &[String]) -> Vec<String> {
-    keys.iter()
-        .filter(|k| !keys.iter().any(|o| o != *k && k.starts_with(&format!("{}/", o))))
-        .cloned()
-        .collect()
-}
-
-struct Exporter<'a> {
-    state: &'a AppState,
-    lib: Library,
-    w: smart_library_core::exchange::PackageWriter,
-    with_files: bool,
-    done: usize,
-    files: usize,
-    total: usize,
-    app: AppHandle,
-    /// pictures of notes already in the package
-    attached: HashSet<String>,
-}
-
-impl Exporter<'_> {
-    fn tick(&mut self) {
-        self.done += 1;
-        let _ = self.app.emit(
-            "export-progress",
-            ProgressDto { lib: self.lib.id.clone(), done: self.done, total: self.total.max(self.done) },
-        );
-    }
-
-    /// The volumes of a CBETA part.
-    fn volumes(&self, book: &str, from: &Option<String>, to: &Option<String>) -> Result<Vec<smart_library_core::bookcase::VolumeRef>, String> {
-        let bc = self.state.bookcase_of(&self.lib)?;
-        Ok(bc
-            .volumes(book)
-            .into_iter()
-            .filter(|v| v.exists && from.as_ref().is_none_or(|f| &v.path >= f) && to.as_ref().is_none_or(|t| &v.path < t))
-            .collect())
-    }
-
-    fn count(&self, p: &Plan) -> usize {
-        let own = match &p.src {
-            Src::None => usize::from(p.note.is_some()),
-            Src::Cbeta { book, from, to } => self.volumes(book, from, to).map(|v| v.len()).unwrap_or(1),
-            _ => 1,
-        };
-        own + p.children.iter().map(|c| self.count(c)).sum::<usize>()
-    }
-
-    fn doc(&mut self, title: &str, body_md: &str, source: &str) -> Result<String, String> {
-        let name = self.w.add_doc(&smart_library_core::exchange::document(title, body_md, source))?;
-        self.tick();
-        Ok(name)
-    }
-
-    fn node(&mut self, p: &Plan) -> Result<serde_json::Value, String> {
-        use serde_json::{json, Map, Value};
-        let mut m = Map::new();
-        m.insert("title".into(), json!(p.title));
-        // the user's properties of the node travel with it
-        if let Some((book, path)) = &p.key {
-            let own = self.state.props.get(&self.lib.id, book.as_deref(), path).unwrap_or_default();
-            if !own.is_empty() {
-                m.insert("props".into(), json!(own));
-            }
-        }
-        let mut children: Vec<Value> = Vec::new();
-        if let Some(id) = p.note {
-            let store = self.state.notes(&self.lib)?;
-            let n = store.get(id)?.ok_or("笔记不存在")?;
-            let file = if n.content_type == smart_library_core::whiteboard::TYPE {
-                // the Markdown file lists the texts; the scene itself is kept apart
-                let file = self.doc(&p.title, &smart_library_core::whiteboard::to_markdown(&n.content), "")?;
-                let data = self.w.add_data(&n.content, "wb.json")?;
-                m.insert("whiteboard".into(), json!(data));
-                file
-            } else if n.content_type == smart_library_core::mindmap::TYPE {
-                // the Markdown file is the outline; the map itself is kept apart
-                let file = self.doc(&p.title, &smart_library_core::mindmap::to_markdown(&n.content), "")?;
-                let data = self.w.add_data(&n.content, "mm.json")?;
-                m.insert("mindmap".into(), json!(data));
-                file
-            } else {
-                self.doc(&p.title, &n.content, "")?
-            };
-            m.insert("file".into(), json!(file));
-            // the pictures the note shows
-            for name in smart_library_core::attach::refs(&n.content) {
-                if self.attached.insert(name.clone()) {
-                    if let Some(path) = smart_library_core::attach::path_of(&self.state.attachments_dir(&self.lib.id), &name) {
-                        if let Ok(bytes) = std::fs::read(path) {
-                            self.w.add_file(&format!("attachments/{}", name), &bytes)?;
-                            self.files += 1;
-                        }
-                    }
-                }
-            }
-        }
-        match &p.src {
-            Src::None => {}
-            Src::Cbeta { book, from, to } => {
-                let bc = self.state.bookcase_of(&self.lib)?;
-                let info = bc.book(book).ok_or_else(|| format!("没有这部经：{}", book))?;
-                let (btitle, author) = (info.title.clone(), info.author_info.clone());
-                let version = bc.data_version();
-                let vols = self.volumes(book, from, to)?;
-                let single = vols.len() == 1;
-                for v in &vols {
-                    let html = bc.volume_html(&v.path, &RenderOptions::default())?.html;
-                    let md = smart_library_core::exchange::html_to_md(&html);
-                    let title = if single { p.title.clone() } else { format!("{} {}", btitle, v.label) };
-                    let src = format!("CBETA {} · {} {} {} · {}", version, book, btitle, v.label, author);
-                    let file = self.doc(&title, &md, src.trim())?;
-                    if single {
-                        m.insert("file".into(), json!(file));
-                    } else {
-                        children.push(json!({ "title": v.label, "file": file, "children": [] }));
-                    }
-                }
-            }
-            Src::Html(path) => {
-                let bc = self.state.bookcase_of(&self.lib)?;
-                let a = bc.article(path, Some(&RenderOptions::default()))?;
-                let md = smart_library_core::exchange::html_to_md(&a.html.unwrap_or_default());
-                let src = format!("{} · {}", self.lib.title, a.meta.authors.join("、"));
-                let file = self.doc(&p.title, &md, src.trim_end_matches([' ', '·']))?;
-                m.insert("file".into(), json!(file));
-            }
-            Src::Folder(rel) => {
-                let f = self.state.folder(&self.lib)?;
-                let a = f.article(rel, Some(&RenderOptions::default()))?;
-                let md = smart_library_core::exchange::html_to_md(&a.html.unwrap_or_default());
-                let src = format!("{} · {}", self.lib.title, rel);
-                let file = self.doc(&p.title, &md, &src)?;
-                m.insert("file".into(), json!(file));
-                let name = rel.rsplit('/').next().unwrap_or(rel);
-                if self.with_files && !folder::is_text(name) {
-                    let bytes = std::fs::read(f.root.join(rel)).map_err(|e| format!("{}: {}", rel, e))?;
-                    let original = format!("files/{}", rel);
-                    self.w.add_file(&original, &bytes)?;
-                    self.files += 1;
-                    m.insert("original".into(), json!(original));
-                }
-            }
-        }
-        for c in &p.children {
-            children.push(self.node(c)?);
-        }
-        m.insert("children".into(), Value::Array(children));
-        Ok(Value::Object(m))
-    }
-}
-
-/// Write the picked nodes (or the whole library) as an export package.
-/// Reports `export-progress` {lib, done, total}.
-#[tauri::command]
-pub async fn export_library(req: ExportReq, app: AppHandle, state: State<'_, AppState>) -> Result<ExportDone, String> {
-    let l = state.library(&req.lib)?;
-    let mut plans: Vec<Plan> = Vec::new();
-    match l.kind.as_str() {
-        "folder" => {
-            let f = state.folder(&l)?;
-            if req.whole || req.rels.is_empty() {
-                for e in f.children("")? {
-                    plans.push(plan_of_folder(&f, &e.rel, &e.name, e.is_dir)?);
-                }
-            } else {
-                for rel in drop_nested(&req.rels) {
-                    let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
-                    let is_dir = f.abs(&rel).map(|p| p.is_dir()).unwrap_or(false);
-                    plans.push(plan_of_folder(&f, &rel, &name, is_dir)?);
-                }
-            }
-        }
-        "notes" => {
-            let s = state.notes(&l)?;
-            if req.whole || req.rels.is_empty() {
-                for c in s.children(None)? {
-                    plans.push(plan_of_note(&s, c.id)?);
-                }
-            } else {
-                let ids: Vec<i64> = req.rels.iter().filter_map(|r| r.parse().ok()).collect();
-                for id in &ids {
-                    let nested = ids.iter().any(|o| o != id && s.descendants(*o).map(|d| d.contains(id)).unwrap_or(false));
-                    if !nested {
-                        plans.push(plan_of_note(&s, *id)?);
-                    }
-                }
-            }
-        }
-        _ => {
-            let roots = tree(req.lib.clone(), state.clone()).await?;
-            let mut parts = HashMap::new();
-            part_starts(&roots, &mut parts);
-            if req.whole || req.keys.is_empty() {
-                plans.extend(roots.iter().map(|n| plan_of_dto(n, &l.kind, &parts)));
-            } else {
-                for key in drop_nested(&req.keys) {
-                    let mut list: &[NodeDto] = &roots;
-                    let mut node = None;
-                    for i in key.split('/').filter(|s| !s.is_empty()) {
-                        let n = list
-                            .get(i.parse::<usize>().map_err(|_| "节点位置不对")?)
-                            .ok_or("目录树已经变化，请重新选择")?;
-                        list = &n.children;
-                        node = Some(n);
-                    }
-                    if let Some(n) = node {
-                        plans.push(plan_of_dto(n, &l.kind, &parts));
-                    }
-                }
-            }
-        }
-    }
-    let whole = req.whole || (req.keys.is_empty() && req.rels.is_empty());
-    let w = smart_library_core::exchange::PackageWriter::create(Path::new(&req.out))?;
-    let mut ex = Exporter { state: &state, lib: l.clone(), w, with_files: req.with_files, done: 0, files: 0, total: 0, app, attached: HashSet::new() };
-    ex.total = plans.iter().map(|p| ex.count(p)).sum();
-    let mut nodes = Vec::new();
-    for p in &plans {
-        nodes.push(ex.node(p)?);
-    }
-    let manifest = smart_library_core::exchange::manifest(&l.title, &l.kind, &l.source, if whole { "library" } else { "nodes" }, nodes);
-    let (docs, files) = (ex.done, ex.files);
-    ex.w.finish(&manifest)?;
-    Ok(ExportDone { path: req.out, docs, files })
-}
-
-/// A picture of an export package goes to the attachments of the library (the same name = the same picture).
-fn keep_picture(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
-    let file = smart_library_core::attach::path_of(dir, name).ok_or("图片名不对")?;
-    if !file.exists() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        std::fs::write(file, bytes).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[derive(Serialize)]
-pub struct ImportDone {
-    status: StatusDto,
-    title: String,
-    notes: usize,
-}
-
-/// Read an export package: into a new internal library, or (`lib`, and
-/// `parent` a note id or none for the top) below a place of an internal one.
-#[tauri::command]
-pub async fn import_package(path: String, lib: Option<String>, parent: Option<String>, state: State<'_, AppState>) -> Result<ImportDone, String> {
-    let mut pkg = smart_library_core::exchange::Package::open(Path::new(&path))?;
-    if let Some(lib_id) = lib.filter(|l| !l.is_empty()) {
-        let store = notes_of(&state, &lib_id)?;
-        let parent = match parent.filter(|p| !p.is_empty()) {
-            Some(p) => Some(note_id(&p)?),
-            None => None,
-        };
-        // a whole library comes as one note named like it; picked nodes come as they are
-        let wrap = pkg.manifest["scope"] == "library";
-        let dir = state.attachments_dir(&lib_id);
-        let ids_before: HashSet<i64> = store.rows()?.into_iter().map(|r| r.id).collect();
-        let notes = smart_library_core::exchange::import_into(
-            &store,
-            &mut pkg,
-            parent,
-            wrap,
-            &mut |name, bytes| keep_picture(&dir, name, &bytes),
-            &mut |id, dims| {
-                let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
-            },
-        )?;
-        // the new notes join the index (when the library has one) just before the next full-text search
-        let added: Vec<String> = store.rows()?.into_iter().map(|r| r.id).filter(|i| !ids_before.contains(i)).map(|i| i.to_string()).collect();
-        state.mark_dirty(&lib_id, added);
-        return Ok(ImportDone { status: status_of(&state), title: state.library(&lib_id)?.title, notes });
-    }
-    let base = pkg.title();
-    let title = {
-        let libs = state.libraries.read().unwrap();
-        let mut t = base.clone();
-        let mut n = 1;
-        while libs.iter().any(|l| l.title == t) {
-            n += 1;
-            t = if n == 2 { format!("{}（导入）", base) } else { format!("{}（导入 {}）", base, n) };
-        }
-        t
-    };
-    let status = create_notes_library(title.clone(), None, state.clone()).await?;
-    let lib = state
-        .libraries
-        .read()
-        .unwrap()
-        .iter()
-        .find(|l| l.title == title)
-        .cloned()
-        .ok_or("知识库没有建好")?;
-    let store = state.notes(&lib)?;
-    let dir = state.attachments_dir(&lib.id);
-    let lib_id = lib.id.clone();
-    let notes = smart_library_core::exchange::import_into(
-        &store,
-        &mut pkg,
-        None,
-        false,
-        &mut |name, bytes| keep_picture(&dir, name, &bytes),
-        &mut |id, dims| {
-            let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
-        },
-    )?;
-    state.titles.write().unwrap().remove(&lib.id);
-    Ok(ImportDone { status, title, notes })
-}
-
-// ------------------------------------------------------------ AI assistant
-
-#[derive(Serialize)]
-pub struct AiDocDto {
-    pub lib: String,
-    pub lib_title: String,
-    pub book_id: Option<String>,
-    pub path: String,
-    pub title: String,
-    pub content_type: String,
-    pub text: String,
-}
-
-#[derive(Serialize)]
-pub struct AiSessionDto {
-    pub id: i64,
-    pub scope_kind: String,
-    pub lib: String,
-    pub path: String,
-    pub book_id: Option<String>,
-    pub title: String,
-    pub doc_title: String,
-    pub messages_json: String,
-    pub refs_json: String,
-    pub updated: i64,
-}
-
-#[derive(Serialize)]
-pub struct AiSessionSummaryDto {
-    pub id: i64,
-    pub scope_kind: String,
-    pub lib: String,
-    pub path: String,
-    pub book_id: Option<String>,
-    pub title: String,
-    pub doc_title: String,
-    pub updated: i64,
-}
-
-#[tauri::command]
-pub async fn ai_stream(
-    req_id: String,
-    config: crate::ai::AiModelConfig,
-    system: Option<String>,
-    messages: Vec<crate::ai::AiMessage>,
-    reasoning_effort: Option<String>,
-    tools: Option<Vec<serde_json::Value>>,
-    app: AppHandle,
-) -> Result<(), String> {
-    crate::ai::stream_chat(app, req_id, config, system, messages, reasoning_effort, tools).await
-}
-
-#[tauri::command]
-pub fn ai_tool_definitions() -> Vec<serde_json::Value> {
-    crate::ai_tools::tool_definitions()
-}
-
-#[tauri::command]
-pub async fn ai_exec_tool(
-    name: String,
-    arguments: String,
-    state: State<'_, AppState>,
-) -> Result<crate::ai_tools::AiToolResult, String> {
-    Ok(crate::ai_tools::exec_tool(&name, &arguments, state).await)
-}
-
-#[tauri::command]
-pub fn ai_abort(req_id: String) {
-    crate::ai::abort(&req_id);
-}
-
-#[tauri::command]
-pub async fn ai_test(config: crate::ai::AiModelConfig) -> Result<String, String> {
-    crate::ai::test_connection(config).await
-}
-
-#[tauri::command]
-pub async fn ai_fetch_models(
-    format: String,
-    base_url: String,
-    api_key: String,
-) -> Result<Vec<String>, String> {
-    crate::ai::fetch_models(format, base_url, api_key).await
-}
-
-#[tauri::command]
-pub async fn ai_summarize_title(
-    config: crate::ai::AiModelConfig,
-    user_text: String,
-    assistant_text: String,
-) -> Result<String, String> {
-    crate::ai::summarize_title(config, user_text, assistant_text).await
-}
-
-#[tauri::command]
-pub fn ai_mindmap_parse(input: String, fallback_title: Option<String>) -> Result<String, String> {
-    smart_library_core::mindmap::from_outline_or_json(&input, fallback_title.as_deref().unwrap_or("脑图"))
-}
-
-/// Read the plain text (or Markdown representation) of a document so it can be
-/// referenced in an AI conversation without modifying the document.
-#[tauri::command]
-pub async fn ai_doc_text(
-    lib: String,
-    book_id: Option<String>,
-    path: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<AiDocDto, String> {
-    let l = state.library(&lib)?;
-    if l.kind == "zim" {
-        let path = path.ok_or("没有指定文章")?;
-        let z = state.zim(&l)?;
-        let mut z = z.lock().unwrap();
-        let i = z.entry_index(&path).ok_or("ZIM 文章不存在")?;
-        let title = z.entries[i].title.clone();
-        let plain = z.article(i, None)?;
-        return Ok(AiDocDto {
-            lib: l.id,
-            lib_title: l.title,
-            book_id: None,
-            path,
-            title,
-            content_type: "html".into(),
-            text: plain.text.text,
-        });
-    }
-    if l.kind == "notes" {
-        let store = state.notes(&l)?;
-        let path = path.ok_or("没有指定笔记")?;
-        let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
-        let note = store.get(id)?.ok_or("笔记不存在")?;
-        let text = if note.content_type == smart_library_core::mindmap::TYPE {
-            smart_library_core::mindmap::to_markdown(&note.content)
-        } else if note.content_type == smart_library_core::whiteboard::TYPE {
-            smart_library_core::whiteboard::to_markdown(&note.content)
-        } else {
-            note.content.clone()
-        };
-        return Ok(AiDocDto {
-            lib: l.id,
-            lib_title: l.title,
-            book_id: None,
-            path,
-            title: note.title,
-            content_type: if note.content_type.is_empty() { "markdown".into() } else { note.content_type },
-            text,
-        });
-    }
-    if l.kind == "folder" {
-        let f = state.folder(&l)?;
-        let path = path.ok_or("没有指定文件")?;
-        let name = path.rsplit('/').next().unwrap_or(&path);
-        let title = folder::title_of(name).to_string();
-        let edit_kind = folder::EditKind::of(name);
-        if matches!(edit_kind, Some(folder::EditKind::MindMap) | Some(folder::EditKind::Whiteboard)) {
-            let (raw, _) = f.read_edit(&path)?;
-            let text = if edit_kind == Some(folder::EditKind::MindMap) {
-                smart_library_core::mindmap::to_markdown(&raw)
-            } else {
-                smart_library_core::whiteboard::to_markdown(&raw)
-            };
-            return Ok(AiDocDto {
-                lib: l.id,
-                lib_title: l.title,
-                book_id: None,
-                path,
-                title,
-                content_type: edit_kind.unwrap().content_type().into(),
-                text,
-            });
-        }
-        let plain = f.article(&path, None)?;
-        return Ok(AiDocDto {
-            lib: l.id,
-            lib_title: l.title,
-            book_id: None,
-            path,
-            title,
-            content_type: "text".into(),
-            text: plain.text.text,
-        });
-    }
-    let bc = state.bookcase_of(&l)?;
-    if l.kind == "html" {
-        let t = state.html_tree(&l)?;
-        let path = path.ok_or("没有指定文章")?;
-        let leaf = t.leaf(&path).ok_or_else(|| format!("目录里没有这篇文章：{}", path))?;
-        let plain = bc.article(&path, None)?;
-        return Ok(AiDocDto {
-            lib: l.id,
-            lib_title: l.title,
-            book_id: None,
-            path,
-            title: leaf.title.clone(),
-            content_type: "html".into(),
-            text: plain.text.text,
-        });
-    }
-    let book_id = book_id.ok_or("没有指定经号")?;
-    let book = bc.book(&book_id).ok_or_else(|| format!("没有这部经：{}", book_id))?;
-    let vols = bc.volumes(&book_id);
-    let vol = match &path {
-        Some(p) if !p.is_empty() => vols.iter().find(|v| &v.path == p),
-        _ => vols.iter().find(|v| v.exists),
-    }
-    .ok_or_else(|| format!("{} 没有可读的卷", book_id))?;
-    let vt = bc.volume_text(&vol.path)?;
-    let full_title = if vol.label.is_empty() {
-        book.title.clone()
-    } else {
-        format!("{} {}", book.title, vol.label)
-    };
-    Ok(AiDocDto {
-        lib: l.id,
-        lib_title: l.title,
-        book_id: Some(book_id),
-        path: vol.path.clone(),
-        title: full_title,
-        content_type: "cbeta".into(),
-        text: vt.text,
-    })
-}
-
-fn to_session_dto(s: smart_library_core::ai_chat::AiSession) -> AiSessionDto {
-    AiSessionDto {
-        id: s.id,
-        scope_kind: s.scope_kind,
-        lib: s.lib,
-        path: s.path,
-        book_id: s.book_id,
-        title: s.title,
-        doc_title: s.doc_title,
-        messages_json: s.messages_json,
-        refs_json: s.refs_json,
-        updated: s.updated,
-    }
-}
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn ai_session_save(
-    id: Option<i64>,
-    scope_kind: String,
-    lib: Option<String>,
-    path: Option<String>,
-    book_id: Option<String>,
-    title: String,
-    doc_title: Option<String>,
-    messages_json: String,
-    refs_json: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<i64, String> {
-    state.ai_chat.save_session(
-        id,
-        &scope_kind,
-        lib.as_deref().unwrap_or(""),
-        path.as_deref().unwrap_or(""),
-        book_id.as_deref(),
-        &title,
-        doc_title.as_deref().unwrap_or(""),
-        &messages_json,
-        refs_json.as_deref().unwrap_or("[]"),
-    )
-}
-
-#[tauri::command]
-pub async fn ai_session_get(id: i64, state: State<'_, AppState>) -> Result<Option<AiSessionDto>, String> {
-    Ok(state.ai_chat.get_session(id)?.map(to_session_dto))
-}
-
-#[tauri::command]
-pub async fn ai_session_latest(lib: String, path: String, state: State<'_, AppState>) -> Result<Option<AiSessionDto>, String> {
-    Ok(state.ai_chat.latest_for_doc(&lib, &path)?.map(to_session_dto))
-}
-
-#[tauri::command]
-pub async fn ai_session_list(
-    lib: Option<String>,
-    path: Option<String>,
-    limit: Option<usize>,
-    state: State<'_, AppState>,
-) -> Result<Vec<AiSessionSummaryDto>, String> {
-    let rows = state
-        .ai_chat
-        .list_sessions(lib.as_deref(), path.as_deref(), limit.unwrap_or(100).clamp(1, 500))?;
-    Ok(rows
-        .into_iter()
-        .map(|s| AiSessionSummaryDto {
-            id: s.id,
-            scope_kind: s.scope_kind,
-            lib: s.lib,
-            path: s.path,
-            book_id: s.book_id,
-            title: s.title,
-            doc_title: s.doc_title,
-            updated: s.updated,
-        })
-        .collect())
-}
-
-#[tauri::command]
-pub async fn ai_session_delete(id: i64, state: State<'_, AppState>) -> Result<(), String> {
-    state.ai_chat.delete_session(id)
-}
-
-#[tauri::command]
-pub async fn ai_session_rename(id: i64, title: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.ai_chat.rename_session(id, &title)
-}
-
-#[tauri::command]
-pub async fn ai_session_clear(state: State<'_, AppState>) -> Result<usize, String> {
-    state.ai_chat.clear()
-}
-
-// ------------------------------------------------------------ dictionaries
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DictStateDto {
-    pub paths: Vec<String>,
-    pub disabled: Vec<String>,
-    pub dicts: Vec<DictInfo>,
-}
-
-impl AppState {
-    fn dict_config_path(&self) -> PathBuf {
-        self.config_dir.join("dicts.json")
-    }
-
-    fn ensure_dicts(&self) {
-        if self.dicts.read().unwrap().is_some() {
-            return;
-        }
-        let mut guard = self.dicts.write().unwrap();
-        if guard.is_none() {
-            let cfg = std::fs::read_to_string(self.dict_config_path())
-                .ok()
-                .and_then(|s| serde_json::from_str::<DictConfig>(&s).ok())
-                .unwrap_or_default();
-            *guard = Some(DictManager::from_config(cfg));
-        }
-    }
-
-    fn dict_state_dto(&self) -> DictStateDto {
-        self.ensure_dicts();
-        let guard = self.dicts.read().unwrap();
-        let mgr = guard.as_ref().unwrap();
-        let cfg = mgr.config();
-        DictStateDto {
-            paths: cfg.paths.clone(),
-            disabled: cfg.disabled.clone(),
-            dicts: mgr.list(),
-        }
-    }
-
-    fn save_dict_config(&self, cfg: &DictConfig) -> Result<(), String> {
-        let _ = std::fs::create_dir_all(&self.config_dir);
-        let json = serde_json::to_string_pretty(cfg)
-            .map_err(|e| format!("序列化词典配置失败: {e}"))?;
-        std::fs::write(self.dict_config_path(), json)
-            .map_err(|e| format!("保存词典配置失败: {e}"))
-    }
-}
-
-#[tauri::command]
-pub async fn dict_config_get(state: State<'_, AppState>) -> Result<DictStateDto, String> {
-    Ok(state.dict_state_dto())
-}
-
-#[tauri::command]
-pub async fn dict_config_set(
-    paths: Vec<String>,
-    disabled: Vec<String>,
-    state: State<'_, AppState>,
-) -> Result<DictStateDto, String> {
-    let cfg = DictConfig { paths, disabled };
-    state.save_dict_config(&cfg)?;
-    state.ensure_dicts();
-    {
-        let mut guard = state.dicts.write().unwrap();
-        if let Some(mgr) = guard.as_mut() {
-            mgr.set_config(cfg);
-        }
-    }
-    Ok(state.dict_state_dto())
-}
-
-#[tauri::command]
-pub async fn dict_reload(state: State<'_, AppState>) -> Result<DictStateDto, String> {
-    state.ensure_dicts();
-    {
-        let mut guard = state.dicts.write().unwrap();
-        if let Some(mgr) = guard.as_mut() {
-            mgr.reload();
-        }
-    }
-    Ok(state.dict_state_dto())
-}
-
-#[tauri::command]
-pub async fn dict_search(
-    query: String,
-    scope_ids: Option<Vec<String>>,
-    offset: Option<usize>,
-    limit: Option<usize>,
-    state: State<'_, AppState>,
-) -> Result<DictSearchResult, String> {
-    state.ensure_dicts();
-    let guard = state.dicts.read().unwrap();
-    let mgr = guard.as_ref().unwrap();
-    Ok(mgr.search(
-        &query,
-        scope_ids.as_deref(),
-        offset.unwrap_or(0),
-        limit.unwrap_or(50),
-    ))
-}
-
-#[tauri::command]
-pub async fn dict_entry(
-    dict_id: String,
-    entry_id: u32,
-    state: State<'_, AppState>,
-) -> Result<DictEntryDetail, String> {
-    state.ensure_dicts();
-    let guard = state.dicts.read().unwrap();
-    let mgr = guard.as_ref().unwrap();
-    mgr.get_entry(&dict_id, entry_id)
-}
-
-#[tauri::command]
-pub async fn dict_lookup(
-    word: String,
-    scope_ids: Option<Vec<String>>,
-    limit: Option<usize>,
-    state: State<'_, AppState>,
-) -> Result<Vec<DictEntryDetail>, String> {
-    state.ensure_dicts();
-    let guard = state.dicts.read().unwrap();
-    let mgr = guard.as_ref().unwrap();
-    Ok(mgr.lookup_exact(&word, scope_ids.as_deref(), limit.unwrap_or(50)))
-}
+#[path = "commands/dict_cmds.rs"]
+mod dict_cmds;
+pub use dict_cmds::*;
 
 #[cfg(test)]
 mod library_id_tests {
@@ -4765,5 +4002,93 @@ mod library_id_tests {
         let mut overlay = props.overlay("lib").unwrap(); overlay.set_nav_ancestors(navigation_ancestors(&nodes));
         overlay.apply(&mut sibling);
         assert!(sibling.text.is_empty());
+    }
+
+    #[test]
+    fn flush_dirty_preserves_paths_while_building() {
+        let tmp = std::env::temp_dir().join(format!("sl_flush_dirty_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let state = AppState::new(tmp.join("cfg"), tmp.join("data"));
+        let lib = Library {
+            id: "notes-1".into(),
+            kind: "notes".into(),
+            title: "测试笔记".into(),
+            source: String::new(),
+            tree: String::new(),
+            exts: vec![],
+            max_mb: 0,
+            writable: true,
+        };
+        // Simulate an existing index directory and an in-flight build
+        let idx_dir = state.index_dir(&lib.id);
+        std::fs::create_dir_all(&idx_dir).unwrap();
+        std::fs::write(idx_dir.join("smart-library-index.json"), "{}").unwrap();
+        state.building.lock().unwrap().insert(lib.id.clone());
+        state.mark_dirty(&lib.id, ["42".to_string()]);
+
+        // Calling flush_dirty while building must NOT discard the dirty path
+        state.flush_dirty(std::slice::from_ref(&lib));
+        assert!(state.dirty.lock().unwrap().get(&lib.id).is_some_and(|s| s.contains("42")));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn degraded_db_never_overwrites_sidecar_meta() {
+        let tmp = std::env::temp_dir().join(format!("sl_degraded_db_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let folder_root = tmp.join("folder");
+        std::fs::create_dir_all(&folder_root).unwrap();
+        let mut dims = Dims::new();
+        dims.insert("period".into(), vec!["唐".into()]);
+        smart_library_core::sidecar::write(
+            &folder_root,
+            &smart_library_core::sidecar::Sidecar {
+                props: vec![("doc.md".into(), dims)],
+                marks: vec![],
+            },
+        )
+        .unwrap();
+
+        let mut state = AppState::new(tmp.join("cfg"), tmp.join("data"));
+        state.db_degraded = true;
+        let lib = Library {
+            id: "folder-1".into(),
+            kind: "folder".into(),
+            title: "文件夹".into(),
+            source: folder_root.to_string_lossy().into_owned(),
+            tree: String::new(),
+            exts: vec!["md".into()],
+            max_mb: 0,
+            writable: true,
+        };
+        state.libraries.write().unwrap().push(lib.clone());
+        state.sidecar_sync();
+        assert!(state.sidecar_write(&lib).is_err());
+
+        // Existing meta.json on disk must still contain the original property
+        let sc = smart_library_core::sidecar::read(&folder_root, &lib.id).unwrap().unwrap();
+        assert_eq!(sc.props.len(), 1);
+        assert_eq!(sc.props[0].0, "doc.md");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn external_action_url_requires_matching_token() {
+        let token = next_external_token(1);
+        let forged = tauri::Url::parse("http://smartlib-action.localhost/?data=%7B%22type%22%3A%22diary%22%7D").unwrap();
+        assert!(parse_external_action_url(&forged, &token).is_none());
+
+        let wrong = tauri::Url::parse("http://smartlib-action.localhost/?token=wrong&data=%7B%22type%22%3A%22diary%22%7D").unwrap();
+        assert!(parse_external_action_url(&wrong, &token).is_none());
+
+        let valid = tauri::Url::parse(&format!(
+            "http://smartlib-action.localhost/?token={token}&data=%7B%22type%22%3A%22search%22%2C%22text%22%3A%22%E5%9B%9B%E8%B0%9B%22%7D"
+        ))
+        .unwrap();
+        let parsed = parse_external_action_url(&valid, &token).unwrap();
+        assert_eq!(parsed.get("type").and_then(|v| v.as_str()), Some("search"));
+        assert_eq!(parsed.get("text").and_then(|v| v.as_str()), Some("四谛"));
     }
 }
