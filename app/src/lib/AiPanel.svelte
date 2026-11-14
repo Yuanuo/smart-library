@@ -52,7 +52,7 @@
   let customTitled = $state(false);
   let messages = $state([]); // [{ role: "user"|"assistant", content, reasoning?, toolLogs?, ts }]
   let refs = $state([]); // [{ lib, bookId, path, title, libTitle? }]
-  let quoteText = $state(""); // selected passage from current reader/editor
+  let quotes = $state([]); // [{ text, source }] selected passages from reader/editor/dict
   let includeDoc = $state(true);
   let includeSearch = $state(true);
   let input = $state("");
@@ -257,7 +257,7 @@
     sessionTitle = "";
     customTitled = false;
     messages = [];
-    quoteText = "";
+    quotes = [];
     errorMsg = "";
     statusMsg = "";
     onSessionChange?.({ sessionId: null, title: "AI 助手" });
@@ -277,7 +277,10 @@
       if (inc.sourceDoc?.lib && (inc.sourceDoc?.path || inc.sourceDoc?.bookId)) {
         addRefItem(inc.sourceDoc);
       }
-      if (inc.text) quoteText = inc.text.trim();
+      if (inc.text && inc.text.trim()) {
+        const item = { text: inc.text.trim(), source: (inc.source || "").trim() };
+        quotes = inc.append ? [...quotes, item] : [item];
+      }
       if (inc.prompt) {
         sendPrompt(inc.prompt);
       } else if (!inc.sessionId) {
@@ -451,9 +454,17 @@
       }
     }
 
-    // 4. Selected passage quote
-    if (quoteText.trim()) {
-      blocks.push(`【用户选中的文本片段】\n${quoteText.trim()}`);
+    // 4. Selected passage quotes (with sources)
+    if (quotes.length === 1) {
+      const q = quotes[0];
+      const src = q.source ? `（来源：${q.source}）` : "";
+      blocks.push(`【用户选中的文本片段${src}】\n${q.text}`);
+    } else if (quotes.length > 1) {
+      const parts = quotes.map((q, i) => {
+        const src = q.source ? `（来源：${q.source}）` : "";
+        return `片段 ${i + 1}${src}：\n${q.text}`;
+      });
+      blocks.push(`【用户选中的文本片段（共 ${quotes.length} 段）】\n\n${parts.join("\n\n")}`);
     }
     return blocks.join("\n\n---\n\n");
   }
@@ -579,10 +590,15 @@
     if (customText == null) input = "";
 
     const contextBlock = await gatherContextBlocks();
-    const displayContent = quoteText.trim()
-      ? `> ${quoteText.trim().replace(/\n/g, "\n> ")}\n\n${text}`
+    const displayContent = quotes.length
+      ? `${quotes
+          .map((q) => {
+            const prefix = q.source ? `**[${q.source}]**\n` : "";
+            return `> ${(prefix + q.text).replace(/\n/g, "\n> ")}`;
+          })
+          .join("\n\n")}\n\n${text}`
       : text;
-    quoteText = "";
+    quotes = [];
 
     // Prepare history for API call (keep last 16 turns + context on the latest user message)
     const apiMessages = messages
@@ -993,18 +1009,28 @@
     {/if}
   </div>
 
-  {#if quoteText}
+  {#if quotes.length}
     <div class="quote-box">
       <div class="quote-head">
-        <span class="muted">已选文本片段</span>
+        <span class="muted">已选片段（{quotes.length}）</span>
         <span class="quote-quick">
-          <button class="link" onclick={() => sendPrompt("请详细解释这段文字的含义与背景。")}>解释</button>
-          <button class="link" onclick={() => sendPrompt("请将这段文字翻译成通俗晓畅的现代白话文。")}>白话翻译</button>
-          <button class="link" onclick={() => sendPrompt("请根据这段文字提炼要点并构思创新应用方案。")}>编写方案</button>
-          <button class="link" onclick={() => (quoteText = "")} title="移除选区">×</button>
+          <button class="link" onclick={() => sendPrompt("请详细解释以上片段的含义与背景。")}>解释</button>
+          <button class="link" onclick={() => sendPrompt("请将以上片段翻译成通俗晓畅的现代白话文。")}>白话翻译</button>
+          <button class="link" onclick={() => sendPrompt("请根据以上片段提炼要点并构思创新应用方案。")}>编写方案</button>
+          <button class="link" onclick={() => (quotes = [])} title="清空全部片段">清空</button>
         </span>
       </div>
-      <div class="quote-text">{quoteText}</div>
+      <div class="quote-list">
+        {#each quotes as q, i (i)}
+          <div class="quote-item">
+            <div class="quote-item-body">
+              {#if q.source}<span class="quote-src">{q.source}</span>{/if}
+              <span class="quote-text">{q.text}</span>
+            </div>
+            <button type="button" class="link quote-del" onclick={() => (quotes = quotes.filter((_, idx) => idx !== i))} title="移除此片段" aria-label="移除此片段">×</button>
+          </div>
+        {/each}
+      </div>
     </div>
   {/if}
 
@@ -1158,9 +1184,14 @@
     margin: 0 10px 6px; padding: 6px 8px; background: var(--paper);
     border: 1px solid var(--accent); border-radius: 6px; font-size: 12px;
   }
-  .quote-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; }
+  .quote-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
   .quote-quick { display: flex; gap: 6px; }
-  .quote-text { max-height: 64px; overflow: auto; color: var(--muted); white-space: pre-wrap; }
+  .quote-list { max-height: 112px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .quote-item { display: flex; align-items: flex-start; gap: 6px; padding: 3px 4px; border-radius: 4px; background: var(--bg); }
+  .quote-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .quote-src { font-size: 11px; color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .quote-text { max-height: 44px; overflow: auto; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+  .quote-del { flex: none; padding: 0 3px; line-height: 1.2; }
 
   .ai-err { margin: 0 10px 6px; padding: 6px 8px; border-radius: 6px; background: var(--hl-bg); color: var(--hl); font-size: 12px; }
   .ai-status { margin: 0 10px 4px; font-size: 12px; }

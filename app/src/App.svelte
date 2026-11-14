@@ -6,6 +6,7 @@
   import LibraryPanel from "./lib/LibraryPanel.svelte";
   import BindDialog from "./lib/BindDialog.svelte";
   import QuickSearch from "./lib/QuickSearch.svelte";
+  import { openDictWindow } from "./lib/dictWindow.js";
   import Icon from "./lib/Icon.svelte";
   import RecentDialog from "./lib/RecentDialog.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
@@ -142,7 +143,15 @@
       if (!t) error = "还没有最近的笔记。";
       else doClip({ mode: "append", target: t, comment: "" }, { text: a.text, vol: v, lb: a.lb }).catch((e) => (error = String(e)));
     } else if (a.type === "ai-external") {
-      handleAiRequest({ text: a.text, prompt: a.prompt, autoSend: a.autoSend, title: v.title || v.url });
+      handleAiRequest({
+        text: a.text,
+        prompt: a.prompt,
+        autoSend: a.autoSend,
+        title: v.title || v.url,
+        lb: a.lb,
+        append: !!a.append,
+        source: a.source || "",
+      });
     } else if (a.type === "error") {
       error = a.text;
     } else if (a.type === "quick") {
@@ -150,6 +159,8 @@
       quickQuery = a.text;
       recentBox = false;
       quick = true;
+    } else if (a.type === "dict" || a.type === "dict-search" || a.type === "dict-lookup") {
+      openDictWindow(a.text || "");
     } else {
       markAction(a);
     }
@@ -461,11 +472,14 @@
     }
     setAiOpen(true);
     if (req.text || req.prompt) {
+      const source = req.source || [req.sourceDoc?.title || req.title, req.lb].filter(Boolean).join(" · ");
       aiIncoming = {
         nonce: ++aiSeq,
         text: req.text || "",
         prompt: req.prompt || "",
         sourceDoc: req.sourceDoc || null,
+        source,
+        append: !!req.append,
       };
     }
   }
@@ -766,6 +780,7 @@
           <button class="icon" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加" aria-label="添加"><Icon name="plus" size={18} /></button>
           <button class="icon" onclick={openQuickSearch} title="标题快搜（双击 Shift 或 Ctrl+G）" aria-label="标题快搜"><Icon name="plane" size={18} /></button>
           <button class="icon" onclick={openSearch} title="全文搜索（Ctrl+H）" aria-label="全文搜索"><Icon name="search" size={18} /></button>
+          <button class="icon" onclick={() => openDictWindow("")} title="查词典" aria-label="查词典"><Icon name="dict" size={18} /></button>
           <button class="icon" onclick={openMarks} title="收藏与标签（Ctrl+B）" aria-label="收藏与标签"><Icon name="bookmark" size={18} /></button>
           <button class="icon" onclick={openRecent} title="最近打开（Ctrl+E）" aria-label="最近打开"><Icon name="clock" size={18} /></button>
           {#if settings.aiOn}

@@ -50,11 +50,15 @@
     }
   }
 
-  function sendToAi({ text = "", quote = "", lb = null, prompt = "", toggle = false } = {}) {
+  function sendToAi({ text = "", quote = "", lb = null, prompt = "", toggle = false, append = false } = {}) {
+    const title = p.retitled ?? (vol?.label ? `${vol.title} ${vol.label}` : vol?.title);
+    const source = [title, lb].filter(Boolean).join(" · ");
     onai?.({
       toggle,
+      append,
       text: quote || text || "",
       lb,
+      source,
       prompt,
       sourceDoc: vol ? { lib: p.lib, bookId: p.bookId, path: p.path, title: p.retitled ?? vol.title } : null,
     });
@@ -274,12 +278,18 @@
     if (onaction) {
       items.push(
         { label: `全文检索：${q}`, action: act("search") },
-        { label: `全文检索（精确检索）：${q}`, action: act("phrase") },
-        { label: `全文检索（检索本篇）：${q}`, action: act("book") },
-        { label: `快捷检索（经名、作译者等）：${q}`, action: act("quick") },
+        { label: `全文匹配：${q}`, action: act("phrase") },
+        { label: `篇内检索：${q}`, action: act("book") },
+        { label: `标题快搜：${q}`, action: act("quick") },
       );
     }
     items.push({ label: `页内查找：${q}`, action: () => findInPage(text) });
+    if (onaction) {
+      items.push(
+        "separator",
+        { label: `查词典：${q}`, action: act("dict") },
+      );
+    }
     if (onaction) {
       items.push(
         "separator",
@@ -293,6 +303,7 @@
       items.push(
         "separator",
         { label: "发给 AI 助手", action: () => sendToAi({ quote: text, lb, autoSend: false }) },
+        { label: "追加到 AI 会话", action: () => sendToAi({ quote: text, lb, append: true, autoSend: false }) },
         { label: "AI 解释选中文字", action: () => sendToAi({ quote: text, lb, prompt: "请解释以上文字的核心含义与要点。", autoSend: true }) },
         { label: "AI 润色 / 续写", action: () => sendToAi({ quote: text, lb, prompt: "请基于以上内容进行润色并自然续写。", autoSend: true }) },
         { label: "AI 编写创新方案", action: () => sendToAi({ quote: text, lb, prompt: "请根据以上文字的核心要点编写一份结构化的创新方案。", autoSend: true }) },

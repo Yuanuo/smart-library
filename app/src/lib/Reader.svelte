@@ -349,7 +349,13 @@
     const lb = inside ? lbAt(s.getRangeAt(0).startContainer) : lbAt(e.target);
     const act = (type) => () => onaction?.({ type, text, lb, vol, excerpt: text ? clip(text, 40) : lineText(lb) });
     const q = clip(text);
+    const extEl = e.target.closest?.('a[href^="http://"], a[href^="https://"], a.zim-link[data-link-kind="external"]');
+    const extHref = extEl?.getAttribute("href") || extEl?.dataset?.zimHref || "";
     const items = [];
+    if (extHref) {
+      items.push({ label: "复制链接", action: () => navigator.clipboard.writeText(extHref).catch(() => {}) });
+      if (text) items.push("separator");
+    }
     if (text) {
       items.push(
         { label: "复制文字", action: () => copyText(text, false, lb) },
@@ -359,17 +365,16 @@
       if (onaction) {
         items.push(
           { label: `全文检索：${q}`, action: act("search") },
-          { label: `全文检索（精确检索）：${q}`, action: act("phrase") },
-          { label: `全文检索（检索本书）：${q}`, action: act("book") },
-          { label: `快捷检索（经名、作译者等）：${q}`, action: act("quick") },
+          { label: `全文匹配：${q}`, action: act("phrase") },
+          { label: `书内检索：${q}`, action: act("book") },
+          { label: `标题快搜：${q}`, action: act("quick") },
         );
       }
       items.push({ label: `页内查找：${q}`, action: () => findInPage(text) });
       items.push(
         "separator",
         { label: "查拼音（待支持）", action: () => {}, disabled: true },
-        { label: "查词条（待支持）", action: () => {}, disabled: true },
-        { label: "查词义（待支持）", action: () => {}, disabled: true },
+        { label: `查词典：${q}`, action: act("dict") },
         "separator",
       );
     }
@@ -386,6 +391,7 @@
       items.push(
         "separator",
         { label: "发给 AI 助手", action: () => onai({ quote: text, lb, autoSend: false }) },
+        { label: "追加到 AI 会话", action: () => onai({ quote: text, lb, append: true, autoSend: false }) },
         { label: "AI 解释选中文字", action: () => onai({ quote: text, lb, prompt: "请用通俗准确的现代汉语解释以上引文，并说明其核心义理与背景。", autoSend: true }) },
         { label: "AI 编写创新方案", action: () => onai({ quote: text, lb, prompt: "请基于以上引文的核心思想与方法，结合现代应用场景，编写一份结构清晰、可落地的创新方案。", autoSend: true }) },
       );
