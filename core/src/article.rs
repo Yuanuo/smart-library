@@ -406,6 +406,14 @@ impl Walker {
                 self.walk_children(el);
                 self.close("a");
             }
+            "a" if el.attr("href").is_some_and(|href| crate::zim::external_url(href).is_some()) => {
+                if let Some(h) = self.html.as_mut() {
+                    let href = el.attr("href").unwrap();
+                    h.open("a", &[("class", "ext-link"), ("href", "#"), ("data-ext-href", href)]);
+                }
+                self.walk_children(el);
+                self.close("a");
+            }
             "sup" | "sub" => {
                 self.open(name, "");
                 self.walk_children(el);

@@ -13,6 +13,7 @@ export const setFolderWritable = (id, writable) => invoke("set_folder_writable",
 export const addZim = (path, libraryId = "") => invoke("add_zim", { path, libraryId });
 export const resolveZimLink = (lib, path, href) => invoke("resolve_zim_link", { lib, path, href });
 export const openExternalUrl = (url) => invoke("open_external_url", { url });
+export const openExternalWindow = (url, aiOn = false) => invoke("open_external_window", { url, aiOn });
 /** A new note / mind map / whiteboard file (`kind`: md, mindmap, whiteboard) in a folder (`parent`: path, "" for the top). */
 export const createFolderFile = (lib, parent, kind = "md", title = null) => invoke("create_folder_file", { lib, parent, kind, title });
 /** A new folder inside a folder (`parent`: path, "" for the top) of a read-write folder library. */
@@ -97,3 +98,76 @@ export const onIndexProgress = (fn) => listen("index-progress", (e) => fn(e.payl
 export const onIndexDone = (fn) => listen("index-done", (e) => fn(e.payload));
 export const loadWorkspace = () => invoke("load_workspace");
 export const saveWorkspace = (workspace) => invoke("save_workspace", { workspace });
+export const aiStream = (reqId, config, system, messages, reasoningEffort = null, tools = null) =>
+  invoke("ai_stream", { reqId, config, system, messages, reasoningEffort, tools });
+export const aiAbort = (reqId) => invoke("ai_abort", { reqId });
+export const aiToolDefinitions = () => invoke("ai_tool_definitions");
+export const aiExecTool = (name, argumentsJson) =>
+  invoke("ai_exec_tool", { name, arguments: argumentsJson });
+export const aiTest = (config) => invoke("ai_test", { config });
+export const aiFetchModels = (format, baseUrl, apiKey) =>
+  invoke("ai_fetch_models", { format, baseUrl, apiKey });
+export const aiSummarizeTitle = (config, userText, assistantText) =>
+  invoke("ai_summarize_title", { config, userText, assistantText });
+export const onAiStream = (fn) => listen("ai-stream", (e) => fn(e.payload));
+export const aiMindmapParse = (input, fallbackTitle = "脑图") =>
+  invoke("ai_mindmap_parse", { input, fallbackTitle });
+export const aiDocText = (lib, bookId = null, path = null) =>
+  invoke("ai_doc_text", { lib, bookId, path });
+export const aiSessionSave = (args) => invoke("ai_session_save", args);
+export const aiSessionGet = (id) => invoke("ai_session_get", { id });
+export const aiSessionLatest = (lib, path) => invoke("ai_session_latest", { lib, path });
+export const aiSessionList = (lib = null, path = null, limit = 100) =>
+  invoke("ai_session_list", { lib, path, limit });
+export const aiSessionDelete = (id) => invoke("ai_session_delete", { id });
+export const aiSessionRename = (id, title) => invoke("ai_session_rename", { id, title });
+export const aiSessionClear = () => invoke("ai_session_clear");
+
+let aiSeq = 0;
+/**
+ * Stream an LLM response as an AsyncGenerator<string> (compatible with
+ * `@milkdown/crepe`'s `AIProvider` and general streaming helpers).
+ */
+export async function* aiStreamGenerator(config, system, messages, signal = null) {
+  const reqId = `ai-${Date.now()}-${++aiSeq}`;
+  const queue = [];
+  let done = false;
+  let err = null;
+  let wake = null;
+  const notify = () => {
+    if (wake) {
+      const r = wake;
+      wake = null;
+      r();
+    }
+  };
+  const unlisten = await onAiStream((ev) => {
+    if (ev.req_id !== reqId) return;
+    if (ev.delta) queue.push(ev.delta);
+    if (ev.error) err = new Error(ev.error);
+    if (ev.done) done = true;
+    notify();
+  });
+  const onAbort = () => {
+    done = true;
+    aiAbort(reqId).catch(() => {});
+    notify();
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  aiStream(reqId, config, system, messages).catch((e) => {
+    err = e instanceof Error ? e : new Error(String(e));
+    done = true;
+    notify();
+  });
+  try {
+    while (true) {
+      while (queue.length) yield queue.shift();
+      if (err) throw err;
+      if (done || signal?.aborted) break;
+      await new Promise((r) => (wake = r));
+    }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    unlisten();
+  }
+}

@@ -48,8 +48,15 @@ async function describe(vol, lb) {
 
 /** A clipping as a node of a mind map: its text, the link to the source, a tag. */
 export async function clipNode({ text, vol, lb }) {
-  const d = await describe(vol, lb);
   const flat = text.replace(/\s+/g, " ").trim();
+  if (vol?.url) {
+    return {
+      topic: flat.length > 160 ? flat.slice(0, 160) + "…" : flat,
+      link: vol.url,
+      tag: vol.title || vol.url,
+    };
+  }
+  const d = await describe(vol, lb);
   return {
     topic: flat.length > 160 ? flat.slice(0, 160) + "…" : flat,
     link: sourceUrl({ lib: vol.lib, book: vol.book_id, path: vol.path, lb, quote: text }),
@@ -66,6 +73,10 @@ export async function clipMarkdown({ text, vol, lb, comment = "" }) {
     .filter(Boolean)
     .map((s) => "> " + s)
     .join("\n");
+  if (vol?.url) {
+    const label = (vol.title || vol.url).replace(/[\[\]]/g, (c) => (c === "[" ? "（" : "）"));
+    return `${quote}\n>\n> —— [${label}](${vol.url})` + (comment.trim() ? `\n\n${comment.trim()}` : "");
+  }
   let where = lb || "";
   try {
     // CBETA: the citation (T15, no. 614, p. 269c29); others: the library and the line

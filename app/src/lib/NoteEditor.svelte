@@ -18,6 +18,7 @@
   import "@milkdown/crepe/theme/frame.css";
   import * as api from "./api.js";
   import { parseSource } from "./clip.js";
+  import { activeAiPreset, isAiReady, toBackendAiConfig } from "./settings.svelte.js";
 
   let {
     value,
@@ -30,6 +31,7 @@
     nonce = 0,
     onprogress = null,
     onjump = null,
+    onexternal = null,
     onmenu = null,
   } = $props();
 
@@ -56,15 +58,42 @@
 
   onMount(async () => {
     const F = Crepe.Feature;
+    const aiEnabled = isAiReady();
+    const aiProvider = (context, signal) => {
+      const sys =
+        "你是嵌入在 Markdown 笔记编辑器中的写作助手。\n\n规则：\n- 只输出 Markdown 正文，绝不要把输出包在 ```markdown 代码块里。\n- 不要输出开场白、解释或总结，只输出修改或生成后的正文内容。\n- 保留原有的 Markdown 结构（标题、列表、链接、代码块），除非指令要求改变。\n- 如果提供了 <selection>，只输出替换该选区的内容，不要重复上下文。\n- 如果没有 <selection>，输出在光标处顺畅续写的内容。";
+      const parts = [`<document>\n${context.document}\n</document>`];
+      if (context.selection) parts.push(`<selection>\n${context.selection}\n</selection>`);
+      parts.push(`<instruction>\n${context.instruction}\n</instruction>`);
+      return api.aiStreamGenerator(
+        toBackendAiConfig(activeAiPreset()),
+        sys,
+        [{ role: "user", content: parts.join("\n\n") }],
+        signal,
+      );
+    };
     const c = new Crepe({
       root,
       defaultValue: initial,
-      // everything of Crepe is on (tables, code blocks and formulas are Markdown text that the
-      // search index reads as lines) except the AI helper: it needs a language model service
-      features: { [F.AI]: false },
+      features: { [F.AI]: aiEnabled },
       featureConfigs: {
         [F.ImageBlock]: { onUpload: upload, blockOnUpload: upload, inlineOnUpload: upload, proxyDomURL: proxy },
         [F.Placeholder]: { text: "写点什么……（输入 / 选择标题、列表、引文、表格、代码、图片；可以直接粘贴图片）" },
+        ...(aiEnabled
+          ? {
+              [F.AI]: {
+                provider: aiProvider,
+                instructionPlaceholder: "输入 AI 改写或续写指令…",
+                suggestionsHeaderLabel: "AI 建议",
+                sendAsPromptHeaderLabel: "自定义指令",
+                sendAsPromptLabel: "运行指令",
+                submitButtonLabel: "发送",
+                diff: { acceptLabel: "接受", rejectLabel: "拒绝" },
+                streamingIndicator: { fallbackLabel: "AI 正在生成…", cancelHint: "按 Esc 取消" },
+                diffActions: { retryLabel: "重试", rejectAllLabel: "拒绝修改", acceptAllLabel: "接受修改" },
+              },
+            }
+          : {}),
       },
     });
     // Milkdown sanitizes custom schemes in href; retain our own safe link in
@@ -179,11 +208,20 @@
   // ---- clicks and menus
   function click(e) {
     const a = e.target.closest?.("a");
-    const to = a && parseSource(a.dataset.smartlib || a.getAttribute("href") || "");
-    if (!to) return;
-    e.preventDefault();
-    e.stopPropagation();
-    onjump?.(to);
+    if (!a) return;
+    const raw = a.dataset.smartlib || a.getAttribute("href") || "";
+    const to = parseSource(raw);
+    if (to) {
+      e.preventDefault();
+      e.stopPropagation();
+      onjump?.(to);
+      return;
+    }
+    if (/^https?:\/\//i.test(raw)) {
+      e.preventDefault();
+      e.stopPropagation();
+      onexternal?.(raw);
+    }
   }
 
   function menu(e) {

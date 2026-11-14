@@ -5,6 +5,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai;
+mod ai_tools;
 mod commands;
 mod fonts;
 
@@ -39,8 +41,37 @@ fn main() {
         // readers and panel windows)
         .on_window_event(|window, event| {
             if window.label() == "main" {
-                if let tauri::WindowEvent::Destroyed = event {
-                    window.app_handle().exit(0);
+                match event {
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                        if !window.is_minimized().unwrap_or(false) {
+                            if let Some(st) = window.app_handle().try_state::<AppState>() {
+                                let maximized = window.is_maximized().unwrap_or(false);
+                                if maximized {
+                                    st.set_window_maximized(true);
+                                } else if let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) {
+                                    st.update_window_state(
+                                        pos.x,
+                                        pos.y,
+                                        size.width,
+                                        size.height,
+                                        false,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    tauri::WindowEvent::CloseRequested { .. } => {
+                        if let Some(st) = window.app_handle().try_state::<AppState>() {
+                            st.save_window_state();
+                        }
+                    }
+                    tauri::WindowEvent::Destroyed => {
+                        if let Some(st) = window.app_handle().try_state::<AppState>() {
+                            st.save_window_state();
+                        }
+                        window.app_handle().exit(0);
+                    }
+                    _ => {}
                 }
             }
         })
@@ -49,7 +80,37 @@ fn main() {
                 Some(dirs) => dirs,
                 None => (app.path().app_config_dir()?, app.path().app_data_dir()?),
             };
-            app.manage(AppState::new(config_dir, data_dir));
+            let state = AppState::new(config_dir, data_dir);
+            if let Some(main_win) = app.get_webview_window("main") {
+                if let Some(ws) = state.saved_window_state() {
+                    if ws.width >= 400 && ws.height >= 300 {
+                        let visible_on_monitor = main_win
+                            .available_monitors()
+                            .map(|mons| {
+                                mons.iter().any(|m| {
+                                    let mp = m.position();
+                                    let ms = m.size();
+                                    let mx2 = mp.x + ms.width as i32;
+                                    let my2 = mp.y + ms.height as i32;
+                                    let wx2 = ws.x + ws.width as i32;
+                                    let wy2 = ws.y + ws.height as i32;
+                                    wx2 > mp.x + 80 && ws.x < mx2 - 80 && wy2 > mp.y + 40 && ws.y < my2 - 40
+                                })
+                            })
+                            .unwrap_or(false);
+                        if visible_on_monitor {
+                            let _ = main_win.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(ws.width, ws.height)));
+                            let _ = main_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(ws.x, ws.y)));
+                        }
+                    }
+                    if ws.maximized {
+                        let _ = main_win.maximize();
+                    }
+                }
+                let _ = main_win.show();
+                let _ = main_win.set_focus();
+            }
+            app.manage(state);
             // pictures no note has referred to for 24 hours: look every few hours
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
@@ -141,6 +202,7 @@ fn main() {
             commands::resolve_node,
             commands::resolve_zim_link,
             commands::open_external_url,
+            commands::open_external_window,
             commands::search,
             commands::random_sentence,
             commands::quick_search,
@@ -149,6 +211,22 @@ fn main() {
             commands::build_index,
             commands::load_workspace,
             commands::save_workspace,
+            commands::ai_stream,
+            commands::ai_abort,
+            commands::ai_tool_definitions,
+            commands::ai_exec_tool,
+            commands::ai_test,
+            commands::ai_fetch_models,
+            commands::ai_summarize_title,
+            commands::ai_mindmap_parse,
+            commands::ai_doc_text,
+            commands::ai_session_save,
+            commands::ai_session_get,
+            commands::ai_session_latest,
+            commands::ai_session_list,
+            commands::ai_session_delete,
+            commands::ai_session_rename,
+            commands::ai_session_clear,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Smart Library");

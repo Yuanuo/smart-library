@@ -35,15 +35,17 @@ fn inline(s: &str) -> String {
     pair(&pair(s, "**", "b"), "*", "i").replace('\u{1}', "*")
 }
 
-/// `[text](smartlib://…)` of an already escaped line -> `<a data-src="…">text</a>`.
-/// Only that scheme is linked; `*` in the address is kept as `%2A` so that the
-/// bold / italic pass leaves it alone.
+/// `[text](smartlib://…)` or `[text](http(s)://…)` of an already escaped line.
+/// `*` in the address is kept as `%2A` so that the bold / italic pass leaves it alone.
 fn links(s: &str) -> String {
     let mut out = String::new();
     let mut rest = s;
     while let Some(open) = rest.find('[') {
         let after = &rest[open + 1..];
-        if let Some(close) = after.find("](smartlib://") {
+        let matched = after.find("](smartlib://").map(|c| (c, true))
+            .or_else(|| after.find("](https://").map(|c| (c, false)))
+            .or_else(|| after.find("](http://").map(|c| (c, false)));
+        if let Some((close, is_smartlib)) = matched {
             let text = &after[..close];
             let url_at = close + 2;
             if !text.contains('[') {
@@ -51,7 +53,12 @@ fn links(s: &str) -> String {
                     let url = &after[url_at..url_at + end];
                     if !url.contains(['"', ' ', '<']) {
                         out.push_str(&rest[..open]);
-                        out.push_str(&format!("<a data-src=\"{}\">{}</a>", url.replace('*', "%2A"), text));
+                        let safe_url = url.replace('*', "%2A");
+                        if is_smartlib {
+                            out.push_str(&format!("<a data-src=\"{}\">{}</a>", safe_url, text));
+                        } else {
+                            out.push_str(&format!("<a href=\"{}\">{}</a>", safe_url, text));
+                        }
                         rest = &after[url_at + end + 1..];
                         continue;
                     }
@@ -364,8 +371,9 @@ let a = 1;
 > —— [《经》 · 0001a05](smartlib://open?lib=cbeta&path=XML%2Fa.xml&q=a*b) 好");
         assert!(h.contains("<blockquote>引文</blockquote>"), "{h}");
         assert!(h.contains("<a data-src=\"smartlib://open?lib=cbeta&amp;path=XML%2Fa.xml&amp;q=a%2Ab\">《经》 · 0001a05</a> 好"), "{h}");
-        // other schemes are not linked
-        assert!(to_html("[x](http://a.b)").contains("[x](http://a.b)"));
+        // external http(s) links are preserved; other schemes are not linked
+        assert!(to_html("[x](http://a.b)").contains("<a href=\"http://a.b\">x</a>"));
+        assert!(to_html("[x](javascript:alert(1))").contains("[x](javascript:alert(1))"));
     }
 
     #[test]

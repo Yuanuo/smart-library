@@ -37,7 +37,7 @@
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
   import { parseSource, sourceUrl } from "./clip.js";
-  import { settings, update } from "./settings.svelte.js";
+  import { settings } from "./settings.svelte.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
 
   let {
@@ -55,19 +55,10 @@
     onaction = null,
     // open a place of a document (the source link of a clipping): `{ lib, bookId, path, lb, query, phrase }`
     onjump = null,
+    onexternal = null,
+    onai = null,
   } = $props();
   let scroller = $state();
-  let externalPrompt = $state(null);
-
-  async function openExternal(url, always = false) {
-    externalPrompt = null;
-    try {
-      await api.openExternalUrl(url);
-      if (always) update({ zimExternal: "always" });
-    } catch (err) {
-      onaction?.({ type: "error", text: String(err) });
-    }
-  }
 
   const load = (k, d) => {
     try {
@@ -391,7 +382,20 @@
         if (last) items.push({ label: `追加到最近的笔记：${clip(last.title, 12)}`, action: act("note-last") });
       }
     }
+    if (settings.aiOn && text && onai) {
+      items.push(
+        "separator",
+        { label: "发给 AI 助手", action: () => onai({ quote: text, lb, autoSend: false }) },
+        { label: "AI 解释选中文字", action: () => onai({ quote: text, lb, prompt: "请用通俗准确的现代汉语解释以上引文，并说明其核心义理与背景。", autoSend: true }) },
+        { label: "AI 编写创新方案", action: () => onai({ quote: text, lb, prompt: "请基于以上引文的核心思想与方法，结合现代应用场景，编写一份结构清晰、可落地的创新方案。", autoSend: true }) },
+      );
+    }
     if (items.length) menu = { x: e.clientX, y: e.clientY, items };
+  }
+
+  export function getText() {
+    if (!vol?.lines) return "";
+    return vol.lines.map((l) => l.parts.map((p) => p.t).join("")).join("\n");
   }
 
   /** A click on the source link of a clipping goes to the place it came from. */
@@ -409,18 +413,31 @@
             zimLink.dataset.src = url;
             return onjump(parseSource(url));
           }
-          if (settings.zimExternal === "always") return openExternal(to.external_url);
-          externalPrompt = to.external_url;
+          onexternal?.(to.external_url);
         })
         .catch((err) => onaction?.({ type: "error", text: String(err) }));
       return;
     }
+    const extLink = e.target.closest?.("a.ext-link");
+    if (extLink?.dataset.extHref) {
+      e.preventDefault();
+      onexternal?.(extLink.dataset.extHref);
+      return;
+    }
     const a = e.target.closest?.("a.src");
-    if (!a) return;
-    e.preventDefault();
-    const to = parseSource(a.dataset.src);
-    if (!to || !onjump) return;
-    Promise.resolve(onjump(to)).catch((err) => onaction?.({ type: "error", text: String(err) }));
+    if (a) {
+      e.preventDefault();
+      const to = parseSource(a.dataset.src);
+      if (!to || !onjump) return;
+      Promise.resolve(onjump(to)).catch((err) => onaction?.({ type: "error", text: String(err) }));
+      return;
+    }
+    const rawA = e.target.closest?.("a[href]");
+    const rawHref = rawA?.getAttribute("href") || "";
+    if (/^https?:\/\//i.test(rawHref)) {
+      e.preventDefault();
+      onexternal?.(rawHref);
+    }
   }
 
   function chapterChange(e) {
@@ -496,22 +513,6 @@
         </div>
       {/if}
       {#if vol.attribution}<footer class="attribution">{vol.attribution}</footer>{/if}
-    </div>
-  </div>
-{/if}
-
-{#if externalPrompt}
-  <div class="external-backdrop" role="presentation" onmousedown={(e) => { if (e.target === e.currentTarget) externalPrompt = null; }}>
-    <div class="external-dialog" role="dialog" aria-modal="true" aria-label="打开外部链接">
-      <h2>打开外部链接？</h2>
-      <p>未在已关联的本地知识库中找到对应文章。是否在系统浏览器中打开？</p>
-      <p class="external-url">{externalPrompt}</p>
-      <div class="external-actions">
-        <button onclick={() => (externalPrompt = null)}>取消</button>
-        <button onclick={() => openExternal(externalPrompt)}>这次打开</button>
-        <button onclick={() => openExternal(externalPrompt, true)}>打开并不再询问</button>
-      </div>
-      <p class="muted">之后可在设置中改回每次询问。</p>
     </div>
   </div>
 {/if}
@@ -606,7 +607,7 @@
   .doc :global(p.p) { margin: 0.35em 0; }
   .doc :global(p.quote) { margin: 0.2em 0; padding: 0.1em 0 0.1em 14px; border-left: 3px solid var(--accent-soft); color: var(--muted); }
   .doc :global(a.src) { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
-  .doc :global(a.zim-link) { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .doc :global(a.zim-link), .doc :global(a.ext-link) { color: var(--accent); cursor: pointer; text-decoration: underline; }
   .doc :global(p.r-text-right) { text-align: right; }
   .doc :global(p.t-pre) { white-space: pre; line-height: 1.5; overflow-x: auto; font-size: 0.9em; }
   .doc :global(p.t-dharani) { color: var(--ink); }

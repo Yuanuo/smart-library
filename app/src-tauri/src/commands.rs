@@ -11,6 +11,7 @@
 //! building an index runs on its own thread and reports progress with events.
 
 use serde::{Deserialize, Serialize};
+use smart_library_core::ai_chat::AiChatStore;
 use smart_library_core::bookcase::Bookcase;
 use smart_library_core::folder::{self, FolderFilter, FolderLibrary};
 use smart_library_core::history::History;
@@ -63,10 +64,22 @@ pub struct Library {
     pub writable: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowState {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub maximized: bool,
+}
+
 pub struct AppState {
     config_dir: PathBuf,
     data_dir: PathBuf,
     workspace_file: PathBuf,
+    window_file: PathBuf,
+    window_state: Mutex<Option<WindowState>>,
     libraries: RwLock<Vec<Library>>,
     sources: RwLock<HashMap<String, Arc<Bookcase>>>,
     html: RwLock<HashMap<String, Arc<HtmlTree>>>,
@@ -90,6 +103,7 @@ pub struct AppState {
     marks: Marks,
     /// user properties of nodes (部类, 时域, 人物, 藏经, 典类)
     props: Props,
+    ai_chat: AiChatStore,
 }
 
 impl AppState {
@@ -97,8 +111,14 @@ impl AppState {
         let libraries = load_registry(&config_dir);
         smart_library_core::dynasty::set_user(&std::fs::read_to_string(config_dir.join("dynasties.txt")).unwrap_or_default());
         let data_dir_for_history = data_dir.join("history.db");
+        let window_file = data_dir.join("window.json");
+        let window_state = std::fs::read_to_string(&window_file)
+            .ok()
+            .and_then(|s| serde_json::from_str::<WindowState>(&s).ok());
         AppState {
             workspace_file: data_dir.join("workspace.json"),
+            window_file,
+            window_state: Mutex::new(window_state),
             config_dir,
             data_dir,
             libraries: RwLock::new(libraries),
@@ -116,10 +136,11 @@ impl AppState {
             history: History::open(&data_dir_for_history).unwrap_or_else(|_| History::memory().unwrap()),
             marks: Marks::open(&data_dir_for_history.with_file_name("marks.db")).unwrap_or_else(|_| Marks::memory().unwrap()),
             props: Props::open(&data_dir_for_history.with_file_name("props.db")).unwrap_or_else(|_| Props::memory().unwrap()),
+            ai_chat: AiChatStore::open(&data_dir_for_history.with_file_name("ai_chat.db")).unwrap_or_else(|_| AiChatStore::memory().unwrap()),
         }
     }
 
-    fn library(&self, id: &str) -> Result<Library, String> {
+    pub(crate) fn library(&self, id: &str) -> Result<Library, String> {
         self.libraries
             .read()
             .unwrap()
@@ -127,6 +148,44 @@ impl AppState {
             .find(|l| l.id == id)
             .cloned()
             .ok_or_else(|| format!("没有这个知识库：{}", id))
+    }
+
+    pub fn saved_window_state(&self) -> Option<WindowState> {
+        self.window_state.lock().unwrap().clone()
+    }
+
+    pub fn update_window_state(&self, x: i32, y: i32, width: u32, height: u32, maximized: bool) {
+        let mut guard = self.window_state.lock().unwrap();
+        if maximized {
+            if let Some(prev) = guard.as_mut() {
+                prev.maximized = true;
+            } else {
+                *guard = Some(WindowState { x, y, width, height, maximized: true });
+            }
+        } else if width >= 400 && height >= 300 {
+            *guard = Some(WindowState { x, y, width, height, maximized: false });
+        }
+    }
+
+    pub fn set_window_maximized(&self, maximized: bool) {
+        if let Some(prev) = self.window_state.lock().unwrap().as_mut() {
+            prev.maximized = maximized;
+        }
+    }
+
+    pub fn save_window_state(&self) {
+        let state = self.window_state.lock().unwrap().clone();
+        if let Some(ws) = state {
+            if let Some(dir) = self.window_file.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let tmp = self.window_file.with_extension("json.tmp");
+            if let Ok(bytes) = serde_json::to_vec(&ws) {
+                if std::fs::write(&tmp, bytes).is_ok() {
+                    let _ = std::fs::rename(&tmp, &self.window_file);
+                }
+            }
+        }
     }
 
     fn source(&self, path: &str) -> Result<Arc<Bookcase>, String> {
@@ -262,6 +321,7 @@ impl AppState {
         let _ = self.props.rekey(lib, from, to);
         let _ = self.marks.rekey(lib, from, to, title);
         let _ = self.history.rekey(lib, from, to, title);
+        let _ = self.ai_chat.rekey(lib, from, to, title);
         self.sidecar_sync();
         {
             let mut stamps = self.stamps.lock().unwrap();
@@ -828,6 +888,7 @@ pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<St
     let _ = state.history.remove_lib(&id);
     if own_lib {
         let _ = state.props.remove_lib(&id);
+        let _ = state.ai_chat.remove_lib(&id);
     }
     state.titles.write().unwrap().remove(&id);
     state.save_registry()?;
@@ -2219,9 +2280,8 @@ pub async fn resolve_zim_link(lib: String, path: String, href: String, state: St
     Ok(ZimLinkDto { lib: Some(target_lib.id), path: Some(path), lb, external_url: None })
 }
 
-#[tauri::command]
-pub async fn open_external_url(url: String) -> Result<(), String> {
-    let url = smart_library_core::zim::external_url(&url).ok_or("不支持的外部链接")?;
+fn open_external_url_sync(url: &str) -> Result<(), String> {
+    let url = smart_library_core::zim::external_url(url).ok_or("不支持的外部链接")?;
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -2234,6 +2294,239 @@ pub async fn open_external_url(url: String) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     { let _ = url; Err("当前系统暂不支持打开外部链接".into()) }
+}
+
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<(), String> {
+    open_external_url_sync(&url)
+}
+
+fn external_context_menu_script(ai_on: bool) -> String {
+    let ai_flag = if ai_on { "true" } else { "false" };
+    format!(
+        r#"(function() {{
+  if (window.__slExtMenuInstalled) return;
+  window.__slExtMenuInstalled = true;
+  const AI_ON = {ai_flag};
+  const clip = (s, n = 18) => s.length > n ? s.slice(0, n) + "…" : s;
+  const pageVol = () => ({{ title: document.title || location.href, url: location.href }});
+  const sendAction = (payload) => {{
+    try {{
+      location.href = "http://smartlib-action.localhost/?data=" + encodeURIComponent(JSON.stringify(payload));
+    }} catch (_) {{}}
+  }};
+  const copyStr = async (s) => {{
+    try {{
+      await navigator.clipboard.writeText(s);
+    }} catch (_) {{
+      try {{ document.execCommand("copy"); }} catch (_) {{}}
+    }}
+  }};
+
+  let host = null;
+  let shadow = null;
+  let box = null;
+
+  function ensureHost() {{
+    if (host && document.documentElement.contains(host)) return;
+    host = document.createElement("div");
+    host.id = "__sl_ext_ctx_host";
+    host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
+    shadow = host.attachShadow({{ mode: "open" }});
+    const style = document.createElement("style");
+    style.textContent = `
+      .menu {{
+        position: fixed;
+        min-width: 210px;
+        max-width: 320px;
+        padding: 5px;
+        border-radius: 8px;
+        font: 13px/1.4 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+        box-shadow: 0 8px 28px rgba(0,0,0,0.22);
+        pointer-events: auto;
+        user-select: none;
+        background: #ffffff;
+        color: #1f2328;
+        border: 1px solid rgba(0,0,0,0.12);
+      }}
+      @media (prefers-color-scheme: dark) {{
+        .menu {{
+          background: #25262b;
+          color: #e4e6eb;
+          border-color: rgba(255,255,255,0.14);
+        }}
+      }}
+      .item {{
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        padding: 6px 10px;
+        border-radius: 5px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }}
+      .item:hover:not(:disabled) {{
+        background: rgba(47, 117, 195, 0.14);
+        color: #2f75c3;
+      }}
+      @media (prefers-color-scheme: dark) {{
+        .item:hover:not(:disabled) {{
+          background: rgba(96, 165, 250, 0.18);
+          color: #60a5fa;
+        }}
+      }}
+      .item:disabled {{
+        opacity: 0.45;
+        cursor: default;
+      }}
+      .sep {{
+        height: 1px;
+        margin: 4px 6px;
+        background: rgba(128,128,128,0.22);
+      }}
+    `;
+    box = document.createElement("div");
+    box.className = "menu";
+    box.style.display = "none";
+    shadow.appendChild(style);
+    shadow.appendChild(box);
+    (document.documentElement || document.body).appendChild(host);
+  }}
+
+  function closeMenu() {{
+    if (box) box.style.display = "none";
+    if (host) host.style.pointerEvents = "none";
+  }}
+
+  window.addEventListener("mousedown", (e) => {{
+    if (e.target !== host) closeMenu();
+  }}, true);
+  window.addEventListener("keydown", (e) => {{
+    if (e.key === "Escape") closeMenu();
+  }}, true);
+  window.addEventListener("scroll", closeMenu, true);
+  window.addEventListener("blur", closeMenu);
+
+  window.addEventListener("contextmenu", (e) => {{
+    e.preventDefault();
+    e.stopPropagation();
+    ensureHost();
+    const text = (window.getSelection()?.toString() || "").trim();
+    const items = [];
+    if (text) {{
+      const q = clip(text);
+      items.push({{ label: "复制文字", action: () => copyStr(text) }});
+      items.push("sep");
+      items.push({{ label: "全文检索：" + q, action: () => sendAction({{ type: "search", text }}) }});
+      items.push({{ label: "全文检索（精确检索）：" + q, action: () => sendAction({{ type: "phrase", text }}) }});
+      items.push({{ label: "快捷检索（经名、作译者等）：" + q, action: () => sendAction({{ type: "quick", text }}) }});
+      items.push({{ label: "页内查找：" + q, action: () => window.find && window.find(text, false, false, true) }});
+      items.push("sep");
+      items.push({{ label: "加入笔记…", action: () => sendAction({{ type: "note", text, vol: pageVol() }}) }});
+      items.push({{ label: "发送到今日记", action: () => sendAction({{ type: "diary", text, vol: pageVol() }}) }});
+      items.push({{ label: "追加到最近的笔记", action: () => sendAction({{ type: "note-last", text, vol: pageVol() }}) }});
+      if (AI_ON) {{
+        items.push("sep");
+        items.push({{ label: "发给 AI 助手", action: () => sendAction({{ type: "ai-external", text, vol: pageVol(), autoSend: false }}) }});
+        items.push({{ label: "AI 解释选中文字", action: () => sendAction({{ type: "ai-external", text, vol: pageVol(), prompt: "请用通俗准确的现代汉语解释以上引文，并说明其核心背景与要点。", autoSend: true }}) }});
+      }}
+    }} else {{
+      items.push({{ label: "后退", action: () => history.back() }});
+      items.push({{ label: "前进", action: () => history.forward() }});
+      items.push({{ label: "刷新", action: () => location.reload() }});
+      items.push("sep");
+      items.push({{ label: "复制页面链接", action: () => copyStr(location.href) }});
+      items.push({{ label: "在系统浏览器中打开", action: () => sendAction({{ type: "open-system-browser", url: location.href }}) }});
+    }}
+
+    box.innerHTML = "";
+    for (const it of items) {{
+      if (it === "sep") {{
+        const s = document.createElement("div");
+        s.className = "sep";
+        box.appendChild(s);
+      }} else {{
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "item";
+        b.textContent = it.label;
+        b.onclick = (ev) => {{
+          ev.stopPropagation();
+          closeMenu();
+          it.action();
+        }};
+        box.appendChild(b);
+      }}
+    }}
+    host.style.pointerEvents = "auto";
+    box.style.display = "block";
+    box.style.left = "0px";
+    box.style.top = "0px";
+    const r = box.getBoundingClientRect();
+    const x = Math.max(6, Math.min(e.clientX, window.innerWidth - r.width - 8));
+    const y = Math.max(6, Math.min(e.clientY, window.innerHeight - r.height - 8));
+    box.style.left = x + "px";
+    box.style.top = y + "px";
+  }}, true);
+}})();"#
+    )
+}
+
+static EXT_WIN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn create_external_window(app: &AppHandle, parsed: tauri::Url, ai_on: bool) -> Result<(), String> {
+    let seq = EXT_WIN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let label = format!("ext-{seq}");
+    let title = parsed.host_str().unwrap_or("外部链接").to_string();
+    let app_for_nav = app.clone();
+    let app_for_new = app.clone();
+    tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::External(parsed))
+        .title(&title)
+        .inner_size(1100.0, 780.0)
+        .min_inner_size(640.0, 480.0)
+        .initialization_script(&external_context_menu_script(ai_on))
+        .on_navigation(move |nav_url| {
+            if nav_url.scheme() == "http" && nav_url.host_str() == Some("smartlib-action.localhost") {
+                if let Some((_, data)) = nav_url.query_pairs().find(|(k, _)| k == "data") {
+                    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&data) {
+                        if payload.get("type").and_then(|v| v.as_str()) == Some("open-system-browser") {
+                            if let Some(u) = payload.get("url").and_then(|v| v.as_str()) {
+                                let _ = open_external_url_sync(u);
+                            }
+                        } else {
+                            let _ = app_for_nav.emit_to("main", "popout-action", payload);
+                        }
+                    }
+                }
+                return false;
+            }
+            true
+        })
+        .on_new_window(move |new_url, _features| {
+            if smart_library_core::zim::external_url(new_url.as_str()).is_some() {
+                let app_handle = app_for_new.clone();
+                std::thread::spawn(move || {
+                    let _ = create_external_window(&app_handle, new_url, ai_on);
+                });
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_external_window(url: String, ai_on: Option<bool>, app: AppHandle) -> Result<(), String> {
+    let valid = smart_library_core::zim::external_url(&url).ok_or("不支持的外部链接")?;
+    let parsed = tauri::Url::parse(valid.as_str()).map_err(|e| e.to_string())?;
+    create_external_window(&app, parsed, ai_on.unwrap_or(false))
 }
 
 /// Which document a request means (the first readable volume of a book when
@@ -3960,6 +4253,321 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
     )?;
     state.titles.write().unwrap().remove(&lib.id);
     Ok(ImportDone { status, title, notes })
+}
+
+// ------------------------------------------------------------ AI assistant
+
+#[derive(Serialize)]
+pub struct AiDocDto {
+    pub lib: String,
+    pub lib_title: String,
+    pub book_id: Option<String>,
+    pub path: String,
+    pub title: String,
+    pub content_type: String,
+    pub text: String,
+}
+
+#[derive(Serialize)]
+pub struct AiSessionDto {
+    pub id: i64,
+    pub scope_kind: String,
+    pub lib: String,
+    pub path: String,
+    pub book_id: Option<String>,
+    pub title: String,
+    pub doc_title: String,
+    pub messages_json: String,
+    pub refs_json: String,
+    pub updated: i64,
+}
+
+#[derive(Serialize)]
+pub struct AiSessionSummaryDto {
+    pub id: i64,
+    pub scope_kind: String,
+    pub lib: String,
+    pub path: String,
+    pub book_id: Option<String>,
+    pub title: String,
+    pub doc_title: String,
+    pub updated: i64,
+}
+
+#[tauri::command]
+pub async fn ai_stream(
+    req_id: String,
+    config: crate::ai::AiModelConfig,
+    system: Option<String>,
+    messages: Vec<crate::ai::AiMessage>,
+    reasoning_effort: Option<String>,
+    tools: Option<Vec<serde_json::Value>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    crate::ai::stream_chat(app, req_id, config, system, messages, reasoning_effort, tools).await
+}
+
+#[tauri::command]
+pub fn ai_tool_definitions() -> Vec<serde_json::Value> {
+    crate::ai_tools::tool_definitions()
+}
+
+#[tauri::command]
+pub async fn ai_exec_tool(
+    name: String,
+    arguments: String,
+    state: State<'_, AppState>,
+) -> Result<crate::ai_tools::AiToolResult, String> {
+    Ok(crate::ai_tools::exec_tool(&name, &arguments, state).await)
+}
+
+#[tauri::command]
+pub fn ai_abort(req_id: String) {
+    crate::ai::abort(&req_id);
+}
+
+#[tauri::command]
+pub async fn ai_test(config: crate::ai::AiModelConfig) -> Result<String, String> {
+    crate::ai::test_connection(config).await
+}
+
+#[tauri::command]
+pub async fn ai_fetch_models(
+    format: String,
+    base_url: String,
+    api_key: String,
+) -> Result<Vec<String>, String> {
+    crate::ai::fetch_models(format, base_url, api_key).await
+}
+
+#[tauri::command]
+pub async fn ai_summarize_title(
+    config: crate::ai::AiModelConfig,
+    user_text: String,
+    assistant_text: String,
+) -> Result<String, String> {
+    crate::ai::summarize_title(config, user_text, assistant_text).await
+}
+
+#[tauri::command]
+pub fn ai_mindmap_parse(input: String, fallback_title: Option<String>) -> Result<String, String> {
+    smart_library_core::mindmap::from_outline_or_json(&input, fallback_title.as_deref().unwrap_or("脑图"))
+}
+
+/// Read the plain text (or Markdown representation) of a document so it can be
+/// referenced in an AI conversation without modifying the document.
+#[tauri::command]
+pub async fn ai_doc_text(
+    lib: String,
+    book_id: Option<String>,
+    path: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<AiDocDto, String> {
+    let l = state.library(&lib)?;
+    if l.kind == "zim" {
+        let path = path.ok_or("没有指定文章")?;
+        let z = state.zim(&l)?;
+        let mut z = z.lock().unwrap();
+        let i = z.entry_index(&path).ok_or("ZIM 文章不存在")?;
+        let title = z.entries[i].title.clone();
+        let plain = z.article(i, None)?;
+        return Ok(AiDocDto {
+            lib: l.id,
+            lib_title: l.title,
+            book_id: None,
+            path,
+            title,
+            content_type: "html".into(),
+            text: plain.text.text,
+        });
+    }
+    if l.kind == "notes" {
+        let store = state.notes(&l)?;
+        let path = path.ok_or("没有指定笔记")?;
+        let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
+        let note = store.get(id)?.ok_or("笔记不存在")?;
+        let text = if note.content_type == smart_library_core::mindmap::TYPE {
+            smart_library_core::mindmap::to_markdown(&note.content)
+        } else if note.content_type == smart_library_core::whiteboard::TYPE {
+            smart_library_core::whiteboard::to_markdown(&note.content)
+        } else {
+            note.content.clone()
+        };
+        return Ok(AiDocDto {
+            lib: l.id,
+            lib_title: l.title,
+            book_id: None,
+            path,
+            title: note.title,
+            content_type: if note.content_type.is_empty() { "markdown".into() } else { note.content_type },
+            text,
+        });
+    }
+    if l.kind == "folder" {
+        let f = state.folder(&l)?;
+        let path = path.ok_or("没有指定文件")?;
+        let name = path.rsplit('/').next().unwrap_or(&path);
+        let title = folder::title_of(name).to_string();
+        let edit_kind = folder::EditKind::of(name);
+        if matches!(edit_kind, Some(folder::EditKind::MindMap) | Some(folder::EditKind::Whiteboard)) {
+            let (raw, _) = f.read_edit(&path)?;
+            let text = if edit_kind == Some(folder::EditKind::MindMap) {
+                smart_library_core::mindmap::to_markdown(&raw)
+            } else {
+                smart_library_core::whiteboard::to_markdown(&raw)
+            };
+            return Ok(AiDocDto {
+                lib: l.id,
+                lib_title: l.title,
+                book_id: None,
+                path,
+                title,
+                content_type: edit_kind.unwrap().content_type().into(),
+                text,
+            });
+        }
+        let plain = f.article(&path, None)?;
+        return Ok(AiDocDto {
+            lib: l.id,
+            lib_title: l.title,
+            book_id: None,
+            path,
+            title,
+            content_type: "text".into(),
+            text: plain.text.text,
+        });
+    }
+    let bc = state.bookcase_of(&l)?;
+    if l.kind == "html" {
+        let t = state.html_tree(&l)?;
+        let path = path.ok_or("没有指定文章")?;
+        let leaf = t.leaf(&path).ok_or_else(|| format!("目录里没有这篇文章：{}", path))?;
+        let plain = bc.article(&path, None)?;
+        return Ok(AiDocDto {
+            lib: l.id,
+            lib_title: l.title,
+            book_id: None,
+            path,
+            title: leaf.title.clone(),
+            content_type: "html".into(),
+            text: plain.text.text,
+        });
+    }
+    let book_id = book_id.ok_or("没有指定经号")?;
+    let book = bc.book(&book_id).ok_or_else(|| format!("没有这部经：{}", book_id))?;
+    let vols = bc.volumes(&book_id);
+    let vol = match &path {
+        Some(p) if !p.is_empty() => vols.iter().find(|v| &v.path == p),
+        _ => vols.iter().find(|v| v.exists),
+    }
+    .ok_or_else(|| format!("{} 没有可读的卷", book_id))?;
+    let vt = bc.volume_text(&vol.path)?;
+    let full_title = if vol.label.is_empty() {
+        book.title.clone()
+    } else {
+        format!("{} {}", book.title, vol.label)
+    };
+    Ok(AiDocDto {
+        lib: l.id,
+        lib_title: l.title,
+        book_id: Some(book_id),
+        path: vol.path.clone(),
+        title: full_title,
+        content_type: "cbeta".into(),
+        text: vt.text,
+    })
+}
+
+fn to_session_dto(s: smart_library_core::ai_chat::AiSession) -> AiSessionDto {
+    AiSessionDto {
+        id: s.id,
+        scope_kind: s.scope_kind,
+        lib: s.lib,
+        path: s.path,
+        book_id: s.book_id,
+        title: s.title,
+        doc_title: s.doc_title,
+        messages_json: s.messages_json,
+        refs_json: s.refs_json,
+        updated: s.updated,
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn ai_session_save(
+    id: Option<i64>,
+    scope_kind: String,
+    lib: Option<String>,
+    path: Option<String>,
+    book_id: Option<String>,
+    title: String,
+    doc_title: Option<String>,
+    messages_json: String,
+    refs_json: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    state.ai_chat.save_session(
+        id,
+        &scope_kind,
+        lib.as_deref().unwrap_or(""),
+        path.as_deref().unwrap_or(""),
+        book_id.as_deref(),
+        &title,
+        doc_title.as_deref().unwrap_or(""),
+        &messages_json,
+        refs_json.as_deref().unwrap_or("[]"),
+    )
+}
+
+#[tauri::command]
+pub async fn ai_session_get(id: i64, state: State<'_, AppState>) -> Result<Option<AiSessionDto>, String> {
+    Ok(state.ai_chat.get_session(id)?.map(to_session_dto))
+}
+
+#[tauri::command]
+pub async fn ai_session_latest(lib: String, path: String, state: State<'_, AppState>) -> Result<Option<AiSessionDto>, String> {
+    Ok(state.ai_chat.latest_for_doc(&lib, &path)?.map(to_session_dto))
+}
+
+#[tauri::command]
+pub async fn ai_session_list(
+    lib: Option<String>,
+    path: Option<String>,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AiSessionSummaryDto>, String> {
+    let rows = state
+        .ai_chat
+        .list_sessions(lib.as_deref(), path.as_deref(), limit.unwrap_or(100).clamp(1, 500))?;
+    Ok(rows
+        .into_iter()
+        .map(|s| AiSessionSummaryDto {
+            id: s.id,
+            scope_kind: s.scope_kind,
+            lib: s.lib,
+            path: s.path,
+            book_id: s.book_id,
+            title: s.title,
+            doc_title: s.doc_title,
+            updated: s.updated,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn ai_session_delete(id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    state.ai_chat.delete_session(id)
+}
+
+#[tauri::command]
+pub async fn ai_session_rename(id: i64, title: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.ai_chat.rename_session(id, &title)
+}
+
+#[tauri::command]
+pub async fn ai_session_clear(state: State<'_, AppState>) -> Result<usize, String> {
+    state.ai_chat.clear()
 }
 
 #[cfg(test)]

@@ -13,6 +13,18 @@ export const FONTS = [
 ];
 
 const KEY = "sl.settings";
+export const DEFAULT_AI_PRESET = {
+  id: "default-openai",
+  name: "默认模型（OpenAI 兼容）",
+  format: "openai", // openai | anthropic
+  baseUrl: "https://api.deepseek.com/v1",
+  apiKey: "",
+  model: "deepseek-chat",
+  models: [],
+  effortByModel: {},
+  systemPrompt: "你是 Smart Library 知识库的 AI 助手，擅长经典文献研读、笔记撰写、创新方案构思、脑图大纲生成与白板绘图。",
+};
+
 const DEFAULTS = {
   theme: "auto", // auto | light | dark
   uiFont: "default",
@@ -23,21 +35,70 @@ const DEFAULTS = {
   readerSize: 19, // px
   readerLine: 2, // line height
   readerScript: "orig", // orig: as the text is | simp: shown in simplified characters
-  zimExternal: "ask", // ask | always
+  externalLink: "window", // window | ask | browser
   quickLimit: 200, // title quick search: results per batch
   dailyOn: true, // the sentence of the day
   dailySources: [], // its sources (search range items); none = every library
+  aiOn: false, // AI assistant master switch
+  aiActiveId: "default-openai", // currently selected model preset id
+  aiPresets: [{ ...DEFAULT_AI_PRESET }],
+  aiSaveMode: "ask", // ask | default
+  aiSaveLib: "", // default target library id
+  aiSavePath: "", // default folder/parent path
 };
 
 function load() {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || "{}") };
+    const parsed = JSON.parse(localStorage.getItem(KEY) || "{}");
+    const raw = { ...DEFAULTS, ...parsed };
+    if (!["window", "ask", "browser"].includes(raw.externalLink)) {
+      raw.externalLink = "window";
+    }
+    if (!Array.isArray(raw.aiPresets) || !raw.aiPresets.length) {
+      raw.aiPresets = [{ ...DEFAULT_AI_PRESET }];
+    } else {
+      raw.aiPresets = raw.aiPresets.map((p) => ({
+        ...DEFAULT_AI_PRESET,
+        ...p,
+        models: Array.isArray(p?.models) ? p.models.filter((m) => typeof m === "string" && m.trim()) : [],
+        effortByModel: p?.effortByModel && typeof p.effortByModel === "object" && !Array.isArray(p.effortByModel)
+          ? p.effortByModel
+          : {},
+      }));
+    }
+    if (!raw.aiPresets.some((p) => p.id === raw.aiActiveId)) {
+      raw.aiActiveId = raw.aiPresets[0].id;
+    }
+    return raw;
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULTS, aiPresets: [{ ...DEFAULT_AI_PRESET }] };
   }
 }
 
 export const settings = $state(load());
+
+/** The currently selected AI model preset. */
+export function activeAiPreset() {
+  const list = settings.aiPresets ?? [];
+  return list.find((p) => p.id === settings.aiActiveId) ?? list[0] ?? DEFAULT_AI_PRESET;
+}
+
+/** True when AI is enabled and the active preset has a URL and model name. */
+export function isAiReady() {
+  if (!settings.aiOn) return false;
+  const p = activeAiPreset();
+  return !!(p && p.baseUrl?.trim() && p.model?.trim());
+}
+
+/** Convert a preset to the backend `AiModelConfig` struct. */
+export function toBackendAiConfig(preset = activeAiPreset()) {
+  return {
+    format: preset?.format || "openai",
+    base_url: (preset?.baseUrl || "").trim(),
+    api_key: (preset?.apiKey || "").trim(),
+    model: (preset?.model || "").trim(),
+  };
+}
 
 function stack(kind, custom, fallback) {
   if (kind === "custom") return custom.trim() ? `"${custom.trim().replace(/"/g, "")}", ${fallback}` : null;

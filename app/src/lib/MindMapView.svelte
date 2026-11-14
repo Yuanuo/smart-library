@@ -10,7 +10,7 @@
   import TitleLink from "./TitleLink.svelte";
   import Icon from "./Icon.svelte";
 
-  let { vol, title = vol.title, lib, path, onjump = null, onlocate = null, ontag = null } = $props();
+  let { vol, title = vol.title, lib, path, onjump = null, onexternal = null, onlocate = null, ontag = null, onai = null, extra = null } = $props();
 
   let el = $state();
   let mind = null;
@@ -112,6 +112,46 @@
   const outline = (n, depth = 0) =>
     `${"  ".repeat(depth)}- ${(n.topic ?? "").replace(/\s+/g, " ")}\n` + (n.children ?? []).map((c) => outline(c, depth + 1)).join("");
 
+  export function getText() {
+    if (!mind) return "";
+    const data = JSON.parse(dataText());
+    const sel = mind.currentNode?.nodeObj?.topic;
+    const base = outline(data.nodeData);
+    return sel ? `当前选中节点：${sel}\n\n脑图大纲：\n${base}` : base;
+  }
+
+  export async function applyAi({ mode = "replace", text }) {
+    if (!mind) return;
+    const rawJson = await api.aiMindmapParse(text, title);
+    const parsed = JSON.parse(rawJson);
+    if (!parsed?.nodeData) throw new Error("未能解析出有效的脑图节点");
+    if (mode === "replace") {
+      mind.refresh(parsed);
+    } else {
+      const full = JSON.parse(dataText());
+      const targetId = mind.currentNode?.nodeObj?.id;
+      const findNode = (n, id) => {
+        if (n.id === id) return n;
+        for (const c of n.children ?? []) {
+          const found = findNode(c, id);
+          if (found) return found;
+        }
+        return null;
+      };
+      const parent = (targetId && findNode(full.nodeData, targetId)) || full.nodeData;
+      parent.children = parent.children || [];
+      const incomingRoot = parsed.nodeData;
+      const toAdd =
+        incomingRoot.children?.length && (incomingRoot.topic === parent.topic || incomingRoot.topic === title)
+          ? incomingRoot.children
+          : [incomingRoot];
+      parent.children.push(...toAdd);
+      mind.refresh(full);
+    }
+    changed();
+    await save();
+  }
+
   async function exportAs(kind) {
     try {
       const data = JSON.parse(dataText());
@@ -187,7 +227,23 @@
         toolBar: true,
         keypress: true,
         allowUndo: true,
-        contextMenu: { locale: zh_CN, extend: [{ name: "插入图片…", onclick: pickPicture }] },
+        contextMenu: {
+          locale: zh_CN,
+          extend: [
+            { name: "插入图片…", onclick: pickPicture },
+            ...(onai
+              ? [
+                  {
+                    name: "AI 扩充此节点…",
+                    onclick: () => {
+                      const topic = mind?.currentNode?.nodeObj?.topic || title;
+                      onai({ text: topic, prompt: `请围绕节点「${topic}」扩展生成 4～6 个下级分支与子节点（使用 Markdown 缩进列表格式）。` });
+                    },
+                  },
+                ]
+              : []),
+          ],
+        },
         theme: isDark() ? MindElixir.DARK_THEME : MindElixir.THEME,
         imageProxy: (url) => (url.startsWith("attach:") ? `${info.asset_prefix}${lib}/attachments/${url.slice(7)}` : url),
         // nothing copied inside the map: a picture on the clipboard goes to the selected node
@@ -260,14 +316,16 @@
     mind?.destroy?.();
   });
 
-  /** A node's link: to a place in a document, else nothing (no page of its own to go to). */
+  /** A node's link: to a place in a document, or an external URL. */
   function click(e) {
     const a = e.target.closest?.("a");
     if (!a) return;
     e.preventDefault();
     e.stopPropagation();
-    const to = parseSource(a.getAttribute("href") || "");
+    const raw = a.getAttribute("href") || "";
+    const to = parseSource(raw);
     if (to && onjump) Promise.resolve(onjump(to)).catch((err) => (error = String(err)));
+    else if (/^https?:\/\//i.test(raw)) onexternal?.(raw);
   }
 
   function key(e) {
@@ -288,6 +346,7 @@
     <span class="muted">{status}</span>
     <button onclick={exportMenu}>导出 ▾</button>
     {#if ontag}<button class="icon" onclick={ontag} title="为本篇加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
+    {@render extra?.()}
   </div>
   {#if error}<p class="error">{error}</p>{/if}
   <!-- svelte-ignore a11y_no_static_element_interactions -->

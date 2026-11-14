@@ -23,6 +23,7 @@
   import { fullPath } from "./lib/paths.js";
   import ClipDialog from "./lib/ClipDialog.svelte";
   import ExportDialog from "./lib/ExportDialog.svelte";
+  import AiPanel from "./lib/AiPanel.svelte";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { clipMarkdown, clipNode } from "./lib/clip.js";
   import { getLast, setLast } from "./lib/clipTarget.js";
@@ -140,6 +141,8 @@
       const t = getLast();
       if (!t) error = "还没有最近的笔记。";
       else doClip({ mode: "append", target: t, comment: "" }, { text: a.text, vol: v, lb: a.lb }).catch((e) => (error = String(e)));
+    } else if (a.type === "ai-external") {
+      handleAiRequest({ text: a.text, prompt: a.prompt, autoSend: a.autoSend, title: v.title || v.url });
     } else if (a.type === "error") {
       error = a.text;
     } else if (a.type === "quick") {
@@ -429,6 +432,73 @@
   let wsEl = $state();
   let libPanel = $state();
 
+  // ---- unified right AI assistant sidebar
+  const AI_MIN = 280;
+  let aiOpen = $state(false);
+  try {
+    aiOpen = localStorage.getItem("ai.open") === "1";
+  } catch {}
+  function setAiOpen(v) {
+    aiOpen = !!v;
+    try {
+      localStorage.setItem("ai.open", aiOpen ? "1" : "0");
+    } catch {}
+  }
+  let aiWidth = $state(380);
+  try {
+    aiWidth = Math.max(AI_MIN, Number(localStorage.getItem("ai.width")) || 380);
+  } catch {}
+  let aiDragging = $state(false);
+  let aiSeq = 0;
+  let aiIncoming = $state(null);
+  let aiSessionId = $state(null);
+
+  function handleAiRequest(req = {}) {
+    if (!settings.aiOn) return;
+    if (req.toggle && !req.text && !req.prompt) {
+      setAiOpen(!aiOpen);
+      return;
+    }
+    setAiOpen(true);
+    if (req.text || req.prompt) {
+      aiIncoming = {
+        nonce: ++aiSeq,
+        text: req.text || "",
+        prompt: req.prompt || "",
+        sourceDoc: req.sourceDoc || null,
+      };
+    }
+  }
+
+  function startAiDrag(e) {
+    e.preventDefault();
+    aiDragging = true;
+    const x0 = e.clientX;
+    const w0 = aiWidth;
+    const moveTo = (ev) => {
+      aiWidth = Math.round(Math.min(Math.max(AI_MIN, w0 - (ev.clientX - x0)), window.innerWidth * 0.65));
+    };
+    const stop = () => {
+      aiDragging = false;
+      window.removeEventListener("pointermove", moveTo);
+      window.removeEventListener("pointerup", stop);
+      try {
+        localStorage.setItem("ai.width", String(aiWidth));
+      } catch {}
+    };
+    window.addEventListener("pointermove", moveTo);
+    window.addEventListener("pointerup", stop);
+  }
+  function aiSplitterKey(e) {
+    const d = e.key === "ArrowLeft" ? 20 : e.key === "ArrowRight" ? -20 : 0;
+    if (!d) return;
+    e.preventDefault();
+    aiWidth = Math.max(AI_MIN, aiWidth + d);
+    try {
+      localStorage.setItem("ai.width", String(aiWidth));
+    } catch {}
+  }
+
   // width of the tree panel: drag the splitter, kept in local storage
   const SIDE_MIN = 180;
   let sideWidth = $state(300);
@@ -557,6 +627,13 @@
         else openMark(e.payload.item);
       }),
       listen("panel-ready", () => sendDoc()),
+      listen("ai-note-created", async (e) => {
+        await refresh();
+        if (e.payload?.lib && e.payload?.id) {
+          await libPanel?.showNew(e.payload, false);
+        }
+        api.prepareTitles().catch(() => {});
+      }),
     ];
     const un1 = api.onIndexProgress((p) => (progress[p.lib] = p));
     const un2 = api.onIndexDone((d) => {
@@ -580,7 +657,20 @@
   $effect(() => {
     if (wsEl && st && !wsReady) {
       wsReady = true;
-      workspace.init(wsEl, { libraries: st.libraries, onlocate: locate, onaction: readerAction, oncopypath: copyTabPath, ontreepath: (d) => libPanel?.treePath(d) }).catch((e) => (error = String(e)));
+      workspace.init(wsEl, {
+        libraries: st.libraries,
+        onlocate: locate,
+        onaction: readerAction,
+        onai: handleAiRequest,
+        onaidock: (payload) => {
+          setAiOpen(true);
+          if (payload?.sessionId) {
+            aiIncoming = { nonce: ++aiSeq, sessionId: payload.sessionId };
+          }
+        },
+        oncopypath: copyTabPath,
+        ontreepath: (d) => libPanel?.treePath(d),
+      }).catch((e) => (error = String(e)));
     }
   });
 
@@ -678,6 +768,9 @@
           <button class="icon" onclick={openSearch} title="全文搜索（Ctrl+H）" aria-label="全文搜索"><Icon name="search" size={18} /></button>
           <button class="icon" onclick={openMarks} title="收藏与标签（Ctrl+B）" aria-label="收藏与标签"><Icon name="bookmark" size={18} /></button>
           <button class="icon" onclick={openRecent} title="最近打开（Ctrl+E）" aria-label="最近打开"><Icon name="clock" size={18} /></button>
+          {#if settings.aiOn}
+            <button class="icon" class:on={aiOpen} onclick={() => setAiOpen(!aiOpen)} title="打开 / 收起右侧 AI 助手栏" aria-label="AI 助手"><Icon name="sparkles" size={18} /></button>
+          {/if}
         </span>
       </div>
       <div class="tree">
@@ -724,6 +817,32 @@
       aria-valuenow={sideWidth} tabindex="0" onpointerdown={startDrag} onkeydown={splitterKey}
       ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
     <main class="content" bind:this={wsEl}></main>
+    {#if settings.aiOn && aiOpen}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+      <div class="splitter ai-splitter" class:dragging={aiDragging} role="separator" aria-orientation="vertical" aria-label="调整 AI 助手宽度"
+        aria-valuenow={aiWidth} tabindex="0" onpointerdown={startAiDrag} onkeydown={aiSplitterKey}
+        ondblclick={() => (aiWidth = 380)} title="拖动调整宽度，双击还原"></div>
+      <div class="ai-dock" style="width: {aiWidth}px">
+        <AiPanel
+          scopeKind="unified"
+          doc={workspace.ws.activeDoc}
+          searchContext={workspace.ws.activeSearch}
+          incoming={aiIncoming}
+          onEditDoc={workspace.ws.activeDoc?.writable ? workspace.ws.activeDoc.editDoc : null}
+          onOpenDoc={(req) => workspace.openVolume(req).catch((e) => (error = String(e)))}
+          onLibraryChanged={(lib, path) => {
+            refresh();
+            if (lib) libPanel?.reloadNode?.(lib, "");
+            if (lib && path) workspace.refreshDocument(lib, path);
+          }}
+          onSessionChange={({ sessionId }) => (aiSessionId = sessionId)}
+          onPopout={() => {
+            setAiOpen(false);
+            workspace.openAiWindow({ sessionId: aiSessionId });
+          }}
+          onClose={() => setAiOpen(false)} />
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -817,6 +936,7 @@
     border: none; background: none; padding: 0; color: var(--accent); border-radius: 6px; font-size: 16px;
   }
   .icon:hover { background: var(--accent-soft); }
+  .icon.on { background: var(--accent-soft); }
   .icon { position: relative; }
   .badge {
     position: absolute; top: -2px; right: -4px; min-width: 14px; padding: 0 3px; border-radius: 7px;
@@ -868,4 +988,7 @@
   }
   .tree { flex: 1; overflow: auto; font-size: 15px; }
   .content { flex: 1; min-width: 0; min-height: 0; position: relative; }
+  .ai-splitter { border-right: none; border-left: 1px solid var(--line); }
+  .ai-dock { flex: none; height: 100%; min-height: 0; display: flex; flex-direction: column; }
+  .ai-dock > :global(*) { flex: 1; min-height: 0; }
 </style>
