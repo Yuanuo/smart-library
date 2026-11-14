@@ -17,11 +17,11 @@ pub fn decode_auto(bytes: &[u8]) -> String {
 }
 
 fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {
-    let units = bytes.chunks_exact(2).map(|c| {
+    let units = bytes.as_chunks::<2>().0.iter().map(|&c| {
         if little_endian {
-            u16::from_le_bytes([c[0], c[1]])
+            u16::from_le_bytes(c)
         } else {
-            u16::from_be_bytes([c[0], c[1]])
+            u16::from_be_bytes(c)
         }
     });
     char::decode_utf16(units)

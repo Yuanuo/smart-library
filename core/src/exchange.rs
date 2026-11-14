@@ -325,9 +325,12 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+pub type KmindConverted = (String, Pictures, Vec<(String, String)>);
+pub type AttachFn<'a> = dyn FnMut(&str, Vec<u8>) -> Result<(), String> + 'a;
+
 /// A KeepMinding / KityMinder file (`.kmind` of the old program) as the data of a Mind-Elixir
 /// map, and the pictures (embedded as base64) it had.
-pub fn kmind_to_mindmap(text: &str) -> Result<(String, Pictures, Vec<(String, String)>), String> {
+pub fn kmind_to_mindmap(text: &str) -> Result<KmindConverted, String> {
     struct Ctx {
         next: u64,
         pictures: Pictures,
@@ -642,7 +645,7 @@ pub fn import_into(
     pkg: &mut Package,
     parent: Option<i64>,
     wrap: bool,
-    attach: &mut dyn FnMut(&str, Vec<u8>) -> Result<(), String>,
+    attach: &mut AttachFn<'_>,
     props: &mut dyn FnMut(i64, &Dims),
 ) -> Result<usize, String> {
     for name in pkg.names() {
@@ -691,7 +694,7 @@ fn import_nodes(
     parent: Option<i64>,
     nodes: &[Value],
     n: &mut usize,
-    attach: &mut dyn FnMut(&str, Vec<u8>) -> Result<(), String>,
+    attach: &mut AttachFn<'_>,
     props: &mut dyn FnMut(i64, &Dims),
 ) -> Result<(), String> {
     for node in nodes {

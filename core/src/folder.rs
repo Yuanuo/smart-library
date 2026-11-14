@@ -59,7 +59,7 @@ impl FolderFilter {
 
     fn accepts(&self, name: &str, size: u64) -> bool {
         let ext = ext_of(name);
-        self.exts.iter().any(|e| *e == ext) && (self.max_mb == 0 || size <= self.max_mb * 1024 * 1024)
+        self.exts.contains(&ext) && (self.max_mb == 0 || size <= self.max_mb * 1024 * 1024)
     }
 }
 
@@ -1252,7 +1252,7 @@ mod tests {
         assert!(lib.rename("sub/读书笔记.md", "笔记 2").is_err());
         assert!(lib.rename("sub/读书笔记.md", "a/b").is_err());
         assert_eq!(lib.rename("sub/读书笔记.md", "读书笔记").unwrap(), "sub/读书笔记.md");
-        assert_eq!(lib.rename("sub/读书笔记.md", "读书笔记".to_uppercase().as_str()).is_ok(), true);
+        assert!(lib.rename("sub/读书笔记.md", "读书笔记".to_uppercase().as_str()).is_ok());
 
         // delete moves to the trash inside .smart-library, which the tree does not show
         lib.delete(&m).unwrap();

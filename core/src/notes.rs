@@ -127,10 +127,11 @@ impl NotesStore {
 
     /// Count the pictures again from the notes (what each name is referred to by).
     pub fn recount(&self) -> Result<(), String> {
-        let c = self.conn.lock().unwrap();
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.savepoint().map_err(err)?;
         let mut counts: HashMap<String, i64> = HashMap::new();
         {
-            let mut st = c.prepare("SELECT content FROM notes").map_err(err)?;
+            let mut st = tx.prepare("SELECT content FROM notes").map_err(err)?;
             let rows = st.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
             for content in rows {
                 for n in crate::attach::refs(&content.map_err(err)?) {
@@ -139,17 +140,17 @@ impl NotesStore {
             }
         }
         let t = now();
-        c.execute("UPDATE attach_refs SET refs = 0", []).map_err(err)?;
+        tx.execute("UPDATE attach_refs SET refs = 0", []).map_err(err)?;
         for (n, k) in &counts {
-            c.execute(
+            tx.execute(
                 "INSERT INTO attach_refs (name, refs, zero_since) VALUES (?1, ?2, NULL)
                  ON CONFLICT(name) DO UPDATE SET refs = ?2, zero_since = NULL",
                 params![n, k],
             )
             .map_err(err)?;
         }
-        c.execute("UPDATE attach_refs SET zero_since = ?1 WHERE refs < 1 AND zero_since IS NULL", params![t]).map_err(err)?;
-        Ok(())
+        tx.execute("UPDATE attach_refs SET zero_since = ?1 WHERE refs < 1 AND zero_since IS NULL", params![t]).map_err(err)?;
+        tx.commit().map_err(err)
     }
 
     /// A picture was stored but no note refers to it yet: it starts its 24 hours.
@@ -163,19 +164,21 @@ impl NotesStore {
     /// returned (the caller deletes the files). Pictures in `on_disk` that have no record start
     /// their time now.
     pub fn sweep_pictures(&self, older_than: i64, on_disk: &[String]) -> Result<Vec<String>, String> {
-        let c = self.conn.lock().unwrap();
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.savepoint().map_err(err)?;
         let t = now();
         for n in on_disk {
-            c.execute("INSERT OR IGNORE INTO attach_refs (name, refs, zero_since) VALUES (?1, 0, ?2)", params![n, t]).map_err(err)?;
+            tx.execute("INSERT OR IGNORE INTO attach_refs (name, refs, zero_since) VALUES (?1, 0, ?2)", params![n, t]).map_err(err)?;
         }
         let gone: Vec<String> = {
-            let mut st = c.prepare("SELECT name FROM attach_refs WHERE refs < 1 AND COALESCE(zero_since, 0) <= ?1").map_err(err)?;
+            let mut st = tx.prepare("SELECT name FROM attach_refs WHERE refs < 1 AND COALESCE(zero_since, 0) <= ?1").map_err(err)?;
             let rows = st.query_map(params![t - older_than], |r| r.get::<_, String>(0)).map_err(err)?;
             rows.collect::<Result<_, _>>().map_err(err)?
         };
         for n in &gone {
-            c.execute("DELETE FROM attach_refs WHERE name = ?1", params![n]).map_err(err)?;
+            tx.execute("DELETE FROM attach_refs WHERE name = ?1", params![n]).map_err(err)?;
         }
+        tx.commit().map_err(err)?;
         Ok(gone)
     }
 
@@ -258,47 +261,50 @@ impl NotesStore {
         if title.is_empty() {
             return Err("标题不能为空".into());
         }
-        let c = self.conn.lock().unwrap();
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.savepoint().map_err(err)?;
         if let Some(p) = parent {
-            let ok: bool = c
+            let ok: bool = tx
                 .query_row("SELECT EXISTS(SELECT 1 FROM notes WHERE id = ?1)", params![p], |r| r.get(0))
                 .map_err(err)?;
             if !ok {
                 return Err("上级笔记不存在".into());
             }
         }
-        let pos: i64 = c
+        let pos: i64 = tx
             .query_row("SELECT COALESCE(MAX(position) + 1, 0) FROM notes WHERE parent_id IS ?1", params![parent], |r| r.get(0))
             .map_err(err)?;
         let t = now();
-        c.execute(
+        tx.execute(
             "INSERT INTO notes (parent_id, title, content, content_type, position, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
             params![parent, title, content, content_type, pos, t],
         )
         .map_err(err)?;
-        let id = c.last_insert_rowid(); // before `bump` writes another table
-        bump(&c, &crate::attach::refs(content), 1)?;
+        let id = tx.last_insert_rowid(); // before `bump` writes another table
+        bump(&tx, &crate::attach::refs(content), 1)?;
+        tx.commit().map_err(err)?;
         Ok(id)
     }
 
     pub fn update(&self, id: i64, title: Option<&str>, content: Option<&str>) -> Result<(), String> {
-        let c = self.conn.lock().unwrap();
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.savepoint().map_err(err)?;
         if let Some(t) = title {
             if t.trim().is_empty() {
                 return Err("标题不能为空".into());
             }
-            c.execute("UPDATE notes SET title = ?1, updated = ?2 WHERE id = ?3", params![t.trim(), now(), id]).map_err(err)?;
+            tx.execute("UPDATE notes SET title = ?1, updated = ?2 WHERE id = ?3", params![t.trim(), now(), id]).map_err(err)?;
         }
         if let Some(t) = content {
-            let old: Option<String> = c.query_row("SELECT content FROM notes WHERE id = ?1", params![id], |r| r.get(0)).ok();
+            let old: Option<String> = tx.query_row("SELECT content FROM notes WHERE id = ?1", params![id], |r| r.get(0)).ok();
             if let Some(old) = old {
                 let (before, after) = (crate::attach::refs(&old), crate::attach::refs(t));
-                bump(&c, &after.iter().filter(|n| !before.contains(n)).cloned().collect::<Vec<_>>(), 1)?;
-                bump(&c, &before.iter().filter(|n| !after.contains(n)).cloned().collect::<Vec<_>>(), -1)?;
+                bump(&tx, &after.iter().filter(|n| !before.contains(n)).cloned().collect::<Vec<_>>(), 1)?;
+                bump(&tx, &before.iter().filter(|n| !after.contains(n)).cloned().collect::<Vec<_>>(), -1)?;
             }
-            c.execute("UPDATE notes SET content = ?1, updated = ?2 WHERE id = ?3", params![t, now(), id]).map_err(err)?;
+            tx.execute("UPDATE notes SET content = ?1, updated = ?2 WHERE id = ?3", params![t, now(), id]).map_err(err)?;
         }
-        Ok(())
+        tx.commit().map_err(err)
     }
 
     /// Add text at the end of a note, after a blank line.
@@ -321,8 +327,9 @@ impl NotesStore {
 
     /// Delete a note with everything below it; the number of notes removed.
     pub fn delete(&self, id: i64) -> Result<usize, String> {
-        let c = self.conn.lock().unwrap();
-        let n: i64 = c
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.savepoint().map_err(err)?;
+        let n: i64 = tx
             .query_row(
                 "WITH RECURSIVE sub(id) AS (SELECT ?1 UNION ALL SELECT n.id FROM notes n JOIN sub ON n.parent_id = sub.id)
                  SELECT COUNT(*) FROM sub WHERE EXISTS(SELECT 1 FROM notes WHERE id = sub.id)",
@@ -331,7 +338,7 @@ impl NotesStore {
             )
             .map_err(err)?;
         let contents: Vec<String> = {
-            let mut st = c
+            let mut st = tx
                 .prepare(
                     "WITH RECURSIVE sub(id) AS (SELECT ?1 UNION ALL SELECT n.id FROM notes n JOIN sub ON n.parent_id = sub.id)
                      SELECT content FROM notes WHERE id IN (SELECT id FROM sub)",
@@ -341,22 +348,24 @@ impl NotesStore {
             rows.collect::<Result<_, _>>().map_err(err)?
         };
         for content in &contents {
-            bump(&c, &crate::attach::refs(content), -1)?;
+            bump(&tx, &crate::attach::refs(content), -1)?;
         }
-        c.execute("DELETE FROM notes WHERE id = ?1", params![id]).map_err(err)?;
+        tx.execute("DELETE FROM notes WHERE id = ?1", params![id]).map_err(err)?;
+        tx.commit().map_err(err)?;
         Ok(n as usize)
     }
 
     /// Move a note below `new_parent` at `index` among its children.
     pub fn move_to(&self, id: i64, new_parent: Option<i64>, index: usize) -> Result<(), String> {
-        let c = self.conn.lock().unwrap();
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.savepoint().map_err(err)?;
         if let Some(mut p) = new_parent {
             // not into itself or its own descendants
             loop {
                 if p == id {
                     return Err("不能移动到自己里面".into());
                 }
-                match c.query_row("SELECT parent_id FROM notes WHERE id = ?1", params![p], |r| r.get::<_, Option<i64>>(0)).optional().map_err(err)? {
+                match tx.query_row("SELECT parent_id FROM notes WHERE id = ?1", params![p], |r| r.get::<_, Option<i64>>(0)).optional().map_err(err)? {
                     Some(Some(up)) => p = up,
                     Some(None) => break,
                     None => return Err("目标笔记不存在".into()),
@@ -364,18 +373,18 @@ impl NotesStore {
             }
         }
         let mut ids: Vec<i64> = {
-            let mut st = c
+            let mut st = tx
                 .prepare("SELECT id FROM notes WHERE parent_id IS ?1 AND id != ?2 ORDER BY position, id")
                 .map_err(err)?;
             let rows = st.query_map(params![new_parent, id], |r| r.get(0)).map_err(err)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(err)?
         };
         ids.insert(index.min(ids.len()), id);
-        c.execute("UPDATE notes SET parent_id = ?1 WHERE id = ?2", params![new_parent, id]).map_err(err)?;
+        tx.execute("UPDATE notes SET parent_id = ?1 WHERE id = ?2", params![new_parent, id]).map_err(err)?;
         for (pos, i) in ids.iter().enumerate() {
-            c.execute("UPDATE notes SET position = ?1 WHERE id = ?2", params![pos as i64, i]).map_err(err)?;
+            tx.execute("UPDATE notes SET position = ?1 WHERE id = ?2", params![pos as i64, i]).map_err(err)?;
         }
-        Ok(())
+        tx.commit().map_err(err)
     }
 
     /// A title for a new note below `parent`: `base 1`, `base 2`, … the first
@@ -653,5 +662,18 @@ mod tests {
         let b = s.create_typed(None, "白板 1", &crate::whiteboard::new_data(), crate::whiteboard::TYPE).unwrap();
         assert!(s.children(None).unwrap().iter().any(|n| n.board && n.id == b));
         assert!(s.append(b, "x").is_err());
+    }
+
+    #[test]
+    fn nested_savepoint_and_rollback_atomic() {
+        let pic = "00112233445566778899aabbccddeeff.png";
+        let s = NotesStore::memory().unwrap();
+        s.begin().unwrap();
+        let id = s.create(None, "事务内笔记", &format!("![](attach:{pic})")).unwrap();
+        assert!(s.get(id).unwrap().is_some());
+        assert_eq!(s.picture_refs().unwrap(), vec![(pic.into(), 1)]);
+        s.rollback();
+        assert!(s.get(id).unwrap().is_none());
+        assert!(s.picture_refs().unwrap().is_empty());
     }
 }

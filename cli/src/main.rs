@@ -733,7 +733,7 @@ fn cmd_volumes(bc: &Bookcase, prefix: &str, out: Option<&str>, every: usize, kee
                     // a paragraph that starts right at a line end is reported on the next line
                     let at_prev_end = |lb: &str, pos: usize| {
                         pos == 1
-                            && v.lines.iter().position(|l| l.lb.as_deref() == Some(lb)).map_or(false, |i| {
+                            && v.lines.iter().position(|l| l.lb.as_deref() == Some(lb)).is_some_and(|i| {
                                 i > 0
                                     && v.lines[i - 1].lb.as_deref() == Some(want_lb)
                                     && Some(v.lines[i].offset - v.lines[i - 1].offset + 1) == want_pos

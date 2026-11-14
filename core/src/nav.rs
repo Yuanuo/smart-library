@@ -114,7 +114,7 @@ pub fn clean_nav_title(text: &str) -> String {
     let mut result = String::new();
     for group in replaced.split('／') {
         let mut buf = String::new();
-        for tok in group.split(|c: char| c == ' ' || c == '(' || c == ')') {
+        for tok in group.split([' ', '(', ')']) {
             let first = match tok.chars().next() {
                 Some(c) => c,
                 None => continue,

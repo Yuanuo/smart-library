@@ -189,7 +189,7 @@ impl Bookcase {
         if !href.starts_with("XML/") {
             return None;
         }
-        let token = text.split(|c: char| c == ' ' || c == '　').next().unwrap_or("");
+        let token = text.split([' ', '　']).next().unwrap_or("");
         if let Some(book) = self.catalog.books.get(token) {
             return Some(Entry {
                 book_id: book.id.clone(),

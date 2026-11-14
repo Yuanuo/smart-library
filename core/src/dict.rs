@@ -538,8 +538,7 @@ impl Dictionary {
             .replace("\\r", "")
             .replace("\\n", "<br>")
             .replace("\r\n", "<br>")
-            .replace('\r', "<br>")
-            .replace('\n', "<br>");
+            .replace(['\r', '\n'], "<br>");
 
         if s.contains("又【") {
             s = insert_br_before_bracket(&s);
@@ -558,6 +557,8 @@ impl Dictionary {
         if self.has_extra() {
             s = self.embed_pics(&s);
         }
+
+        s = sanitize_dict_html(&s);
 
         format!(
             "<div class=\"dict-entry-block\" data-dict=\"{}|{}\">\
@@ -733,7 +734,7 @@ impl DictManager {
         };
 
         // Exact title matches first, preserving dictionary/entry order otherwise.
-        all_hits.sort_by(|a, b| b.score.cmp(&a.score));
+        all_hits.sort_by_key(|a| std::cmp::Reverse(a.score));
         let total_found = all_hits.len();
         let has_more = total_found > offset.saturating_add(limit);
         let items: Vec<DictSearchHit> = all_hits.into_iter().skip(offset).take(limit).collect();
@@ -923,6 +924,239 @@ fn insert_br_before_bracket(s: &str) -> String {
     out
 }
 
+const DICT_ALLOWED_TAGS: &[&str] = &[
+    "a", "b", "big", "blockquote", "br", "caption", "code", "dd", "div", "dl", "dt", "em", "font",
+    "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li", "mark", "ol", "p", "pre", "rp",
+    "rt", "ruby", "s", "small", "span", "strong", "sub", "sup", "table", "tbody", "td", "tfoot",
+    "th", "thead", "tr", "u", "ul",
+];
+
+const DICT_VOID_TAGS: &[&str] = &["br", "hr", "img"];
+
+const DICT_DROP_CONTENT_TAGS: &[&str] = &["script", "style", "iframe", "object", "embed", "svg", "math"];
+
+const DICT_STRIP_TAGS: &[&str] = &[
+    "applet", "audio", "base", "body", "button", "canvas", "form", "frame", "frameset", "head",
+    "html", "input", "link", "meta", "noscript", "option", "select", "source", "template",
+    "textarea", "title", "track", "video",
+];
+
+/// Sanitize dictionary HTML body from an allowlist of formatting tags and attributes.
+/// Non-HTML bracketed text such as `<>` or `<梵>` is escaped so it remains visible.
+fn sanitize_dict_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'<' {
+            let next = input[i..].find('<').map(|p| i + p).unwrap_or(bytes.len());
+            out.push_str(&input[i..next].replace('>', "&gt;"));
+            i = next;
+            continue;
+        }
+        let rest = &input[i..];
+        if rest.starts_with("<!--") {
+            i = rest.find("-->").map(|p| i + p + 3).unwrap_or(bytes.len());
+            continue;
+        }
+        let Some(end_rel) = find_tag_end(rest) else {
+            out.push_str("&lt;");
+            i += 1;
+            continue;
+        };
+        let raw_inner = &rest[1..end_rel];
+        let trimmed = raw_inner.trim();
+        if let Some(closing) = trimmed.strip_prefix('/') {
+            let name = closing.trim().to_ascii_lowercase();
+            if DICT_ALLOWED_TAGS.contains(&name.as_str()) && !DICT_VOID_TAGS.contains(&name.as_str()) {
+                out.push_str("</");
+                out.push_str(&name);
+                out.push('>');
+            } else if !DICT_DROP_CONTENT_TAGS.contains(&name.as_str())
+                && !DICT_STRIP_TAGS.contains(&name.as_str())
+            {
+                out.push_str("&lt;");
+                out.push_str(&escape_html_text(raw_inner));
+                out.push_str("&gt;");
+            }
+            i += end_rel + 1;
+            continue;
+        }
+
+        let body = trimmed.trim_end_matches('/').trim_end();
+        let (raw_name, attr_str) = match body.find(|c: char| c.is_whitespace()) {
+            Some(p) => (&body[..p], &body[p..]),
+            None => (body, ""),
+        };
+        let name = raw_name.to_ascii_lowercase();
+        let valid_name = !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric());
+        if !valid_name {
+            out.push_str("&lt;");
+            out.push_str(&escape_html_text(raw_inner));
+            out.push_str("&gt;");
+            i += end_rel + 1;
+            continue;
+        }
+
+        if DICT_DROP_CONTENT_TAGS.contains(&name.as_str()) {
+            let after_open = i + end_rel + 1;
+            if trimmed.ends_with('/') {
+                i = after_open;
+                continue;
+            }
+            let close_pat = format!("</{name}");
+            let lower_tail = input[after_open..].to_ascii_lowercase();
+            if let Some(cpos) = lower_tail.find(&close_pat) {
+                let close_start = after_open + cpos;
+                let close_end = input[close_start..]
+                    .find('>')
+                    .map(|p| close_start + p + 1)
+                    .unwrap_or(bytes.len());
+                i = close_end;
+            } else {
+                i = bytes.len();
+            }
+            continue;
+        }
+
+        if DICT_STRIP_TAGS.contains(&name.as_str()) {
+            i += end_rel + 1;
+            continue;
+        }
+
+        if !DICT_ALLOWED_TAGS.contains(&name.as_str()) {
+            out.push_str("&lt;");
+            out.push_str(&escape_html_text(raw_inner));
+            out.push_str("&gt;");
+            i += end_rel + 1;
+            continue;
+        }
+
+        out.push('<');
+        out.push_str(&name);
+        for (k, v) in parse_dict_attrs(attr_str) {
+            if is_safe_dict_attr(&name, &k, &v) {
+                out.push(' ');
+                out.push_str(&k);
+                out.push_str("=\"");
+                out.push_str(&escape_html_attr(&v));
+                out.push('"');
+            }
+        }
+        if DICT_VOID_TAGS.contains(&name.as_str()) && trimmed.ends_with('/') {
+            out.push_str(" />");
+        } else {
+            out.push('>');
+        }
+        i += end_rel + 1;
+    }
+    out
+}
+
+fn find_tag_end(rest: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    let mut quote: u8 = 0;
+    for (idx, &b) in bytes.iter().enumerate().skip(1) {
+        if quote != 0 {
+            if b == quote {
+                quote = 0;
+            }
+        } else if b == b'"' || b == b'\'' {
+            quote = b;
+        } else if b == b'>' {
+            return Some(idx);
+        } else if b == b'<' {
+            return None;
+        }
+    }
+    None
+}
+
+fn parse_dict_attrs(s: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] == b'/' {
+            break;
+        }
+        let start = i;
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'=' && bytes[i] != b'/' {
+            i += 1;
+        }
+        let key = s[start..i].to_ascii_lowercase();
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let val = if i < bytes.len() && bytes[i] == b'=' {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                let q = bytes[i];
+                i += 1;
+                let vstart = i;
+                while i < bytes.len() && bytes[i] != q {
+                    i += 1;
+                }
+                let v = s[vstart..i].to_string();
+                if i < bytes.len() {
+                    i += 1;
+                }
+                v
+            } else {
+                let vstart = i;
+                while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                s[vstart..i].to_string()
+            }
+        } else {
+            String::new()
+        };
+        if !key.is_empty() {
+            out.push((key, val));
+        }
+    }
+    out
+}
+
+fn is_safe_dict_attr(tag: &str, key: &str, val: &str) -> bool {
+    if key.starts_with("on") {
+        return false;
+    }
+    match (tag, key) {
+        (_, "class" | "title") => true,
+        ("a", "data-dict-id") => true,
+        ("a", "href") => {
+            let v = val.trim();
+            v == "#"
+                || v.len() >= 7 && v[..7].eq_ignore_ascii_case("http://")
+                || v.len() >= 8 && v[..8].eq_ignore_ascii_case("https://")
+        }
+        ("img", "src") => {
+            let v = val.trim().to_ascii_lowercase();
+            (v.starts_with("data:image/png;base64,")
+                || v.starts_with("data:image/jpeg;base64,")
+                || v.starts_with("data:image/jpg;base64,")
+                || v.starts_with("data:image/gif;base64,")
+                || v.starts_with("data:image/bmp;base64,"))
+                && v.split_once(";base64,")
+                    .is_some_and(|(_, b64)| b64.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=')))
+        }
+        ("img", "alt" | "width" | "height") => true,
+        ("font", "color" | "size") => !val.contains(':') && !val.contains('('),
+        ("td" | "th" | "tr" | "table" | "p" | "div", "colspan" | "rowspan" | "align" | "valign") => {
+            !val.contains(':') && !val.contains('(')
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1022,6 +1256,37 @@ mod tests {
         let detail = dict.read_entry_detail(exact[0].entry_id).unwrap();
         assert!(detail.text.contains("苦集灭道四谛"));
         assert!(detail.html.contains("测试词典"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sanitize_html_blocks_scripts_and_handlers() {
+        let dir = std::env::temp_dir().join(format!("sl_dict_xss_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let words_path = dir.join("安全测试.words");
+        build_synthetic_words(
+            &words_path,
+            0, // UTF-8
+            &[(
+                "测试<script>",
+                "`1`粗体`2`<SEEALSO>四谛</SEEALSO>&lt;script&gt;alert(1)&lt;/script&gt;<img src=x onerror=alert(1)><a href=\"javascript:evil()\" onclick=\"steal()\">链接</a><梵>",
+            )],
+        );
+
+        let dict = Dictionary::open(&words_path).unwrap();
+        let hits = dict.search("测试<script>", MatchType::TitleEquals, 10);
+        assert_eq!(hits.len(), 1);
+        let detail = dict.read_entry_detail(hits[0].entry_id).unwrap();
+        assert!(!detail.html.contains("<script"));
+        assert!(!detail.html.contains("alert(1)"));
+        assert!(!detail.html.contains("onerror"));
+        assert!(!detail.html.contains("onclick"));
+        assert!(!detail.html.contains("javascript:"));
+        assert!(detail.html.contains("<b>粗体</b>"));
+        assert!(detail.html.contains("class=\"dict-seealso\""));
+        assert!(detail.html.contains("&lt;梵&gt;"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

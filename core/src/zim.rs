@@ -95,8 +95,8 @@ impl Zim {
         let mut ptr = vec![0; count.checked_mul(8).ok_or("Too many entries")?];
         read_at(&mut file, paths_pos, &mut ptr)?;
         let mut entries = Vec::with_capacity(count);
-        for chunk in ptr.chunks_exact(8) {
-            let pos = u64le(chunk);
+        for chunk in ptr.as_chunks::<8>().0 {
+            let pos = u64::from_le_bytes(*chunk);
             if pos.checked_add(12).filter(|&v| v <= file_len).is_none() {
                 return Err("Invalid ZIM entry offset".into());
             }
@@ -144,7 +144,7 @@ impl Zim {
         }
         let mut ptr = vec![0; cluster_count.checked_mul(8).ok_or("Too many clusters")?];
         read_at(&mut file, clusters_pos, &mut ptr)?;
-        let clusters: Vec<u64> = ptr.chunks_exact(8).map(u64le).collect();
+        let clusters: Vec<u64> = ptr.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
         if clusters.iter().any(|&p| p >= file_len) {
             return Err("Invalid ZIM cluster offset".into());
         }

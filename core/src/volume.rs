@@ -721,7 +721,7 @@ impl<'a> Extractor<'a> {
                     .copied();
                 if self.html.is_some() {
                     let mut title = String::new();
-                    for t in ts.iter().filter(|t| pick.map_or(true, |p| !std::ptr::eq(**t, p))) {
+                    for t in ts.iter().filter(|t| pick.is_none_or(|p| !std::ptr::eq(**t, p))) {
                         let mut s = String::new();
                         self.display_text(t, &mut s);
                         if !s.trim().is_empty() {
@@ -731,7 +731,9 @@ impl<'a> Extractor<'a> {
                             title.push_str(&format!("{}: {}", t.attr("xml:lang").unwrap_or(""), s.trim()));
                         }
                     }
-                    self.html.as_mut().unwrap().open("span", &[("class", "tt"), ("title", &title)]);
+                    if let Some(h) = self.html.as_mut() {
+                        h.open("span", &[("class", "tt"), ("title", &title)]);
+                    }
                 }
                 if let Some(t) = pick {
                     self.children(t);

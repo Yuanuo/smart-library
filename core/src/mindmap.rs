@@ -100,7 +100,7 @@ fn strip_fences(raw: &str) -> &str {
 fn ensure_node_ids(n: &mut Value, seq: &mut usize, is_root: bool) {
     *seq += 1;
     let topic = n.get("topic").and_then(Value::as_str).unwrap_or("节点").to_string();
-    if n.get("id").and_then(Value::as_str).map_or(true, str::is_empty) {
+    if n.get("id").and_then(Value::as_str).is_none_or(str::is_empty) {
         n["id"] = json!(if is_root { "root".to_string() } else { new_id(&format!("{}-{}", topic, *seq)) });
     }
     if is_root {
@@ -136,7 +136,7 @@ pub fn from_outline_or_json(input: &str, fallback_title: &str) -> Result<String,
     if clean.starts_with('{') {
         let mut v: Value = serde_json::from_str(clean).map_err(|e| format!("脑图 JSON 解析失败：{}", e))?;
         let mut seq = 0usize;
-        if v.get("nodeData").map_or(false, Value::is_object) {
+        if v.get("nodeData").is_some_and(Value::is_object) {
             ensure_node_ids(&mut v["nodeData"], &mut seq, true);
             return Ok(v.to_string());
         } else if v.get("topic").is_some() {

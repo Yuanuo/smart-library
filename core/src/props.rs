@@ -166,10 +166,14 @@ impl Props {
 
     /// Replace the properties of a node (no dimensions: forget the node).
     pub fn set(&self, lib: &str, book_id: Option<&str>, path: &str, dims: &Dims) -> Result<(), String> {
-        let dims = clean(dims);
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction().map_err(err)?;
-        let book = book_id.unwrap_or("");
+        Self::set_in_tx(&tx, lib, book_id.unwrap_or(""), path, dims)?;
+        tx.commit().map_err(err)
+    }
+
+    fn set_in_tx(tx: &Connection, lib: &str, book: &str, path: &str, dims: &Dims) -> Result<(), String> {
+        let dims = clean(dims);
         tx.execute("DELETE FROM node_props WHERE lib = ?1 AND book_id = ?2 AND path = ?3", params![lib, book, path]).map_err(err)?;
         for (dim, values) in &dims {
             if values.is_empty() {
@@ -179,7 +183,7 @@ impl Props {
                 tx.execute("INSERT INTO node_props VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![lib, book, path, dim, i as i64, v]).map_err(err)?;
             }
         }
-        tx.commit().map_err(err)
+        Ok(())
     }
 
     /// The other names of a node (not inherited, not a facet: they are found by the title quick search).
@@ -243,40 +247,44 @@ impl Props {
 
     /// Forget the properties of notes that are gone (`path` = the note id).
     pub fn remove_nodes(&self, lib: &str, paths: &[String]) -> Result<(), String> {
-        let c = self.conn.lock().unwrap();
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
         for p in paths {
-            c.execute("DELETE FROM node_props WHERE lib = ?1 AND book_id = '' AND path = ?2", params![lib, p]).map_err(err)?;
-            c.execute("DELETE FROM node_alias WHERE lib = ?1 AND book_id = '' AND path = ?2", params![lib, p]).map_err(err)?;
+            tx.execute("DELETE FROM node_props WHERE lib = ?1 AND book_id = '' AND path = ?2", params![lib, p]).map_err(err)?;
+            tx.execute("DELETE FROM node_alias WHERE lib = ?1 AND book_id = '' AND path = ?2", params![lib, p]).map_err(err)?;
         }
-        Ok(())
+        tx.commit().map_err(err)
     }
 
     /// A document or folder was renamed or moved (`from`, `to`: paths in the
     /// library): its properties, and those of everything below it, follow.
     pub fn rekey(&self, lib: &str, from: &str, to: &str) -> Result<(), String> {
-        let c = self.conn.lock().unwrap();
-        c.execute(
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
+        tx.execute(
             "UPDATE OR REPLACE node_props SET path = ?3 || substr(path, ?4)
              WHERE lib = ?1 AND book_id = '' AND (path = ?2 OR path LIKE ?5 ESCAPE '\\')",
             params![lib, from, to, from.chars().count() as i64 + 1, like_below(from)],
         )
         .map_err(err)?;
-        c.execute(
+        tx.execute(
             "UPDATE OR REPLACE node_alias SET path = ?3 || substr(path, ?4)
              WHERE lib = ?1 AND book_id = '' AND (path = ?2 OR path LIKE ?5 ESCAPE '\\')",
             params![lib, from, to, from.chars().count() as i64 + 1, like_below(from)],
         )
         .map_err(err)?;
-        Ok(())
+        tx.commit().map_err(err)
     }
 
     /// Replace everything a library has by `entries` (book id, path, dims).
     pub fn replace_lib(&self, lib: &str, entries: &[(String, String, Dims)]) -> Result<(), String> {
-        self.remove_lib(lib)?;
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
+        tx.execute("DELETE FROM node_props WHERE lib = ?1", params![lib]).map_err(err)?;
         for (b, p, d) in entries {
-            self.set(lib, Some(b.as_str()).filter(|b| !b.is_empty()), p, d)?;
+            Self::set_in_tx(&tx, lib, b, p, d)?;
         }
-        Ok(())
+        tx.commit().map_err(err)
     }
 
     pub fn remove_lib(&self, lib: &str) -> Result<(), String> {

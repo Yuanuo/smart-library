@@ -142,15 +142,17 @@ impl Marks {
         if m.kind != "bookmark" && m.kind != "clip" {
             return Err("不是书签或收藏".into());
         }
-        let c = self.conn.lock().unwrap();
-        c.execute(
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
+        tx.execute(
             "INSERT INTO marks (kind, lib, path, book_id, lb, quote, note, doc_title, lib_title, author, created)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![m.kind, m.lib, m.path, m.book_id, m.lb, m.quote, m.note, m.doc_title, m.lib_title, m.author, now()],
         )
         .map_err(err)?;
-        let id = c.last_insert_rowid();
-        Self::put_tags(&c, id, tags)?;
+        let id = tx.last_insert_rowid();
+        Self::put_tags(&tx, id, tags)?;
+        tx.commit().map_err(err)?;
         Ok(id)
     }
 
@@ -164,8 +166,9 @@ impl Marks {
         lib_title: &str,
         tags: &[String],
     ) -> Result<(), String> {
-        let c = self.conn.lock().unwrap();
-        let found: Option<i64> = c
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
+        let found: Option<i64> = tx
             .query_row(
                 "SELECT id FROM marks WHERE kind = 'node' AND lib = ?1 AND COALESCE(book_id, '') = ?2 AND path = ?3",
                 params![lib, book_id.unwrap_or(""), path],
@@ -174,24 +177,24 @@ impl Marks {
             .ok();
         match (found, tags.is_empty()) {
             (Some(id), true) => {
-                c.execute("DELETE FROM marks WHERE id = ?1", params![id]).map_err(err)?;
+                tx.execute("DELETE FROM marks WHERE id = ?1", params![id]).map_err(err)?;
             }
             (Some(id), false) => {
-                c.execute("UPDATE marks SET doc_title = ?2, lib_title = ?3 WHERE id = ?1", params![id, doc_title, lib_title]).map_err(err)?;
-                Self::put_tags(&c, id, tags)?;
+                tx.execute("UPDATE marks SET doc_title = ?2, lib_title = ?3 WHERE id = ?1", params![id, doc_title, lib_title]).map_err(err)?;
+                Self::put_tags(&tx, id, tags)?;
             }
             (None, true) => {}
             (None, false) => {
-                c.execute(
+                tx.execute(
                     "INSERT INTO marks (kind, lib, path, book_id, doc_title, lib_title, created) VALUES ('node', ?1, ?2, ?3, ?4, ?5, ?6)",
                     params![lib, path, book_id, doc_title, lib_title, now()],
                 )
                 .map_err(err)?;
-                let id = c.last_insert_rowid();
-                Self::put_tags(&c, id, tags)?;
+                let id = tx.last_insert_rowid();
+                Self::put_tags(&tx, id, tags)?;
             }
         }
-        Ok(())
+        tx.commit().map_err(err)
     }
 
     pub fn node_tags(&self, lib: &str, book_id: Option<&str>, path: &str) -> Result<Vec<String>, String> {
@@ -207,14 +210,15 @@ impl Marks {
     }
 
     pub fn update(&self, id: i64, note: Option<&str>, tags: Option<&[String]>) -> Result<(), String> {
-        let c = self.conn.lock().unwrap();
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
         if let Some(n) = note {
-            c.execute("UPDATE marks SET note = ?1 WHERE id = ?2", params![n, id]).map_err(err)?;
+            tx.execute("UPDATE marks SET note = ?1 WHERE id = ?2", params![n, id]).map_err(err)?;
         }
         if let Some(t) = tags {
-            Self::put_tags(&c, id, t)?;
+            Self::put_tags(&tx, id, t)?;
         }
-        Ok(())
+        tx.commit().map_err(err)
     }
 
     pub fn delete(&self, id: i64) -> Result<(), String> {
@@ -255,7 +259,7 @@ impl Marks {
                    OR EXISTS (SELECT 1 FROM mark_tags t WHERE t.mark_id = m.id AND t.tag LIKE ? ESCAPE '\\'))",
             );
             let like = format!("%{}%", w.replace('%', "\\%").replace('_', "\\_"));
-            args.extend(std::iter::repeat(like).take(4));
+            args.extend(std::iter::repeat_n(like, 4));
         }
         sql.push_str(&format!(" ORDER BY m.created DESC, m.id DESC LIMIT {}", limit.max(1)));
         let mut st = c.prepare(&sql).map_err(err)?;
@@ -296,17 +300,18 @@ impl Marks {
     /// library): its marks, and those of everything below it, follow. `title`
     /// is the new title of the document itself.
     pub fn rekey(&self, lib: &str, from: &str, to: &str, title: Option<&str>) -> Result<(), String> {
-        let c = self.conn.lock().unwrap();
-        c.execute(
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
+        tx.execute(
             "UPDATE OR REPLACE marks SET path = ?3 || substr(path, ?4)
              WHERE lib = ?1 AND (path = ?2 OR path LIKE ?5 ESCAPE '\\')",
             params![lib, from, to, from.chars().count() as i64 + 1, crate::props::like_below(from)],
         )
         .map_err(err)?;
         if let Some(t) = title {
-            c.execute("UPDATE marks SET doc_title = ?3 WHERE lib = ?1 AND path = ?2", params![lib, to, t]).map_err(err)?;
+            tx.execute("UPDATE marks SET doc_title = ?3 WHERE lib = ?1 AND path = ?2", params![lib, to, t]).map_err(err)?;
         }
-        Ok(())
+        tx.commit().map_err(err)
     }
 
     /// Every mark of a library (with its tags).
@@ -324,16 +329,20 @@ impl Marks {
             .filter(|m| !have.contains(&(m.kind.clone(), m.path.clone(), m.lb.clone(), m.quote.clone())))
             .cloned()
             .collect();
-        let c = self.conn.lock().unwrap();
-        Self::insert_marks(&c, lib, &new)?;
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
+        Self::insert_marks(&tx, lib, &new)?;
+        tx.commit().map_err(err)?;
         Ok(new.len())
     }
 
     /// Replace all the marks of a library by `marks` (their ids are not kept).
     pub fn replace_lib(&self, lib: &str, marks: &[Mark]) -> Result<(), String> {
-        let c = self.conn.lock().unwrap();
-        c.execute("DELETE FROM marks WHERE lib = ?1", params![lib]).map_err(err)?;
-        Self::insert_marks(&c, lib, marks)
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction().map_err(err)?;
+        tx.execute("DELETE FROM marks WHERE lib = ?1", params![lib]).map_err(err)?;
+        Self::insert_marks(&tx, lib, marks)?;
+        tx.commit().map_err(err)
     }
 
     fn insert_marks(c: &Connection, lib: &str, marks: &[Mark]) -> Result<(), String> {
