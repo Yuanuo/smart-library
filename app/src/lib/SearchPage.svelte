@@ -10,10 +10,12 @@
   // scopes, tab, page, ran, autorun, rerun, focus }.
   import { onMount, untrack } from "svelte";
   import * as api from "./api.js";
+  import { settings } from "./settings.svelte.js";
   import FacetPane from "./FacetPane.svelte";
   import ContextMenu from "./ContextMenu.svelte";
+  import Icon from "./Icon.svelte";
 
-  let { s, onopen, onstate = null, ontitle = null, onpopout = null } = $props();
+  let { s, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onsearchresult = null } = $props();
 
   const DIMENSIONS = [
     ["/bulei", "部类"],
@@ -29,7 +31,7 @@
   let input = $state();
   let hitsEl = $state();
   let menu = $state(null);
-  let ran = { query: "", phrase: false }; // what the shown results were searched for
+  let ran = $state({ query: "", phrase: false }); // what the shown results were searched for
   let seq = 0;
 
   // ---------------------------------------------------------------- search
@@ -56,6 +58,12 @@
       s.page = r.page;
       s.ran = true;
       ran = { query: s.query.trim(), phrase: s.phrase };
+      onsearchresult?.({
+        query: ran.query || s.query,
+        hits: r.hits || [],
+        totalVolumes: r.total_volumes || 0,
+        totalBooks: r.total_books || 0,
+      });
       ontitle?.(title());
       if (hitsEl) hitsEl.scrollTop = 0;
     } catch (e) {
@@ -233,6 +241,11 @@
         title="整句连续出现（忽略标点）">精确</button>
     </span>
     <button class="primary" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
+    {#if settings.aiOn && onai}
+      <button type="button" class="ai-btn" onclick={() => onai({ toggle: true })} title="打开 / 收起右侧 AI 助手栏（可根据搜索结果编写创新方案）">
+        <Icon name="sparkles" size={16} /> AI 助手
+      </button>
+    {/if}
     {#if onpopout}
       <button type="button" class="link" onclick={onpopout} title="在新窗口打开这个搜索">新窗口</button>
     {/if}
@@ -363,6 +376,11 @@
   .seg button:first-child { border-radius: 6px 0 0 6px; }
   .seg button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
   .seg button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+  .ai-btn {
+    display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;
+    font-size: 13px; border-radius: 6px; flex: none;
+  }
+  .ai-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
   .main { flex: 1; display: flex; min-height: 0; }
   .side { flex: none; display: flex; flex-direction: column; background: var(--panel); min-height: 0; min-width: 0; }
   .split { flex: none; width: 5px; cursor: col-resize; border-left: 1px solid var(--line); background: var(--panel); touch-action: none; }

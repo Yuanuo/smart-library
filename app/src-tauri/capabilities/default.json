@@ -6,7 +6,8 @@
     "main",
     "reader-*",
     "panel-*",
-    "search-*"
+    "search-*",
+    "aichat-*"
   ],
   "permissions": [
     "core:default",

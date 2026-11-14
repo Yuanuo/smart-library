@@ -8,12 +8,14 @@
   import TitleLink from "./TitleLink.svelte";
   import Icon from "./Icon.svelte";
 
-  let { vol, title = vol.title, lib, path, onlocate = null, ontag = null } = $props();
+  let { vol, title = vol.title, lib, path, onlocate = null, ontag = null, extra = null } = $props();
 
   let el = $state();
   let error = $state("");
   let status = $state("");
   let root = null;
+  let boardApi = null;
+  let convertToExcalidrawElements = null;
   let timer = null;
   let dirty = false;
   let gone = false;
@@ -129,6 +131,7 @@
         ]);
         if (gone) return;
         serialize = ex.serializeAsJSON;
+        convertToExcalidrawElements = ex.convertToExcalidrawElements;
         let initial = null;
         try {
           const d = JSON.parse(start || "{}");
@@ -143,6 +146,7 @@
             "div",
             { style: { height: "100%", width: "100%", overflow: "clip" } },
             h(ex.Excalidraw, {
+              excalidrawAPI: (api) => (boardApi = api),
               initialData: initial,
               onChange: changed,
               theme: isDark() ? "dark" : "light",
@@ -165,6 +169,106 @@
     // let the last save go out before the component is taken down
     setTimeout(() => root?.unmount(), 0);
   });
+
+  export function getText() {
+    try {
+      const els = boardApi ? boardApi.getSceneElements() : JSON.parse(start || "{}").elements || [];
+      const texts = els
+        .filter((e) => !e.isDeleted && e.text)
+        .map((e) => `- ${e.text.replace(/\s+/g, " ").trim()}`);
+      return `# ${title}\n${texts.join("\n")}`;
+    } catch {
+      return "";
+    }
+  }
+
+  function parseWhiteboardSkeleton(input) {
+    const trimmed = input.trim();
+    const fenceMatch = trimmed.match(/```(?:excalidraw|json)?\s*([\s\S]*?)```/i);
+    const body = fenceMatch ? fenceMatch[1].trim() : trimmed;
+    const startIdx = body.indexOf("[");
+    const endIdx = body.lastIndexOf("]");
+    if (startIdx >= 0 && endIdx > startIdx) {
+      try {
+        const parsed = JSON.parse(body.slice(startIdx, endIdx + 1));
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      } catch {}
+    }
+    try {
+      const obj = JSON.parse(body);
+      if (Array.isArray(obj?.elements)) return obj.elements;
+    } catch {}
+    // Fallback: convert markdown list / lines into connected boxes
+    const lines = body
+      .split("\n")
+      .map((l) => l.replace(/^(?:#+\s*|[-*+]\s+|\d+\.\s+)/, "").trim())
+      .filter((l) => l && !l.startsWith("```"))
+      .slice(0, 16);
+    if (!lines.length) throw new Error("未识别到有效的白板图元或列表项");
+    const out = [];
+    const cols = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(lines.length))));
+    lines.forEach((line, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = 80 + col * 260;
+      const y = 80 + row * 130;
+      out.push({
+        type: "rectangle",
+        x,
+        y,
+        width: 200,
+        height: 72,
+        backgroundColor: row === 0 && col === 0 ? "#f5e8dc" : "#faf6ee",
+        strokeColor: "#8c3b2b",
+        fillStyle: "solid",
+        roundness: { type: 3 },
+        label: { text: line.slice(0, 48), fontSize: 16 },
+      });
+      if (i > 0) {
+        const prevCol = (i - 1) % cols;
+        const prevRow = Math.floor((i - 1) / cols);
+        if (prevRow === row) {
+          out.push({
+            type: "arrow",
+            x: 80 + prevCol * 260 + 205,
+            y: y + 36,
+            width: 50,
+            height: 0,
+            strokeColor: "#8c3b2b",
+          });
+        }
+      }
+    });
+    return out;
+  }
+
+  export async function applyAi({ mode = "append", text }) {
+    if (!boardApi) return;
+    const rawItems = parseWhiteboardSkeleton(text);
+    const hasFull = rawItems.every((e) => e.version != null && e.versionNonce != null);
+    let newEls = !hasFull && convertToExcalidrawElements ? convertToExcalidrawElements(rawItems) : rawItems;
+    const cur = boardApi.getSceneElements().filter((e) => !e.isDeleted);
+    let finalEls;
+    if (mode === "replace" || !cur.length) {
+      finalEls = newEls;
+    } else {
+      let maxY = 0;
+      for (const e of cur) {
+        const b = (e.y || 0) + (e.height || 0);
+        if (b > maxY) maxY = b;
+      }
+      let minY = Infinity;
+      for (const e of newEls) {
+        if ((e.y || 0) < minY) minY = e.y || 0;
+      }
+      const dy = (Number.isFinite(minY) ? maxY + 80 - minY : maxY + 80);
+      finalEls = [...cur, ...newEls.map((e) => ({ ...e, y: (e.y || 0) + dy }))];
+    }
+    boardApi.updateScene({ elements: finalEls });
+    boardApi.scrollToContent(newEls, { fitToContent: true });
+    changed(finalEls, boardApi.getAppState(), boardApi.getFiles());
+    await save();
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -174,6 +278,7 @@
     <span class="muted status">{status}</span>
     {#if error}<span class="error">{error}</span>{/if}
     <span class="grow"></span>
+    {@render extra?.()}
     {#if ontag}<button class="icon" onclick={ontag} title="为本篇加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
   </div>
   <div class="canvas" bind:this={el}></div>

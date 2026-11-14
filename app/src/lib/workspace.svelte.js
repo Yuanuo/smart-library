@@ -18,6 +18,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api.js";
 import ReaderPanel from "./ReaderPanel.svelte";
 import SearchPage from "./SearchPage.svelte";
+import AiPanel from "./AiPanel.svelte";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // 2: tabs are `<library>|<path>` (version 1 had CBETA paths only)
@@ -36,12 +37,17 @@ let searchStates = {}; // tab -> the reactive state of a search page
 let searchSeq = 0; // search tabs are `search:<n>`
 let lastSearchId = null; // the search tab used last (it receives "add to range")
 let searchWinSeq = 0;
+let aiChatStates = {}; // tab -> { sessionId, title }
+let aiChatSeq = 0; // ai chat tabs are `aichat:<n>`
+let aiChatWinSeq = 0;
 let infos = {}; // tab -> { title, lib, path, bookId, author } of its document
+let docStates = {}; // tab -> { lib, path, bookId, title, contentType, writable, getText, editDoc }
+let searchResults = {}; // tab -> { query, hits, totalVolumes, totalBooks }
 let restoring = false;
 let saveTimer = null;
 let defaultMode = "para";
 
-export const ws = $state({ empty: true, current: null, opened: 0 }); // current: { title, lib } of the active reading tab
+export const ws = $state({ empty: true, current: null, opened: 0, activeDoc: null, activeSearch: null }); // current: { title, lib } of the active reading tab
 
 function labelFor(tab) {
   return "reader-" + tab.replace(/[^A-Za-z0-9]/g, "_");
@@ -162,6 +168,14 @@ function readerRenderer() {
           onopen: (req) => openVolume(req),
           onlocate: () => hooks.onlocate?.({ lib: state.lib, bookId: state.bookId, path: state.path }),
           onaction: (a) => hooks.onaction?.(a),
+          onai: (req) => hooks.onai?.(req),
+          ondocstate: (docState) => {
+            docStates[panelApi.id] = docState;
+            if (panelApi?.isActive) {
+              ws.activeDoc = docState;
+              ws.activeSearch = null;
+            }
+          },
           onprogress: (lb, mode) => recordProgress(tab, lb, mode),
           ontitle: (t, tooltip, meta) => {
             panelApi?.setTitle(t);
@@ -198,6 +212,7 @@ function readerRenderer() {
         delete states[panelApi.id];
         delete tooltips[panelApi.id];
         delete infos[panelApi.id];
+        delete docStates[panelApi.id];
       }
       if (instance) unmount(instance);
     },
@@ -212,6 +227,49 @@ function applyTooltip(id) {
 }
 
 const isSearchTab = (id) => typeof id === "string" && id.startsWith("search:");
+const isAiChatTab = (id) => typeof id === "string" && id.startsWith("aichat:");
+
+function aiChatRenderer() {
+  const element = document.createElement("div");
+  element.className = "panel-host";
+  let instance = null;
+  let panelApi = null;
+  return {
+    element,
+    init(params) {
+      panelApi = params.api;
+      const prm = params.params || {};
+      const st = {
+        sessionId: prm.sessionId || null,
+        title: params.title || "AI 助手",
+      };
+      aiChatStates[panelApi.id] = st;
+      instance = mount(AiPanel, {
+        target: element,
+        props: {
+          scopeKind: "chat",
+          initialSessionId: st.sessionId,
+          onOpenDoc: (req) => openVolume(req).catch((e) => hooks.onaction?.({ type: "error", text: String(e) })),
+          onPopout: () => popOutAiChat(panelApi.id),
+          onSessionChange: ({ sessionId, title }) => {
+            st.sessionId = sessionId;
+            if (title) {
+              st.title = `AI：${title.slice(0, 14)}`;
+              panelApi?.setTitle(st.title);
+            }
+            panelApi?.updateParameters({ kind: "aichat", sessionId: st.sessionId });
+            scheduleSave();
+          },
+        },
+      });
+    },
+    update() {},
+    dispose() {
+      if (panelApi) delete aiChatStates[panelApi.id];
+      if (instance) unmount(instance);
+    },
+  };
+}
 
 /** What of a search page is kept with its tab (and handed to a window). */
 function searchSnapshot(st) {
@@ -273,12 +331,23 @@ function searchRenderer() {
           },
           ontitle: (t) => panelApi.setTitle(t),
           onpopout: () => popOutSearch(panelApi.id),
+          onai: (req) => hooks.onai?.(req),
+          onsearchresult: (sr) => {
+            searchResults[panelApi.id] = sr;
+            if (panelApi?.isActive) {
+              ws.activeSearch = sr;
+              ws.activeDoc = null;
+            }
+          },
         },
       });
     },
     update() {},
     dispose() {
-      if (panelApi) delete searchStates[panelApi.id];
+      if (panelApi) {
+        delete searchStates[panelApi.id];
+        delete searchResults[panelApi.id];
+      }
       if (instance) unmount(instance);
     },
   };
@@ -301,7 +370,8 @@ function watermark() {
 
 function tabMenu({ panel, group }) {
   const isSearch = isSearchTab(panel.id);
-  const isReader = !isSearch && panel.id !== "search";
+  const isAiChat = isAiChatTab(panel.id);
+  const isReader = !isSearch && !isAiChat && panel.id !== "search";
   const where = group.api.location.type;
   const items = [
     { label: "关闭（Ctrl+W）", action: () => panel.api.close() },
@@ -321,6 +391,7 @@ function tabMenu({ panel, group }) {
     items.push({ label: "浮动", action: () => float(panel) });
   }
   if (isSearch) items.push({ label: "在新窗口打开", action: () => popOutSearch(panel.id) });
+  if (isAiChat) items.push({ label: "在新窗口打开", action: () => popOutAiChat(panel.id) });
   if (isReader) {
     items.push({ label: "在新窗口打开", action: () => popOut(panel) });
     items.push("separator");
@@ -410,6 +481,20 @@ async function popOutSearch(id) {
   });
 }
 
+/** A standalone AI chat tab into a window of its own. */
+export async function popOutAiChat(id) {
+  const st = aiChatStates[id];
+  const info = { sessionId: st?.sessionId || null, title: st?.title || "AI 助手" };
+  dv?.getPanel(id)?.api.close();
+  scheduleSave();
+  new WebviewWindow(`aichat-win-${Date.now()}-${++aiChatWinSeq}`, {
+    url: "/?aichat=" + encodeURIComponent(JSON.stringify(info)),
+    title: `${info.title} — Smart Library`,
+    width: 760,
+    height: 820,
+  });
+}
+
 function listenToPopouts() {
   listen("popout-progress", (e) => recordProgress(e.payload.tab, e.payload.lb, e.payload.mode));
   listen("popout-closed", (e) => {
@@ -429,6 +514,13 @@ function listenToPopouts() {
     openVolume(e.payload).catch((err) => hooks.onaction?.({ type: "error", text: String(err) }));
   });
   listen("search-dock", (e) => openSearch({ ...e.payload, autorun: !!e.payload.ran, fresh: true }));
+  listen("aichat-dock", async (e) => {
+    const w = getCurrentWindow();
+    await w.unminimize().catch(() => {});
+    await w.setFocus().catch(() => {});
+    if (hooks.onaidock) hooks.onaidock(e.payload || {});
+    else openAiChat({ sessionId: e.payload?.sessionId || null, title: e.payload?.title || "AI 助手" });
+  });
 }
 
 // ------------------------------------------------------------ public
@@ -439,7 +531,14 @@ export async function init(element, h) {
   hostEl = element;
   dv = createDockview(element, {
     className: "dockview-theme-light sl-dock",
-    createComponent: (opts) => (opts.name === "search" ? searchRenderer() : opts.name === "results" ? oldResultsRenderer() : readerRenderer()),
+    createComponent: (opts) =>
+      opts.name === "search"
+        ? searchRenderer()
+        : opts.name === "aichat"
+          ? aiChatRenderer()
+          : opts.name === "results"
+            ? oldResultsRenderer()
+            : readerRenderer(),
     createWatermarkComponent: watermark,
     getTabContextMenuItems: tabMenu,
   });
@@ -457,11 +556,26 @@ export async function init(element, h) {
     const i = panel && (infos[panel.id] || (panel.params?.lib ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null, author: "" } : null));
     if (i) ws.current = { ...i, title: panel.title || i.title };
     else if (!panel || !dv.panels.some((x) => infos[x.id])) ws.current = null;
+
+    if (panel && isSearchTab(panel.id)) {
+      ws.activeDoc = null;
+      ws.activeSearch = searchResults[panel.id] || null;
+    } else if (panel && docStates[panel.id]) {
+      ws.activeDoc = docStates[panel.id];
+      ws.activeSearch = null;
+    } else {
+      ws.activeDoc = null;
+      ws.activeSearch = null;
+    }
   });
   dv.onDidAddPanel(refreshEmpty);
   dv.onDidRemovePanel((panel) => {
     refreshEmpty();
     if (ws.current && panel.id === `${ws.current.lib}|${ws.current.path}`) ws.current = null;
+    if (dv.panels.length === 0) {
+      ws.activeDoc = null;
+      ws.activeSearch = null;
+    }
   });
   listenToPopouts();
 
@@ -486,6 +600,7 @@ export async function init(element, h) {
     dv.getPanel("search")?.api.close();
     for (const panel of dv.panels) {
       if (isSearchTab(panel.id)) searchSeq = Math.max(searchSeq, Number(panel.id.slice(7)) || 0);
+      if (isAiChatTab(panel.id)) aiChatSeq = Math.max(aiChatSeq, Number(panel.id.slice(7)) || 0);
     }
     for (const panel of [...dv.panels]) {
       const lib = panel.params?.lib;
@@ -676,6 +791,29 @@ export function addSearchScopes(items) {
   }
   dv.getPanel(lastSearchId)?.api.setActive();
   return lastSearchId;
+}
+
+/** Open a standalone AI chat tab in the workspace. */
+export function openAiChat({ sessionId = null, title = "AI 助手" } = {}) {
+  const id = `aichat:${++aiChatSeq}`;
+  dv.addPanel({
+    id,
+    component: "aichat",
+    title,
+    params: { kind: "aichat", sessionId },
+  });
+  return id;
+}
+
+/** Open a standalone AI chat window directly. */
+export function openAiWindow({ sessionId = null, title = "AI 助手" } = {}) {
+  const info = { sessionId, title };
+  new WebviewWindow(`aichat-win-${Date.now()}-${++aiChatWinSeq}`, {
+    url: "/?aichat=" + encodeURIComponent(JSON.stringify(info)),
+    title: `${title} — Smart Library`,
+    width: 760,
+    height: 820,
+  });
 }
 
 /** Save now (e.g. before the window closes). */

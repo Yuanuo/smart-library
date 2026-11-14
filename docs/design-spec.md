@@ -680,3 +680,24 @@ app_data/
 - 阅读器工具栏（每个阅读器上方的一条，新功能都往这里加）：左边是文档标题，前面加定位图标，图标和标题合成一个链接（`TitleLink.svelte`），点击在目录树中定位；原来笔记和 CBETA / HTML 阅读器上单独的定位按钮去掉了。CBETA / HTML 阅读器的标题带卷名。笔记、脑图、白板的工具栏右侧都有「加标签」按钮。
 - 脑图右键菜单：Mind-Elixir 的菜单层盖满整个画布，只有左键能关掉，所以在别的节点上右键点到的是菜单层。`MindMapView.svelte` 在捕获阶段接住菜单层上的 `contextmenu`，关掉菜单，再把右键交给下面的元素重新触发。
 - 目录树：知识库名右边的「未建索引」「索引过期」是可以点的（点击建立 / 重建索引，建好后提示自动消失）；节点鼠标悬停时整行从左边界到右边界都有底色（和选中、右键一致）。CBETA / HTML 阅读器工具栏：左边是定位链接、卷、目次，功能性的控件（段落 / 原书行、行号、编注方式、命中数、标签）靠右。
+
+**AI 助手（2026-11）**
+- 开关与多模型预设：设置对话框「AI 助手」区块提供总开关（`settings.aiOn`，默认关闭）和多个模型预设列表（`settings.aiPresets`、`settings.aiActiveId`）。每个预设包含名称、接口协议（`openai` 兼容 `/v1/chat/completions` 或 `anthropic` `/v1/messages`）、接口地址（`baseUrl`）、API Key、模型名称、自定义系统提示词，支持一键「测试连接」。AI 侧栏与独立会话窗口顶部均可随时下拉切换当前激活的模型预设。
+- 后端流式网关（`app/src-tauri/src/ai.rs`）：基于离线已有的 `reqwest`（`rustls` + `stream`）与 `futures-util`（`Abortable`）实现 OpenAI / Anthropic SSE 流式解析，通过 Tauri `Channel<AiEvent>` 向前端推送增量文本（`delta`、`reasoning`、`done`、`error`），支持中途随时停止生成（`ai_abort`）。
+- 会话历史独立持久化（`core/src/ai_chat.rs`）：存储在数据目录 `<data_dir>/ai_chat.db` 的 `ai_sessions` 表，按 `scope_kind`（`doc` / `search` / `chat`）与 `(lib, path)` 关联文档，不修改任何知识库源文档。打开文档侧栏时自动恢复该文档最近一次会话；支持在「历史」抽屉中按当前文档或全部会话查看、恢复、删除单条会话，或在设置中一键清空全部会话历史。笔记重命名/移动或知识库解绑时同步更新或清理关联记录。
+- 触发方式与多文档引用（`AiPanel.svelte`）：
+  1. **主窗口统一右侧 AI 侧栏（`App.svelte`）**：参照 IDE（VS Code / IDEA）的统一辅助栏模式，在主工作区右侧提供全局统一的 AI 会话面板（可拖拽分隔条调整宽度，状态记在 `ai.open` / `ai.width`）。切换主区任意标签页（只读阅读器、Markdown 笔记、脑图、白板、全文搜索页）时，右侧会话保持不断开，且动态感知当前激活标签页的文档内容或搜索结果，支持通过「`+固定引用`」将当前文档固定进引用列表后再切去其他文档协作。
+  2. **各视图快捷联动**：所有阅读器/编辑器工具栏与搜索页工具栏均提供「AI 助手」按钮，点击打开/收起右侧统一 AI 栏；选中文字右键菜单（「发给 AI 助手」「AI 解释选中文字」「AI 润色 / 续写」「AI 编写创新方案」）与脑图节点右键菜单（「AI 扩充此节点…」）会自动唤起右侧 AI 栏并把选中片段及来源文档加入会话。
+  3. **Milkdown 排版编辑器行内 AI**：当 `aiOn` 开启且当前预设配置完整时，`NoteEditor.svelte` 自动启用 `@milkdown/crepe` 内置的 `Crepe.Feature.AI`（斜杠菜单与选中浮动工具栏 AI 指令），复用后端流式通道。
+  4. **独立 AI 窗口与历史切换**：右侧 AI 栏顶部支持通过「＋新对话」与「历史」抽屉在不同工作会话间随时切换，也支持「新窗口」将当前会话弹出为独立窗口（`AiChatWindow.svelte`）或停靠回主窗口工作区。
+  5. **跨库多文档引用**：无论在何处对话，均可通过「`+ 引用文档`」按钮、在输入框键入 `@` 调出标题快搜，或从左侧目录树直接拖拽一个或多个节点到 AI 面板，将被引用的知识库文档正文（`ai_doc_text`）注入会话上下文。
+- 理解与编辑可读写文档：
+  - **Markdown 笔记**：AI 回复代码块或正文可一键「追加到笔记」或「替换笔记内容」，也可将任意回复「存为新笔记」。
+  - **脑图（Mind-Elixir）**：`core/src/mindmap.rs` 新增 `from_outline_or_json`，支持将 AI 输出的 Markdown 缩进列表/标题大纲或 Mind-Elixir JSON 解析为脑图节点树；在脑图侧栏可一键「追加为选中节点的分支」或「替换整张脑图」。
+  - **白板（Excalidraw）**：`WhiteboardView.svelte` 支持让 AI 生成 Excalidraw 图元骨架 JSON（或将列表自动转为带连线的流程图框），通过 `convertToExcalidrawElements` 一键「追加到白板」或「替换白板」。
+- **后续规划（AI 工具调用 / Agent 能力，待实现）**：
+  - 当前 AI 助手仅支持被动读取当前激活标签页上下文、用户显式引用的多篇文档，以及通过界面按钮将回复写入当前激活的可读写文档或另存为默认位置的新笔记/脑图；尚未接入大模型的 Tool Calling（函数调用）循环。
+  - 后续可扩展工具调用机制（OpenAI `tools` / Anthropic `tool_use`），使 AI 助手在会话中按需自主调用程序内部能力（写操作需带确认或可撤销提示）：
+    1. **检索与读取**：自主调用全文搜索（`search`）、标题快搜（`quick_search`）、目录树浏览（`tree_root` / `tree_children`）与文档正文读取（`ai_doc_text`）。
+    2. **历史与收藏标签**：查询最近阅读历史（`recent_list`）、查询/添加书签与收藏（`marks_list` / `mark_add`）、读写节点标签（`node_tags_get` / `node_tags_set`）。
+    3. **文档与目录结构管理**：在内部知识库的指定节点下新建不同类型文档（笔记 / 脑图 / 白板，或直接写入/追加到指定文档 `note_append` / `save_note`）、在读写模式的本地文件夹知识库中新建文件夹与文档（`folder_mkdir` / `folder_create` 等）。

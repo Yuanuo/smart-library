@@ -3753,7 +3753,10 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 name = "smart-library-app"
 version = "26.11.8"
 dependencies = [
+ "futures-util",
  "memmap2",
+ "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "smart-library-core",

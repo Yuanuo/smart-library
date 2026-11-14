@@ -6,6 +6,7 @@
 //! * M0c: `aio` analyzer, Tantivy index and search, hit location (`analyzer`, `search`)
 //! * M2: title quick search (`titles`), CBETA citations (`cite`)
 
+pub mod ai_chat;
 pub mod analyzer;
 pub mod article;
 pub mod attach;
