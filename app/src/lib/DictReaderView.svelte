@@ -82,7 +82,7 @@
         makePinyinItem(text, () => (pinyinDlg = text)),
         {
           label: `查词典：${q}`,
-          action: () => (onlookup ? onlookup(text) : openDictWindow(text)),
+          action: () => openDictWindow(text),
         },
       );
       if (settings.aiOn) {
