@@ -8,6 +8,7 @@
   import TitleLink from "./TitleLink.svelte";
   import Icon from "./Icon.svelte";
   import { matchesShortcut } from "./shortcuts.js";
+  import { settings } from "./settings.svelte.js";
 
   let { vol, title = vol.title, lib, path, onlocate = null, ontag = null, onprops = null, extra = null } = $props();
 
@@ -15,7 +16,7 @@
   let error = $state("");
   let status = $state("");
   let root = null;
-  let boardApi = null;
+  let boardApi = $state(null);
   let convertToExcalidrawElements = null;
   let timer = null;
   let dirty = false;
@@ -26,10 +27,19 @@
   let seen = ""; // what the drawing looked like when it was last saved or loaded
   const start = untrack(() => vol.raw);
 
-  const isDark = () => {
-    const t = document.documentElement.getAttribute("data-theme");
-    return t === "dark" || (!t && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  };
+  const darkMedia = window.matchMedia("(prefers-color-scheme: dark)");
+  let systemDark = $state(darkMedia.matches);
+  const onDarkMedia = (e) => (systemDark = e.matches);
+  darkMedia.addEventListener("change", onDarkMedia);
+  onDestroy(() => darkMedia.removeEventListener("change", onDarkMedia));
+
+  const dark = $derived(settings.theme === "dark" || (settings.theme === "auto" && systemDark));
+  const isDark = () => dark;
+
+  $effect(() => {
+    const nextTheme = dark ? "dark" : "light";
+    if (boardApi) boardApi.updateScene({ appState: { theme: nextTheme } });
+  });
 
   const signature = (elements, files) =>
     elements.map((e) => `${e.id}:${e.version}`).join(",") + "|" + Object.keys(files ?? {}).join(",");
@@ -163,7 +173,10 @@
             "div",
             { style: { height: "100%", width: "100%", overflow: "clip" } },
             h(ex.Excalidraw, {
-              excalidrawAPI: (api) => (boardApi = api),
+              excalidrawAPI: (api) => {
+                boardApi = api;
+                api?.updateScene({ appState: { theme: isDark() ? "dark" : "light" } });
+              },
               initialData: initial,
               onChange: changed,
               theme: isDark() ? "dark" : "light",

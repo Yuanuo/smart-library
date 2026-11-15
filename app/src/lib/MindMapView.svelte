@@ -10,11 +10,14 @@
   import TitleLink from "./TitleLink.svelte";
   import Icon from "./Icon.svelte";
   import { matchesShortcut } from "./shortcuts.js";
+  import { settings } from "./settings.svelte.js";
 
   let { vol, title = vol.title, lib, path, onjump = null, onexternal = null, onlocate = null, ontag = null, onprops = null, onai = null, extra = null } = $props();
 
   let el = $state();
   let mind = null;
+  let mindReady = $state(false);
+  let MindElixirClass = null;
   let timer = null;
   let dirty = false;
   let gone = false;
@@ -49,10 +52,21 @@
     }
   }
 
-  const isDark = () => {
-    const t = document.documentElement.getAttribute("data-theme");
-    return t === "dark" || (!t && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  };
+  const darkMedia = window.matchMedia("(prefers-color-scheme: dark)");
+  let systemDark = $state(darkMedia.matches);
+  const onDarkMedia = (e) => (systemDark = e.matches);
+  darkMedia.addEventListener("change", onDarkMedia);
+  onDestroy(() => darkMedia.removeEventListener("change", onDarkMedia));
+
+  const dark = $derived(settings.theme === "dark" || (settings.theme === "auto" && systemDark));
+  const isDark = () => dark;
+
+  $effect(() => {
+    const isD = dark;
+    if (mindReady && mind && MindElixirClass) {
+      mind.changeTheme(isD ? MindElixirClass.DARK_THEME : MindElixirClass.THEME);
+    }
+  });
 
   // ---- pictures: kept like the pictures of notes, a node refers to them as `attach:<name>`
   async function setPicture(file) {
@@ -284,7 +298,9 @@
       // the node menu (font, colors, tag, icon, link, memo) in Chinese
       mind.locale = "zh_CN";
       mind.install(nodeMenu);
+      MindElixirClass = MindElixir;
       await mind.init(data);
+      mindReady = true;
       requestAnimationFrame(() => {
         if (!gone && mind) {
           mind.linkDiv();
