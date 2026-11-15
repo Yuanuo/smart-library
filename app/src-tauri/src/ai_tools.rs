@@ -547,10 +547,51 @@ pub async fn exec_tool(
             let mode = arg_nonempty(&args, "mode").unwrap_or_else(|| "append".to_string());
             let content = arg_str(&args, "content").unwrap_or("").to_string();
 
-            let res = if mode == "replace" {
+            let (title, content_type, existing_raw) = match commands::read_writable_raw(&state, &lib, &id) {
+                Ok(v) => v,
+                Err(e) => return err_res(e),
+            };
+            let _ = state
+                .snapshots
+                .create(&lib, &id, "ai", "AI 修改前", &content_type, &existing_raw);
+
+            let res: Result<(), String> = if content_type == smart_library_core::mindmap::TYPE {
+                let next_json = if mode == "replace" {
+                    smart_library_core::mindmap::from_outline_or_json(&content, &title)
+                } else {
+                    smart_library_core::mindmap::append_outline_or_json(&existing_raw, &content, &title)
+                };
+                match next_json {
+                    Ok(body) => commands::save_note(lib.clone(), id.clone(), body, state).await,
+                    Err(e) => Err(e),
+                }
+            } else if content_type == smart_library_core::whiteboard::TYPE {
+                if mode != "replace" {
+                    Err("白板文档不支持文本追加，请使用 replace 模式传入合法的 Excalidraw JSON，或在编辑器中应用 AI 结果".into())
+                } else {
+                    match serde_json::from_str::<Value>(&content) {
+                        Ok(v) if v.is_object() && v.get("elements").is_some_and(Value::is_array) => {
+                            commands::save_note(lib.clone(), id.clone(), content, state).await
+                        }
+                        Ok(_) => Err("白板 JSON 缺少 elements 数组，已阻止覆写".into()),
+                        Err(e) => Err(format!("白板 JSON 解析失败，已阻止覆写：{}", e)),
+                    }
+                }
+            } else if mode == "replace" {
                 commands::save_note(lib.clone(), id.clone(), content, state).await
             } else {
-                commands::note_append(lib.clone(), id.clone(), content, state).await
+                let lib_info = state.library(&lib);
+                if lib_info.as_ref().is_ok_and(|l| l.kind == "folder") {
+                    let base = existing_raw.trim_end();
+                    let next = if base.is_empty() {
+                        content
+                    } else {
+                        format!("{}\n\n{}", base, content.trim_start())
+                    };
+                    commands::save_note(lib.clone(), id.clone(), next, state).await
+                } else {
+                    commands::note_append(lib.clone(), id.clone(), content, state).await
+                }
             };
             match res {
                 Ok(()) => ok_mutated(json!({ "ok": true, "lib": lib, "id": id, "mode": mode }), lib, Some(id)),

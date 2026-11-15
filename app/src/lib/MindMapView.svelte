@@ -19,12 +19,15 @@
   let gone = false;
   let status = $state("");
   let error = $state("");
+  let blocked = $state(false);
   let menu = $state(null);
   let wait = null; // watching for the board to get a size
   let pan = null; // a drag of the board with the middle button: where it was last
   const start = untrack(() => vol.raw);
 
-  const dataText = () => JSON.stringify(mind.getData(), (k, v) => (k === "parent" ? undefined : v));
+  const dataText = () =>
+    JSON.stringify({ ...mind.getData(), direction: mind.direction }, (k, v) => (k === "parent" ? undefined : v));
+  export const getRaw = () => (mind && !blocked ? dataText() : null);
 
   function changed() {
     dirty = true;
@@ -34,7 +37,7 @@
   }
 
   async function save() {
-    if (!mind || !dirty) return;
+    if (blocked || !mind || !dirty) return;
     dirty = false;
     try {
       await api.saveNote(lib, path, dataText());
@@ -141,8 +144,10 @@
       const parent = (targetId && findNode(full.nodeData, targetId)) || full.nodeData;
       parent.children = parent.children || [];
       const incomingRoot = parsed.nodeData;
+      const normTopic = (s) => (s || "").trim().replace(/^[「『"']|[」』"':：]+$/g, "");
       const toAdd =
-        incomingRoot.children?.length && (incomingRoot.topic === parent.topic || incomingRoot.topic === title)
+        incomingRoot.children?.length &&
+        (normTopic(incomingRoot.topic) === normTopic(parent.topic) || normTopic(incomingRoot.topic) === normTopic(title))
           ? incomingRoot.children
           : [incomingRoot];
       parent.children.push(...toAdd);
@@ -217,27 +222,47 @@
         if (gone) return;
       }
       let data = null;
-      try {
-        data = JSON.parse(start);
-      } catch {}
-      if (!data?.nodeData) data = MindElixir.new(vol.title);
+      if (start && start.trim()) {
+        try {
+          data = JSON.parse(start);
+        } catch {}
+        if (!data?.nodeData) {
+          blocked = true;
+          error = "脑图数据格式异常，已阻止空白覆盖（可通过工具栏「快照」恢复历史版本）";
+          return;
+        }
+      } else {
+        data = MindElixir.new(vol.title);
+      }
       mind = new MindElixir({
         el,
-        direction: MindElixir.SIDE,
+        direction: typeof data.direction === "number" ? data.direction : MindElixir.SIDE,
         toolBar: true,
         keypress: true,
         allowUndo: true,
         contextMenu: {
           locale: zh_CN,
           extend: [
-            { name: "插入图片…", onclick: pickPicture },
+            {
+              name: "插入图片…",
+              onclick: () => {
+                const cover = el?.querySelector(".context-menu");
+                if (cover instanceof HTMLElement) cover.hidden = true;
+                pickPicture();
+              },
+            },
             ...(onai
               ? [
                   {
                     name: "AI 扩充此节点…",
                     onclick: () => {
+                      const cover = el?.querySelector(".context-menu");
+                      if (cover instanceof HTMLElement) cover.hidden = true;
                       const topic = mind?.currentNode?.nodeObj?.topic || title;
-                      onai({ text: topic, prompt: `请围绕节点「${topic}」扩展生成 4～6 个下级分支与子节点（使用 Markdown 缩进列表格式）。` });
+                      onai({
+                        text: topic,
+                        prompt: `请围绕节点「${topic}」扩展生成 4～6 个下级分支与子节点（仅输出纯 Markdown 缩进列表，直接从下级分支开始，不要包含开场白或总结）。`,
+                      });
                     },
                   },
                 ]
@@ -259,6 +284,25 @@
       mind.locale = "zh_CN";
       mind.install(nodeMenu);
       await mind.init(data);
+      requestAnimationFrame(() => {
+        if (!gone && mind) {
+          mind.linkDiv();
+          mind.toCenter();
+        }
+      });
+      setTimeout(() => {
+        if (!gone && mind) {
+          mind.linkDiv();
+          mind.toCenter();
+        }
+      }, 150);
+      const ro = new ResizeObserver(() => {
+        if (!gone && mind && el?.clientWidth && el?.clientHeight) {
+          mind.linkDiv();
+        }
+      });
+      ro.observe(el);
+      wait = ro;
       // the right button is for the menu, the middle one moves the board (as in the whiteboard)
       el.addEventListener("contextmenu", again, true);
       el.addEventListener("pointerdown", down, true);
@@ -266,6 +310,7 @@
       el.addEventListener("pointerup", drop);
       el.addEventListener("pointercancel", drop);
       mind.bus.addListener("operation", changed);
+      mind.bus.addListener("changeDirection", changed);
     } catch (e) {
       error = String(e);
     }
@@ -312,7 +357,7 @@
     wait?.disconnect();
     gone = true;
     clearTimeout(timer);
-    if (mind && dirty) api.saveNote(lib, path, dataText()).catch(() => {});
+    if (!blocked && mind && dirty) api.saveNote(lib, path, dataText()).catch(() => {});
     mind?.destroy?.();
   });
 
@@ -345,9 +390,8 @@
     {#if onprops}<button type="button" class="tool-btn" onclick={onprops} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>{/if}
     {@render extra?.()}
     <button type="button" class="tool-btn" onclick={exportMenu}>导出 ▾</button>
-    <span class="muted">脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布</span>
-    <span class="grow"></span>
-    <span class="muted">{status}</span>
+    <span class="muted hint" title="脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布">脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布</span>
+    <span class="muted status">{status}</span>
   </div>
   {#if error}<p class="error">{error}</p>{/if}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -360,10 +404,11 @@
 
 <style>
   .mm { display: flex; flex-direction: column; height: 100%; }
-  .bar { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
-  .grow { flex: 1; }
+  .bar { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 13px; min-width: 0; }
+  .hint { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status { flex-shrink: 0; white-space: nowrap; }
   .tool-btn {
-    display: inline-flex; align-items: center; gap: 4px;
+    display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; white-space: nowrap;
     padding: 3px 8px; line-height: 1; font-size: 13px;
     border: 1px solid var(--line); border-radius: 5px;
     background: var(--paper); color: var(--accent); cursor: pointer;

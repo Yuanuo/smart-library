@@ -253,7 +253,7 @@ async fn complete_short_title(cfg: AiModelConfig, prompt: String, max_chars: usi
         }
         r.json(&json!({
             "model": cfg.model.trim(),
-            "max_tokens": 48,
+            "max_tokens": 512,
             "messages": [{"role": "user", "content": prompt}]
         }))
     } else {
@@ -263,7 +263,7 @@ async fn complete_short_title(cfg: AiModelConfig, prompt: String, max_chars: usi
         }
         r.json(&json!({
             "model": cfg.model.trim(),
-            "max_tokens": 48,
+            "max_tokens": 512,
             "messages": [{"role": "user", "content": prompt}]
         }))
     };
@@ -276,7 +276,11 @@ async fn complete_short_title(cfg: AiModelConfig, prompt: String, max_chars: usi
     let raw = if cfg.format == "anthropic" {
         v["content"]
             .as_array()
-            .and_then(|a| a.first())
+            .and_then(|a| {
+                a.iter()
+                    .find(|c| c["type"] == "text")
+                    .or_else(|| a.first())
+            })
             .and_then(|c| c["text"].as_str())
             .unwrap_or("")
     } else {
@@ -286,12 +290,17 @@ async fn complete_short_title(cfg: AiModelConfig, prompt: String, max_chars: usi
             .and_then(|c| c["message"]["content"].as_str())
             .unwrap_or("")
     };
-    let cleaned = raw
-        .trim()
-        .trim_matches(|c| matches!(c, '"' | '\'' | '“' | '”' | '「' | '」' | '《' | '》' | '。' | '：' | ':'))
+    let no_think = if let (Some(s), Some(e)) = (raw.find("<think>"), raw.find("</think>")) {
+        if e > s { &raw[e + 8..] } else { raw }
+    } else {
+        raw
+    };
+    let cleaned = no_think
         .lines()
-        .next()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
         .unwrap_or("")
+        .trim_matches(|c| matches!(c, '"' | '\'' | '“' | '”' | '「' | '」' | '《' | '》' | '。' | '：' | ':'))
         .trim();
     let short: String = cleaned.chars().take(max_chars).collect();
     if short.is_empty() {

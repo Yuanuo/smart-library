@@ -147,6 +147,7 @@ pub fn from_outline_or_json(input: &str, fallback_title: &str) -> Result<String,
 
     // Parse Markdown headings (`# ...`) and indented list items (`- ...` / `* ...` / `1. ...`)
     let mut items: Vec<(usize, String, Option<String>)> = Vec::new();
+    let mut plain_fallback: Option<(String, Option<String>)> = None;
     let mut base_heading_depth = 0usize;
     for line in clean.lines() {
         let trimmed_end = line.trim_end();
@@ -185,8 +186,13 @@ pub fn from_outline_or_json(input: &str, fallback_title: &str) -> Result<String,
                 let (t, l) = parse_link_topic(text);
                 items.push((depth, t, l));
             }
-        } else if items.is_empty() {
-            let (t, l) = parse_link_topic(trimmed);
+        } else if items.is_empty() && plain_fallback.is_none() && !trimmed.starts_with("```") {
+            plain_fallback = Some(parse_link_topic(trimmed));
+        }
+    }
+
+    if items.is_empty() {
+        if let Some((t, l)) = plain_fallback {
             items.push((0, t, l));
         }
     }
@@ -235,6 +241,48 @@ pub fn from_outline_or_json(input: &str, fallback_title: &str) -> Result<String,
     Ok(json!({ "nodeData": root }).to_string())
 }
 
+/// Append a Markdown outline or Mind-Elixir JSON subtree onto an existing
+/// mindmap's root node without clobbering existing nodes.
+pub fn append_outline_or_json(existing_json: &str, incoming: &str, fallback_title: &str) -> Result<String, String> {
+    let mut existing: Value = if existing_json.trim().is_empty() {
+        serde_json::from_str(&new_data(fallback_title)).map_err(|e| format!("初始化脑图失败：{}", e))?
+    } else {
+        serde_json::from_str(existing_json).map_err(|e| format!("现有脑图数据格式异常，拒绝追加：{}", e))?
+    };
+    let existing_root = existing
+        .get_mut("nodeData")
+        .filter(|n| n.is_object())
+        .ok_or_else(|| "现有脑图缺少 nodeData，拒绝追加".to_string())?;
+    let existing_topic = existing_root["topic"].as_str().unwrap_or("").trim().to_string();
+
+    let incoming_json = from_outline_or_json(incoming, fallback_title)?;
+    let mut parsed: Value = serde_json::from_str(&incoming_json).map_err(|e| format!("解析新增脑图内容失败：{}", e))?;
+    let mut incoming_root = parsed["nodeData"].take();
+    if !incoming_root.is_object() {
+        return Err("未能解析出有效的脑图节点".into());
+    }
+
+    let incoming_topic = incoming_root["topic"].as_str().unwrap_or("").trim().to_string();
+    let has_kids = incoming_root["children"].as_array().is_some_and(|a| !a.is_empty());
+    let to_add: Vec<Value> = if has_kids && (incoming_topic == existing_topic || incoming_topic == fallback_title.trim()) {
+        incoming_root["children"].as_array_mut().map(std::mem::take).unwrap_or_default()
+    } else {
+        if let Some(obj) = incoming_root.as_object_mut() {
+            obj.remove("root");
+            if obj.get("id").and_then(Value::as_str) == Some("root") {
+                obj.insert("id".into(), json!(new_id(&incoming_topic)));
+            }
+        }
+        vec![incoming_root]
+    };
+
+    match existing_root.get_mut("children").and_then(|c| c.as_array_mut()) {
+        Some(kids) => kids.extend(to_add),
+        None => existing_root["children"] = json!(to_add),
+    }
+    Ok(existing.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,5 +320,30 @@ mod tests {
         assert_eq!(n[1], (1, "摘录的文字".to_string(), Some("smartlib://open?lib=a".to_string())));
         assert!(d.contains("《经》 p.1"));
         assert!(add_clip("{}", "x", "", "").is_err());
+    }
+
+    #[test]
+    fn appends_outline_without_overwriting_existing_nodes() {
+        let base = new_data("主图");
+        let base = add_clip(&base, "原有节点", "", "").unwrap();
+        let updated = append_outline_or_json(&base, "- 新增分支\n  - 子项", "主图").unwrap();
+        let n = nodes(&updated);
+        assert_eq!(n.len(), 4);
+        assert_eq!(n[0].1, "主图");
+        assert_eq!(n[1].1, "原有节点");
+        assert_eq!(n[2].1, "新增分支");
+        assert_eq!(n[3].1, "子项");
+        assert!(append_outline_or_json("not json", "- x", "主图").is_err());
+    }
+
+    #[test]
+    fn ignores_conversational_intro_before_outline() {
+        let ai_reply = "已围绕「七大洲」生成6个下级分支，可直接作为该节点的子节点应用：\n\n- 七大洲\n  - 亚洲\n  - 非洲\n";
+        let json_str = from_outline_or_json(ai_reply, "备用标题").unwrap();
+        let parsed = nodes(&json_str);
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0], (0, "七大洲".into(), None));
+        assert_eq!(parsed[1], (1, "亚洲".into(), None));
+        assert_eq!(parsed[2], (1, "非洲".into(), None));
     }
 }

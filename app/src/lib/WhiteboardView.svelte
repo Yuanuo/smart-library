@@ -19,6 +19,7 @@
   let timer = null;
   let dirty = false;
   let gone = false;
+  let blocked = $state(false);
   let pending = null; // the latest [elements, appState, files]
   let serialize = null;
   let seen = ""; // what the drawing looked like when it was last saved or loaded
@@ -31,6 +32,9 @@
 
   const signature = (elements, files) =>
     elements.map((e) => `${e.id}:${e.version}`).join(",") + "|" + Object.keys(files ?? {}).join(",");
+
+  export const getRaw = () =>
+    !blocked && pending && serialize ? serialize(pending[0], pending[1], pending[2], "local") : null;
 
   function changed(elements, appState, files) {
     const sig = signature(elements, files);
@@ -45,7 +49,7 @@
 
   async function save() {
     clearTimeout(timer);
-    if (!dirty || !pending || !serialize) return;
+    if (blocked || !dirty || !pending || !serialize) return;
     dirty = false;
     const [elements, appState, files] = pending;
     try {
@@ -133,12 +137,24 @@
         serialize = ex.serializeAsJSON;
         convertToExcalidrawElements = ex.convertToExcalidrawElements;
         let initial = null;
-        try {
-          const d = JSON.parse(start || "{}");
-          const files = d.files ?? {};
-          initial = { elements: d.elements ?? [], files, scrollToContent: true };
-          seen = signature(initial.elements, files);
-        } catch {}
+        if (start && start.trim()) {
+          try {
+            const d = JSON.parse(start);
+            if (!d || typeof d !== "object" || !Array.isArray(d.elements)) {
+              throw new Error("缺少 elements 数组");
+            }
+            const files = d.files ?? {};
+            initial = { elements: d.elements, files, scrollToContent: true };
+            seen = signature(initial.elements, files);
+          } catch {
+            blocked = true;
+            error = "白板数据格式异常，已阻止空白覆盖（可通过工具栏「快照」恢复历史版本）";
+            return;
+          }
+        } else {
+          initial = { elements: [], files: {}, scrollToContent: true };
+          seen = signature([], {});
+        }
         root = createRoot(el);
         const h = React.createElement;
         root.render(
@@ -198,47 +214,125 @@
       const obj = JSON.parse(body);
       if (Array.isArray(obj?.elements)) return obj.elements;
     } catch {}
-    // Fallback: convert markdown list / lines into connected boxes
-    const lines = body
-      .split("\n")
-      .map((l) => l.replace(/^(?:#+\s*|[-*+]\s+|\d+\.\s+)/, "").trim())
-      .filter((l) => l && !l.startsWith("```"))
-      .slice(0, 16);
-    if (!lines.length) throw new Error("未识别到有效的白板图元或列表项");
+    // Fallback: parse markdown headings / indented list into a hierarchical left-to-right diagram
+    const parsedItems = [];
+    let fallbackLine = null;
+    let baseHeadingDepth = 0;
+    for (const rawLine of body.split("\n")) {
+      const trimmedEnd = rawLine.trimEnd();
+      if (!trimmedEnd.trim()) continue;
+      const trimmed = trimmedEnd.trimStart();
+      if (trimmed.startsWith("```")) continue;
+      const indent = rawLine.length - trimmed.length;
+      const cleanLabel = (s) => s.replace(/\*\*(.+?)\*\*/g, "$1").trim();
+
+      const hMatch = trimmed.match(/^(#+)\s+(.+)$/);
+      if (hMatch) {
+        const hashes = hMatch[1].length;
+        baseHeadingDepth = hashes;
+        parsedItems.push({ depth: hashes - 1, text: cleanLabel(hMatch[2]) });
+        continue;
+      }
+
+      const bMatch = trimmed.match(/^(?:[-*+]|\d+[.、])\s+(.+)$/);
+      if (bMatch) {
+        const listDepth = Math.floor(indent / 2);
+        const depth = baseHeadingDepth > 0 ? baseHeadingDepth + listDepth : listDepth;
+        parsedItems.push({ depth, text: cleanLabel(bMatch[1]) });
+      } else if (!parsedItems.length && !fallbackLine) {
+        fallbackLine = cleanLabel(trimmed);
+      }
+    }
+    if (!parsedItems.length && fallbackLine) {
+      parsedItems.push({ depth: 0, text: fallbackLine });
+    }
+    if (!parsedItems.length) throw new Error("未识别到有效的白板图元或列表项");
+
+    const minDepth = Math.min(...parsedItems.map((it) => it.depth));
+    for (const it of parsedItems) it.depth -= minDepth;
+
+    // Build tree forest
+    const roots = [];
+    const stack = [];
+    for (const it of parsedItems) {
+      const node = { text: it.text, depth: it.depth, children: [] };
+      while (stack.length && stack[stack.length - 1].depth >= it.depth) {
+        stack.pop();
+      }
+      if (stack.length) {
+        stack[stack.length - 1].children.push(node);
+      } else {
+        roots.push(node);
+      }
+      stack.push(node);
+    }
+
+    // Measure & assign left-to-right tree coordinates
+    const boxW = 230;
+    const colGap = 72;
+    const rowGap = 24;
+    const boxHeight = (txt) => (txt.length > 26 ? 88 : 68);
+
+    function measure(node) {
+      node.h = boxHeight(node.text);
+      if (!node.children.length) {
+        node.spanH = node.h;
+        return node.spanH;
+      }
+      let total = 0;
+      node.children.forEach((c, idx) => {
+        if (idx > 0) total += rowGap;
+        total += measure(c);
+      });
+      node.spanH = Math.max(node.h, total);
+      return node.spanH;
+    }
+
     const out = [];
-    const cols = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(lines.length))));
-    lines.forEach((line, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const x = 80 + col * 260;
-      const y = 80 + row * 130;
+    function place(node, x, topY) {
+      node.x = x;
+      node.y = topY + (node.spanH - node.h) / 2;
       out.push({
         type: "rectangle",
-        x,
-        y,
-        width: 200,
-        height: 72,
-        backgroundColor: row === 0 && col === 0 ? "#f5e8dc" : "#faf6ee",
+        x: node.x,
+        y: node.y,
+        width: boxW,
+        height: node.h,
+        backgroundColor: node.depth === 0 ? "#f5e8dc" : "#faf6ee",
         strokeColor: "#8c3b2b",
         fillStyle: "solid",
         roundness: { type: 3 },
-        label: { text: line.slice(0, 48), fontSize: 16 },
+        label: { text: node.text.slice(0, 64), fontSize: 15 },
       });
-      if (i > 0) {
-        const prevCol = (i - 1) % cols;
-        const prevRow = Math.floor((i - 1) / cols);
-        if (prevRow === row) {
-          out.push({
-            type: "arrow",
-            x: 80 + prevCol * 260 + 205,
-            y: y + 36,
-            width: 50,
-            height: 0,
-            strokeColor: "#8c3b2b",
-          });
-        }
+      if (!node.children.length) return;
+      const childrenTotal = node.children.reduce((acc, c, idx) => acc + c.spanH + (idx > 0 ? rowGap : 0), 0);
+      let cy = topY + (node.spanH - childrenTotal) / 2;
+      const childX = x + boxW + colGap;
+      for (const child of node.children) {
+        place(child, childX, cy);
+        const sx = node.x + boxW + 4;
+        const sy = node.y + node.h / 2;
+        const ex = child.x - 4;
+        const ey = child.y + child.h / 2;
+        out.push({
+          type: "arrow",
+          x: sx,
+          y: sy,
+          width: ex - sx,
+          height: ey - sy,
+          points: [[0, 0], [ex - sx, ey - sy]],
+          strokeColor: "#8c3b2b",
+        });
+        cy += child.spanH + rowGap;
       }
-    });
+    }
+
+    let curY = 80;
+    for (const root of roots) {
+      measure(root);
+      place(root, 80, curY);
+      curY += root.spanH + rowGap * 1.5;
+    }
     return out;
   }
 
