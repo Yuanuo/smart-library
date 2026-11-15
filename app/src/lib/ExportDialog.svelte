@@ -59,7 +59,7 @@
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && !busy && onclose()}>
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="导出" tabindex="-1"
     onkeydown={(e) => e.key === "Escape" && !busy && onclose()}>
-    <header class="dialog-header"><h2>导出</h2></header>
+    <header class="dialog-header"><h2>导出：{sel.whole ? lib.title : label}</h2></header>
     <div class="dialog-content">
     <p><b>{lib.title}</b>：{sel.whole ? "整个知识库" : label}</p>
     <p class="muted small">

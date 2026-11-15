@@ -315,7 +315,7 @@
     const file = isRwFolder(lib); // a file or folder name: strict rules, and the path changes with it
     const dir = file && node.path == null;
     nameDlg = {
-      title: dir ? "重命名文件夹" : "重命名笔记",
+      title: dir ? `重命名文件夹：${node.title}` : `重命名：${node.title}`,
       label: dir ? "文件夹名称" : file ? "文件名（不含后缀）" : "标题",
       value: node.title,
       okLabel: "确定",
@@ -364,6 +364,7 @@
   async function moveNode(lib, node, key) {
     try {
       moveDlg = {
+        title: `移动到：${node.title}`,
         from: node.rel,
         dirs: await api.folderDirs(lib),
         onok: guard(lib, async (parent) => {
@@ -1148,7 +1149,7 @@
   /** Another name for a library; a bound one is only shown under it, its data stays as it is. */
   function renameLibrary(l) {
     nameDlg = {
-      title: "重命名知识库",
+      title: `重命名知识库：${l.title}`,
       label: "名称",
       value: l.title,
       okLabel: "确定",

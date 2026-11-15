@@ -158,7 +158,7 @@
 
 {#if editing}
   <TagDialog
-    heading={editing.kind === "node" ? "编辑标签" : "编辑"}
+    heading={editing.kind === "node" ? `标签：${editing.doc_title}` : "编辑"}
     subtitle={`${editing.doc_title} · ${editing.lib_title}`}
     quote={editing.quote}
     withNote={editing.kind !== "node"}

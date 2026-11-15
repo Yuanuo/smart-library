@@ -308,7 +308,7 @@
   async function tagNode(lib, bookId, path, title) {
     const current = await api.nodeTagsGet(lib, bookId, path);
     tagDlg = {
-      heading: "标签", subtitle: title, tags: current.join(", "),
+      heading: `标签：${title}`, subtitle: "", tags: current.join(", "),
       onok: async (tags) => {
         await api.nodeTagsSet(lib, bookId, path, title, tags);
         notice = tags.trim() ? "标签已保存。" : "已清除标签。";
@@ -779,7 +779,7 @@
   <div class="body">
     <nav class="side" aria-label="知识库目录" style="width: {sideWidth}px">
       <div class="side-head">
-        <span class="muted">知识库</span>
+        <span class="side-title">知识库</span>
         <span class="tools">
           <button class="icon" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加" aria-label="添加"><Icon name="plus" size={18} /></button>
           <button class="icon" onclick={openQuickSearch} title="标题快搜（双击 Shift 或 Ctrl+G）" aria-label="标题快搜"><Icon name="plane" size={18} /></button>
@@ -966,7 +966,7 @@
     background: var(--accent); color: var(--paper); font-size: 10px; line-height: 14px; text-align: center;
   }
   .side-foot {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 0;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px 8px;
     border-top: 1px solid var(--line); font-size: 12px; min-height: 32px;
   }
   .building { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -996,7 +996,7 @@
   .log-item time { color: var(--muted); margin-right: 6px; }
   .body { flex: 1; display: flex; min-height: 0; }
   .side {
-    flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 8px;
+    flex: none; display: flex; flex-direction: column; gap: 0; padding: 0;
     background: var(--panel); min-height: 0;
   }
   .splitter {
@@ -1006,10 +1006,11 @@
   .splitter:hover, .splitter.dragging, .splitter:focus-visible { background: var(--accent-soft); outline: none; }
   .body:has(.splitter.dragging) { user-select: none; cursor: col-resize; }
   .side-head {
-    display: flex; justify-content: space-between; align-items: center; padding: 0 4px 6px; font-size: 13px;
+    display: flex; justify-content: space-between; align-items: center; padding: 8px 12px 6px; font-size: 13px;
     border-bottom: 1px solid var(--line);
   }
-  .tree { flex: 1; overflow: auto; font-size: 15px; }
+  .side-title { font-weight: 600; font-size: 14px; color: var(--ink); letter-spacing: 0.02em; }
+  .tree { flex: 1; overflow: auto; font-size: 15px; padding: 6px 8px; }
   .content { flex: 1; min-width: 0; min-height: 0; position: relative; }
   .ai-splitter { border-right: none; border-left: 1px solid var(--line); }
   .ai-dock { flex: none; height: 100%; min-height: 0; display: flex; flex-direction: column; }
