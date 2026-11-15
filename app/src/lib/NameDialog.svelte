@@ -1,10 +1,11 @@
 <script>
   // A small dialog asking for one line of text (a note title, a library name).
   import { onMount, untrack } from "svelte";
+  import DialogHeader from "./DialogHeader.svelte";
 
   // `hint`: a rule shown under the box; `validate(text)`: resolves to the reason
   // the text is not acceptable (or "" when it is), checked as the user types.
-  let { title, label = "名称", value = "", okLabel = "确定", hint = "", validate = null, allowEmpty = false, aiSuggest = null, onok, onclose } = $props();
+  let { title, nodePath = "", label = "名称", value = "", okLabel = "确定", hint = "", validate = null, allowEmpty = false, aiSuggest = null, onok, onclose } = $props();
   let text = $state(untrack(() => value));
   let input = $state();
   let busy = $state(false);
@@ -67,7 +68,7 @@
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={title} tabindex="-1"
     onkeydown={(e) => e.key === "Escape" && onclose()}>
     <form style="display:contents" onsubmit={submit}>
-    <header class="dialog-header"><h2>{title}</h2></header>
+    <DialogHeader {title} path={nodePath} />
     <div class="dialog-content">
     <label>{label}
       <div class="input-row">
@@ -96,7 +97,6 @@
     display: flex; align-items: center; justify-content: center;
   }
   .dialog { width: min(420px, calc(100vw - 32px)); }
-  h2 { margin: 0 0 10px; font-size: 18px; color: var(--accent); }
   label { display: flex; flex-direction: column; gap: 4px; }
   .input-row { display: flex; gap: 6px; align-items: center; }
   .input-row input { flex: 1; min-width: 0; }

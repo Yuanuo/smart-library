@@ -1,9 +1,10 @@
 <script>
   // Pick the folder to move a file or folder into (a read-write local folder).
   import { onMount } from "svelte";
+  import DialogHeader from "./DialogHeader.svelte";
 
   // `dirs`: every folder of the library (paths); `from`: the path being moved
-  let { title = "移动到", from, dirs, onok, onclose } = $props();
+  let { title = "移动到", nodePath = "", from, dirs, onok, onclose } = $props();
   let query = $state("");
   let busy = $state(false);
   let error = $state("");
@@ -35,9 +36,9 @@
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onkeydown={(e) => e.key === "Escape" && onclose()}>
-    <header class="dialog-header"><h2>{title}</h2></header>
+    <DialogHeader {title} path={nodePath} />
     <div class="dialog-content">
-    <p class="muted from">「{from.split("/").pop()}」要移到哪个文件夹？</p>
+    <p class="muted from">要移到哪个文件夹？</p>
     <input type="text" bind:value={query} bind:this={box} placeholder="输入文字筛选文件夹" aria-label="筛选文件夹" />
     <ul>
       {#each places as p (p.path)}
@@ -55,7 +56,6 @@
 <style>
   .backdrop { position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.3); display: flex; align-items: center; justify-content: center; }
   .dialog { width: min(480px, calc(100vw - 32px)); }
-  h2 { margin: 0 0 6px; font-size: 18px; color: var(--accent); }
   .from { margin: 0 0 8px; font-size: 13px; }
   ul { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; }
   li button { width: 100%; text-align: left; border: none; background: none; padding: 6px 10px; border-radius: 0; }

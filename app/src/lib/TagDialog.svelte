@@ -3,8 +3,9 @@
   // Tags are separated by commas; the tags already in use are offered.
   import { onMount } from "svelte";
   import * as api from "./api.js";
+  import DialogHeader from "./DialogHeader.svelte";
 
-  let { heading, subtitle = "", quote = "", withNote = false, tags = "", note = "", okLabel = "保存", onok, onclose } = $props();
+  let { heading, nodePath = "", subtitle = "", quote = "", withNote = false, tags = "", note = "", okLabel = "保存", onok, onclose } = $props();
 
   // svelte-ignore state_referenced_locally
   let text = $state(tags);
@@ -53,7 +54,7 @@
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={heading} tabindex="-1" onkeydown={(e) => e.key === "Escape" && onclose()}><form style="display:contents" onsubmit={submit}>
     <!-- close dialog -->
-    <header class="dialog-header"><h2>{heading}</h2></header>
+    <DialogHeader title={heading} path={nodePath} />
     <div class="dialog-content">
     {#if subtitle}<p class="muted sub">{subtitle}</p>{/if}
     {#if quote}<blockquote>{quote}</blockquote>{/if}
@@ -85,7 +86,7 @@
     display: flex; align-items: center; justify-content: center;
   }
   .dialog { width: min(500px, calc(100vw - 32px)); }
-  h2 { margin: 0 0 6px; font-size: 18px; color: var(--accent); }
+
   .sub { margin: 0 0 8px; font-size: 13px; }
   blockquote {
     margin: 6px 0 10px; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--bg);

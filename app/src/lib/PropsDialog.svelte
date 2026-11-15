@@ -7,8 +7,9 @@
   import { onMount } from "svelte";
   import * as api from "./api.js";
   import ChipInput from "./ChipInput.svelte";
+  import DialogHeader from "./DialogHeader.svelte";
 
-  let { lib, libTitle = "", bookId = null, path = "", title = "", onsaved, onclose } = $props();
+  let { lib, libTitle = "", bookId = null, path = "", title = "", nodePath = "", onsaved, onclose } = $props();
 
   const DIMS = [
     ["bulei", "部类", "用 / 分层，如 华严部类/华严部"],
@@ -97,10 +98,8 @@
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="属性" tabindex="-1"
     onkeydown={(e) => e.key === "Escape" && onclose()}>
     <form style="display:contents" onsubmit={(e) => (e.preventDefault(), save())}>
-    <header class="dialog-header"><h2>属性：{title}</h2></header>
+    <DialogHeader title={`属性：${title}`} path={nodePath || libTitle} />
     <div class="dialog-content">
-    <p class="muted sub">{libTitle}</p>
-    <p class="muted sub">{!bookId && !path ? "知识库 ID" : "节点 ID"}：{bookId || path || lib}</p>
 
     {#if loading}
       <p class="muted">载入中…</p>
@@ -172,8 +171,6 @@
     display: flex; align-items: center; justify-content: center;
   }
   .dialog { width: min(620px, calc(100vw - 32px)); }
-  h2 { margin: 0; font-size: 20px; color: var(--accent); overflow-wrap: anywhere; }
-  .sub { margin: 2px 0 8px; font-size: 13px; }
   fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; padding: 4px 14px 10px; }
   legend { padding: 0 6px; font-weight: 600; }
   .row { display: flex; gap: 12px; align-items: flex-start; margin: 8px 0; }

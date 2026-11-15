@@ -125,7 +125,10 @@
     else if (type === "locate") locate({ lib: c.lib, bookId: c.bookId ?? null, path: c.path });
     else if (type === "props") {
       const l = libraries.find((x) => x.id === c.lib);
-      if (l) propsDlg = { lib: l.id, libTitle: l.title, bookId: l.kind === "cbeta" ? c.bookId : null, path: l.kind === "cbeta" ? "" : c.path, title: c.title };
+      const bookId = l?.kind === "cbeta" ? c.bookId : null;
+      const path = l?.kind === "cbeta" ? "" : c.path;
+      const nodePath = l ? (libPanel?.nodePath(l.id, { bookId, path }) || [l.title, c.title].filter(Boolean).join("/")) : "";
+      if (l) propsDlg = { lib: l.id, libTitle: l.title, bookId, path, title: c.title, nodePath };
     }
   }
 
@@ -299,7 +302,10 @@
           },
         };
       } else if (a.type === "tag") {
-        tagNode(v.lib, v.book_id ?? null, v.path, docTitle(v));
+        const l = libraries.find((x) => x.id === v.lib);
+        const bookId = v.book_id ?? null;
+        const nodePath = libPanel?.nodePath(v.lib, { bookId, path: v.path }) || [l?.title, docTitle(v)].filter(Boolean).join("/");
+        tagNode(v.lib, bookId, v.path, docTitle(v), nodePath);
       }
     } catch (e) {
       error = String(e);
@@ -307,10 +313,10 @@
   }
 
   /** Tags of a whole book / article. */
-  async function tagNode(lib, bookId, path, title) {
+  async function tagNode(lib, bookId, path, title, nodePath = "") {
     const current = await api.nodeTagsGet(lib, bookId, path);
     tagDlg = {
-      heading: `标签：${title}`, subtitle: "", tags: current.join(", "),
+      heading: `标签：${title}`, nodePath, subtitle: "", tags: current.join(", "),
       onok: async (tags) => {
         await api.nodeTagsSet(lib, bookId, path, title, tags);
         notice = tags.trim() ? "标签已保存。" : "已清除标签。";
@@ -319,27 +325,27 @@
     };
   }
 
-  let propsDlg = $state(null); // { lib, libTitle, bookId, path, title }
+  let propsDlg = $state(null); // { lib, libTitle, bookId, path, title, nodePath }
   /** The properties dialog of a node: CBETA the whole book; the others the article / file / folder / note. */
-  function propsFromTree(l, node, treeKey = "") {
+  function propsFromTree(l, node, treeKey = "", nodePath = "") {
     if (!node) {
-      propsDlg = { lib: l.id, libTitle: l.title, bookId: null, path: "", title: l.title };
+      propsDlg = { lib: l.id, libTitle: l.title, bookId: null, path: "", title: l.title, nodePath: l.title };
       return;
     }
     const bookId = l.kind === "cbeta" ? node.book_id : null;
     const isNavFolder = (l.kind === "cbeta" || l.kind === "html") && !node.book_id && !node.path;
     const path = isNavFolder ? `@nav${treeKey}` : l.kind === "cbeta" ? "" : (node.path ?? node.rel);
     if (path == null) return;
-    propsDlg = { lib: l.id, libTitle: l.title, bookId, path, title: node.title };
+    propsDlg = { lib: l.id, libTitle: l.title, bookId, path, title: node.title, nodePath: nodePath || l.title };
   }
 
-  function tagFromTree(l, node) {
+  function tagFromTree(l, node, nodePath = "") {
     // CBETA: the whole book; the others: the article / file / folder / note
     if (l.kind === "cbeta") {
       if (!node.book_id) return;
-      tagNode(l.id, node.book_id, "", node.title).catch((e) => (error = String(e)));
+      tagNode(l.id, node.book_id, "", node.title, nodePath).catch((e) => (error = String(e)));
     } else {
-      tagNode(l.id, null, node.path ?? node.rel, node.title).catch((e) => (error = String(e)));
+      tagNode(l.id, null, node.path ?? node.rel, node.title, nodePath).catch((e) => (error = String(e)));
     }
   }
 
@@ -809,7 +815,7 @@
             ontag={tagFromTree}
             onprops={propsFromTree}
             oncopy={copyPath}
-            onexport={(lib, sel, label, name) => (exportDlg = { lib, sel, label, name })}
+            onexport={(lib, sel, label, name, nodePath = "") => (exportDlg = { lib, sel, label, name, nodePath })}
             onimport={importLibrary}
             onlibs={async () => (st = await api.status())}
             onerror={(e) => (error = e)} />

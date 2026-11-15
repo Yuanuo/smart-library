@@ -319,6 +319,7 @@
     const dir = file && node.path == null;
     nameDlg = {
       title: dir ? `重命名文件夹：${node.title}` : `重命名：${node.title}`,
+      nodePath: pathOf(lib, key),
       label: dir ? "文件夹名称" : file ? "文件名（不含后缀）" : "标题",
       value: node.title,
       okLabel: "确定",
@@ -368,6 +369,7 @@
     try {
       moveDlg = {
         title: `移动到：${node.title}`,
+        nodePath: pathOf(lib, key),
         from: node.rel,
         dirs: await api.folderDirs(lib),
         onok: guard(lib, async (parent) => {
@@ -866,13 +868,13 @@
       ],
       node.book_id || node.path || node.rel || l.kind === "cbeta" || l.kind === "html"
         ? [
-            { label: "属性…", action: () => onprops(l, node, key) },
-            ...(node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node) }] : []),
+            { label: "属性…", action: () => onprops(l, node, key, pathOf(l.id, key)) },
+            ...(node.book_id || node.path || node.rel ? [{ label: "标签…", action: () => ontag(l, node, pathOf(l.id, key)) }] : []),
           ]
         : [],
       [
         ...(notes ? [{ label: "导入到这里（作为子节点）…", action: () => onimport({ lib: l.id, parent: node.rel, key }) }] : []),
-        { label: "导出此节点…", action: () => onexport(l, { whole: false, keys: [key], rels: node.rel ? [node.rel] : [] }, node.title, node.title) },
+        { label: "导出此节点…", action: () => onexport(l, { whole: false, keys: [key], rels: node.rel ? [node.rel] : [] }, node.title, node.title, pathOf(l.id, key)) },
       ],
     );
   }
@@ -1001,6 +1003,15 @@
     }
   }
 
+  /** Full tree path (`lib/a/b/node`) for a document when its branch is loaded. */
+  export function nodePath(lib, { bookId = null, path = "" } = {}) {
+    if (nodes[lib]) {
+      const trail = findNode(nodes[lib], { bookId, path });
+      if (trail) return pathOf(lib, "/" + trail.join("/"));
+    }
+    return "";
+  }
+
   /** Index path of the node showing a document, or null. CBETA: the leaf of
    * the book (for the parts of a big book, the last part starting at or
    * before the volume); HTML: the article. */
@@ -1124,7 +1135,7 @@
               ...(l.kind === "folder" ? [{ label: "新建文件夹…", action: () => newFolder(l.id, null) }] : []),
             ]
           : [],
-        [{ label: "重命名…（F2）", action: () => renameLibrary(l) }, { label: "属性…", action: () => onprops(l, null) }],
+        [{ label: "重命名…（F2）", action: () => renameLibrary(l) }, { label: "属性…", action: () => onprops(l, null, "", l.title) }],
         [
           ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
           { label: "复制目录树路径", action: () => oncopy(l.title) },
@@ -1138,7 +1149,7 @@
         ],
         [
           ...(notes ? [{ label: "导入到此知识库…", action: () => onimport({ lib: l.id, parent: null, key: null }) }] : []),
-          { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title, l.title) },
+          { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title, l.title, l.title) },
           ...(l.kind === "folder"
             ? [l.writable ? { label: "锁定知识库（改为只读）", action: () => setWritable(l, false), disabled: building } : { label: "解锁知识库（可读写）…", action: () => setWritable(l, true), disabled: building }]
             : []),
@@ -1153,6 +1164,7 @@
   function renameLibrary(l) {
     nameDlg = {
       title: `重命名知识库：${l.title}`,
+      nodePath: l.title,
       label: "名称",
       value: l.title,
       okLabel: "确定",

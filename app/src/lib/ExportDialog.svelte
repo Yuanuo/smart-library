@@ -4,10 +4,11 @@
   import { onMount } from "svelte";
   import { save } from "@tauri-apps/plugin-dialog";
   import * as api from "./api.js";
+  import DialogHeader from "./DialogHeader.svelte";
 
   // `sel`: { whole, keys, rels } as the export command takes them; `label`: what is exported
   // `name`: what the file is named after (the node, the parent of the picked nodes, or the library)
-  let { lib, sel, label, name, onclose, ondone } = $props();
+  let { lib, sel, label, name, nodePath = "", onclose, ondone } = $props();
 
   let withFiles = $state(true);
   let busy = $state(false);
@@ -59,9 +60,9 @@
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && !busy && onclose()}>
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="导出" tabindex="-1"
     onkeydown={(e) => e.key === "Escape" && !busy && onclose()}>
-    <header class="dialog-header"><h2>导出：{sel.whole ? lib.title : label}</h2></header>
+    <DialogHeader title={`导出：${sel.whole ? lib.title : label}`} path={nodePath || (sel.whole ? lib.title : "")} />
     <div class="dialog-content">
-    <p><b>{lib.title}</b>：{sel.whole ? "整个知识库" : label}</p>
+
     <p class="muted small">
       导出包（<code>.smartlib</code>，内部是 ZIP）：<code>manifest.json</code>（目录树、标题、来源）加上每篇一个 Markdown 文件。
       {#if lib.kind === "cbeta" || lib.kind === "html"}CBETA 的编注、异读和梵汉对照转成脚注，导入后仍可悬停查看；图片不导出。{/if}
@@ -92,7 +93,7 @@
     display: flex; align-items: center; justify-content: center;
   }
   .dialog { width: min(540px, calc(100vw - 32px)); }
-  h2 { margin: 0 0 8px; font-size: 18px; color: var(--accent); }
+
   p { margin: 6px 0; }
   .small { font-size: 13px; }
   .check { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
