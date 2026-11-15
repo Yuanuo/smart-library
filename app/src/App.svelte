@@ -103,6 +103,8 @@
     else if (type === "settings") settingsBox = true;
     else if (type === "diary") libPanel?.openDiary();
     else if (type === "new") libPanel?.newNote();
+    else if (type === "new-mindmap") libPanel?.newMindMap();
+    else if (type === "new-whiteboard") libPanel?.newWhiteboard();
     else if (type === "close") workspace.closeActive();
     else if (type === "next-tab") workspace.cycleTab(1);
     else if (type === "prev-tab") workspace.cycleTab(-1);

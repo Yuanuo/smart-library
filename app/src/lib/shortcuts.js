@@ -8,12 +8,13 @@
 //   Ctrl/Cmd+P                 properties (filters, other names, tags) of the document
 //   Ctrl/Cmd+L                 show the document in the tree
 //   Ctrl/Cmd+N                 new note
+//   Ctrl/Cmd+Shift+1 / 2 / 3   new note / mind map / whiteboard
 //   Ctrl/Cmd+W                 close the tab
 //   Ctrl/Cmd+Tab (+Shift)      next / previous tab
 //   Ctrl/Cmd+Shift+S           original / simplified characters
 // `fire(type)` is called with "quick", "search", "recent", "marks", "diary",
-// "settings", "tag", "bookmark", "props", "locate", "new", "close", "next-tab",
-// "prev-tab" or "script". Returns a function that removes the listeners.
+// "settings", "tag", "bookmark", "props", "locate", "new", "new-mindmap",
+// "new-whiteboard", "close", "next-tab", "prev-tab" or "script". Returns a function that removes the listeners.
 
 /** The text selected in a reader (not in an input), else "". */
 export function readerSelection() {
@@ -49,6 +50,9 @@ export function installShortcuts(fire) {
       if (type && e.target?.closest?.(ownKeys)) type = null;
       if (e.key === "Tab") type = e.shiftKey ? "prev-tab" : "next-tab";
       if (e.shiftKey && e.key.toLowerCase() === "s") type = "script";
+      if (e.shiftKey && (e.code === "Digit1" || e.key === "1" || e.key === "!")) type = "new";
+      if (e.shiftKey && (e.code === "Digit2" || e.key === "2" || e.key === "@")) type = "new-mindmap";
+      if (e.shiftKey && (e.code === "Digit3" || e.key === "3" || e.key === "#")) type = "new-whiteboard";
       if (type) {
         e.preventDefault();
         shiftAlone = false;

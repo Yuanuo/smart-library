@@ -298,6 +298,9 @@
     createNote(sel?.lib ?? null, sel?.key ?? null, kind);
   }
 
+  export const newMindMap = () => addNoteHere("mindmap");
+  export const newWhiteboard = () => addNoteHere("whiteboard");
+
   /** Today's diary: shown in the tree and opened. */
   export async function openDiary() {
     try {
@@ -888,9 +891,9 @@
   }
   function addItems() {
     return [
-      { label: "新建笔记", action: () => addNoteHere("md") },
-      { label: "新建脑图", action: () => addNoteHere("mindmap") },
-      { label: "新建白板", action: () => addNoteHere("whiteboard") },
+      { label: "新建笔记（Ctrl+Shift+1）", action: () => addNoteHere("md") },
+      { label: "新建脑图（Ctrl+Shift+2）", action: () => addNoteHere("mindmap") },
+      { label: "新建白板（Ctrl+Shift+3）", action: () => addNoteHere("whiteboard") },
       { label: "今日日记（Ctrl+J）", action: openDiary },
       "separator",
       { label: "新建知识库…", action: onbind },
