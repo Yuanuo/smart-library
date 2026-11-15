@@ -392,7 +392,16 @@
         dirs: await api.noteMoveTargets(lib, node.rel),
         onok: guard(lib, async (targetParent) => {
           await api.moveNote(lib, node.rel, targetParent || null, 999999);
-          await refresh(lib, null);
+          await reconcile(lib, null);
+          const trail = targetParent ? await findNoteNode(lib, targetParent) : [];
+          if (trail) {
+            let k = "";
+            for (const i of trail) {
+              k += `/${i}`;
+              expansionOf(lib)[k] = true;
+            }
+            if (k) await refresh(lib, k);
+          }
         }),
       };
     } catch (e) {
@@ -736,9 +745,10 @@
     }
     const level = key ?? "";
     const list = key ? nodeAt(lib, key).children : nodes[lib];
+    const isNotesLib = isNotes(lib);
     for (let i = 0; i < list.length; i++) {
       const k = `${level}/${i}`;
-      if (list[i].path == null && !list[i].lazy && expanded[lib]?.[k]) await reconcile(lib, k);
+      if ((isNotesLib || list[i].path == null) && !list[i].lazy && expanded[lib]?.[k]) await reconcile(lib, k);
     }
   }
 
