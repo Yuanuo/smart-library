@@ -3,8 +3,8 @@
   import { onMount } from "svelte";
   import DialogHeader from "./DialogHeader.svelte";
 
-  // `dirs`: every folder of the library (paths); `from`: the path being moved
-  let { title = "移动到", nodePath = "", from, dirs, onok, onclose } = $props();
+  // `dirs`: every folder of the library (paths) or pre-built `{ path, label }` targets; `from`: the path being moved
+  let { title = "移动到", nodePath = "", from = "", dirs, onok, onclose } = $props();
   let query = $state("");
   let busy = $state(false);
   let error = $state("");
@@ -13,12 +13,16 @@
   onMount(() => box?.focus());
 
   const here = $derived(from.includes("/") ? from.slice(0, from.lastIndexOf("/")) : "");
-  // the top, and the folders it can go into: not itself, nothing inside itself, not where it is
-  const places = $derived(
-    [{ path: "", label: "（知识库顶层）" }, ...dirs.map((d) => ({ path: d, label: d.replaceAll("/", " / ") }))].filter(
-      (p) => p.path !== from && !p.path.startsWith(from + "/") && p.path !== here && p.label.toLowerCase().includes(query.trim().toLowerCase()),
-    ),
-  );
+  // Pre-built `{ path, label }` targets are already filtered by the backend; string paths are filtered here.
+  const places = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    if (dirs.length && typeof dirs[0] === "object") {
+      return q ? dirs.filter((p) => p.label.toLowerCase().includes(q)) : dirs;
+    }
+    return [{ path: "", label: "（知识库顶层）" }, ...dirs.map((d) => ({ path: d, label: d.replaceAll("/", " / ") }))].filter(
+      (p) => p.path !== from && !p.path.startsWith(from + "/") && p.path !== here && p.label.toLowerCase().includes(q),
+    );
+  });
 
   async function pick(p) {
     if (busy) return;

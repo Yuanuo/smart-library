@@ -197,6 +197,7 @@ fn main() {
             commands::export_library,
             commands::import_package,
             commands::delete_note,
+            commands::note_move_targets,
             commands::move_note,
             commands::bind_libraries,
             commands::unbind_library,

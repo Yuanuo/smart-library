@@ -1647,6 +1647,49 @@ pub async fn delete_note(lib: String, id: String, state: State<'_, AppState>) ->
     Ok(n)
 }
 
+#[derive(Serialize)]
+pub struct MoveTargetDto {
+    path: String,
+    label: String,
+}
+
+#[tauri::command]
+pub async fn note_move_targets(
+    lib: String,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<MoveTargetDto>, String> {
+    let store = notes_of(&state, &lib)?;
+    let nid = note_id(&id)?;
+    let rows = store.rows()?;
+    let current_parent = rows
+        .iter()
+        .find(|r| r.id == nid)
+        .and_then(|r| r.ancestors.last().copied());
+    let mut out = Vec::new();
+    if current_parent.is_some() {
+        out.push(MoveTargetDto {
+            path: String::new(),
+            label: "（知识库顶层）".to_string(),
+        });
+    }
+    for r in rows {
+        if r.id == nid || r.ancestors.contains(&nid) || Some(r.id) == current_parent {
+            continue;
+        }
+        let label = if r.folders.is_empty() {
+            r.title
+        } else {
+            format!("{} / {}", r.folders.join(" / "), r.title)
+        };
+        out.push(MoveTargetDto {
+            path: r.id.to_string(),
+            label,
+        });
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 pub async fn move_note(
     lib: String,

@@ -383,6 +383,23 @@
     }
   }
 
+  /** Pick a target note (or library root) and move an internal note into it. */
+  async function moveNoteNode(lib, node, key) {
+    try {
+      moveDlg = {
+        title: `移动到：${node.title}`,
+        nodePath: pathOf(lib, key),
+        dirs: await api.noteMoveTargets(lib, node.rel),
+        onok: guard(lib, async (targetParent) => {
+          await api.moveNote(lib, node.rel, targetParent || null, 999999);
+          await refresh(lib, null);
+        }),
+      };
+    } catch (e) {
+      onerror?.(String(e));
+    }
+  }
+
   async function deleteNote(lib, node, key) {
     const file = isRwFolder(lib);
     const dir = file && node.path == null;
@@ -836,6 +853,7 @@
       notes
         ? [
             { label: "重命名…（F2）", action: () => renameNote(l.id, node, key) },
+            { label: "移动到…", action: () => moveNoteNode(l.id, node, key) },
             { label: "上移", action: () => shiftNote(l.id, node, key, -1), disabled: !canShift(l.id, node, key, -1) },
             { label: "下移", action: () => shiftNote(l.id, node, key, 1), disabled: !canShift(l.id, node, key, 1) },
             { label: "删除…", action: () => deleteNote(l.id, node, key) },

@@ -81,6 +81,7 @@ export const notePicture = (lib, name) => invoke("note_picture", { lib, name });
 export const noteAppend = (lib, id, text) => invoke("note_append", { lib, id, text });
 export const saveNote = (lib, id, content) => invoke("save_note", { lib, id, content });
 export const deleteNote = (lib, id) => invoke("delete_note", { lib, id });
+export const noteMoveTargets = (lib, id) => invoke("note_move_targets", { lib, id });
 export const moveNote = (lib, id, parent, index) => invoke("move_note", { lib, id, parent, index });
 export const unbindLibrary = (id) => invoke("unbind_library", { id });
 export const tree = (lib) => invoke("tree", { lib });
