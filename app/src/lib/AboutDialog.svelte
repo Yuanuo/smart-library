@@ -1,5 +1,5 @@
 <script>
-  // A short note about the program: version (YY.MM.DD) and where its data is.
+  // A short note about the program: version (YY.MM.DD) and what it does.
   let { info, onclose, oncheckupdate } = $props();
 </script>
 
@@ -10,7 +10,6 @@
     <div class="dialog-content">
     <p class="ver">版本 {info?.version ?? ""}（年.月.日）</p>
     <p>本地知识库桌面软件：快速、精确地阅读和检索《大藏经》等大量文本，也可以链接本机文件夹、写自己的笔记。</p>
-    <p class="muted">数据位置：<span class="path">{info?.data_dir ?? ""}</span></p>
     </div>
     <div class="actions"><button onclick={oncheckupdate}>检查更新</button><button class="primary" onclick={onclose}>关闭</button></div>
   </div>
@@ -24,6 +23,5 @@
   .dialog { width: min(480px, calc(100vw - 32px)); }
   h2 { margin: 0 0 4px; font-size: 22px; color: var(--accent); }
   .ver { margin: 0 0 10px; color: var(--muted); }
-  .path { overflow-wrap: anywhere; user-select: text; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 </style>

@@ -111,6 +111,8 @@
     else if (type === "close") workspace.closeActive();
     else if (type === "next-tab") workspace.cycleTab(1);
     else if (type === "prev-tab") workspace.cycleTab(-1);
+    else if (type === "nav-back") workspace.navigateHistory(-1);
+    else if (type === "nav-forward") workspace.navigateHistory(1);
     else if (type === "script") updateSettings({ readerScript: settings.readerScript === "simp" ? "orig" : "simp" });
     else docShortcut(type);
   }
@@ -802,7 +804,7 @@
           <button class="icon" onclick={openSearch} title="全文搜索（Ctrl+H）" aria-label="全文搜索"><Icon name="search" size={18} /></button>
           <button class="icon" onclick={() => openDictWindow("")} title="查词典" aria-label="查词典"><Icon name="dict" size={18} /></button>
           <button class="icon" onclick={openMarks} title="收藏与标签（Ctrl+B）" aria-label="收藏与标签"><Icon name="bookmark" size={18} /></button>
-          <button class="icon" onclick={openRecent} title="最近打开（Ctrl+E）" aria-label="最近打开"><Icon name="clock" size={18} /></button>
+          <button class="icon" onclick={openRecent} title="最近访问（Ctrl+E）" aria-label="最近访问"><Icon name="clock" size={18} /></button>
           {#if settings.aiOn}
             <button class="icon" class:on={aiOpen} onclick={() => setAiOpen(!aiOpen)} title="打开 / 收起右侧 AI 助手栏（F1）" aria-label="AI 助手"><Icon name="sparkles" size={18} /></button>
           {/if}
@@ -952,7 +954,7 @@
 {/if}
 
 {#if settingsBox}
-  <SettingsDialog onclose={() => (settingsBox = false)} />
+  <SettingsDialog dataDir={appInfo?.data_dir ?? ""} onclose={() => (settingsBox = false)} />
 {/if}
 
 {#if recentBox}

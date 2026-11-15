@@ -6,8 +6,9 @@
   import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { settings, update, reset, FONTS, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
   import { SHORTCUT_DEFS, getShortcut, comboParts, eventToCombo, setShortcutRecording } from "./shortcuts.js";
+  import DialogHeader from "./DialogHeader.svelte";
 
-  let { onclose } = $props();
+  let { onclose, dataDir = "" } = $props();
 
   const TABS = [
     ["appearance", "外观"],
@@ -458,7 +459,7 @@
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="设置" tabindex="-1"
     onkeydown={(e) => { if (e.key === "Escape" && !recordingId) onclose(); }}>
-    <header class="dialog-header"><h2>设置</h2></header>
+    <DialogHeader title="设置" path={dataDir ? `数据位置：${dataDir}` : ""} />
     <div class="dialog-content settings-split">
       <nav class="tabs" aria-label="设置分组">
         {#each TABS as [id, label] (id)}
@@ -886,7 +887,6 @@
     display: flex; align-items: center; justify-content: center;
   }
   .dialog { width: min(760px, calc(100vw - 32px)); height: min(580px, calc(100vh - 48px)); }
-  h2 { margin: 0; font-size: 20px; color: var(--accent); }
   .settings-split {
     display: flex; flex: 1; min-height: 0; padding: 0; overflow: hidden;
   }
