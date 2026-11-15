@@ -112,6 +112,8 @@ export const aiFetchModels = (format, baseUrl, apiKey) =>
   invoke("ai_fetch_models", { format, baseUrl, apiKey });
 export const aiSummarizeTitle = (config, userText, assistantText) =>
   invoke("ai_summarize_title", { config, userText, assistantText });
+export const aiSummarizeNoteTitle = (config, content) =>
+  invoke("ai_summarize_note_title", { config, content });
 export const onAiStream = (fn) => listen("ai-stream", (e) => fn(e.payload));
 export const aiMindmapParse = (input, fallbackTitle = "脑图") =>
   invoke("ai_mindmap_parse", { input, fallbackTitle });

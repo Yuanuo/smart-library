@@ -93,6 +93,14 @@ pub async fn ai_summarize_title(
 }
 
 #[tauri::command]
+pub async fn ai_summarize_note_title(
+    config: crate::ai::AiModelConfig,
+    content: String,
+) -> Result<String, String> {
+    crate::ai::summarize_note_title(config, content).await
+}
+
+#[tauri::command]
 pub fn ai_mindmap_parse(input: String, fallback_title: Option<String>) -> Result<String, String> {
     smart_library_core::mindmap::from_outline_or_json(&input, fallback_title.as_deref().unwrap_or("脑图"))
 }

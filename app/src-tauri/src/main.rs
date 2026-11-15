@@ -224,6 +224,7 @@ fn main() {
             commands::ai_test,
             commands::ai_fetch_models,
             commands::ai_summarize_title,
+            commands::ai_summarize_note_title,
             commands::ai_mindmap_parse,
             commands::ai_doc_text,
             commands::ai_session_save,

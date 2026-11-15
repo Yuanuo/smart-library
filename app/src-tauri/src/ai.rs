@@ -237,22 +237,11 @@ pub async fn test_connection(cfg: AiModelConfig) -> Result<String, String> {
     Ok(format!("连接成功（模型回复：{}）", reply.trim()))
 }
 
-/// Generate a concise title (<= 16 chars) from the first exchange.
-pub async fn summarize_title(
-    cfg: AiModelConfig,
-    user_text: String,
-    assistant_text: String,
-) -> Result<String, String> {
+async fn complete_short_title(cfg: AiModelConfig, prompt: String, max_chars: usize) -> Result<String, String> {
     validate_config(&cfg)?;
     let client = build_client(Some(15))?;
     let url = endpoint_url(&cfg.format, &cfg.base_url);
     let key = cfg.api_key.trim();
-    let u: String = user_text.chars().take(400).collect();
-    let a: String = assistant_text.chars().take(400).collect();
-    let prompt = format!(
-        "请用不超过14个字的简短标题概括以下对话主题（只输出标题本身，不要标点符号、引号或解释）：\n用户：{}\n助手：{}",
-        u, a
-    );
 
     let req = if cfg.format == "anthropic" {
         let mut r = client
@@ -264,7 +253,7 @@ pub async fn summarize_title(
         }
         r.json(&json!({
             "model": cfg.model.trim(),
-            "max_tokens": 32,
+            "max_tokens": 48,
             "messages": [{"role": "user", "content": prompt}]
         }))
     } else {
@@ -274,7 +263,7 @@ pub async fn summarize_title(
         }
         r.json(&json!({
             "model": cfg.model.trim(),
-            "max_tokens": 32,
+            "max_tokens": 48,
             "messages": [{"role": "user", "content": prompt}]
         }))
     };
@@ -304,12 +293,41 @@ pub async fn summarize_title(
         .next()
         .unwrap_or("")
         .trim();
-    let short: String = cleaned.chars().take(18).collect();
+    let short: String = cleaned.chars().take(max_chars).collect();
     if short.is_empty() {
         Err("空标题".into())
     } else {
         Ok(short)
     }
+}
+
+/// Generate a concise title (<= 16 chars) from the first exchange.
+pub async fn summarize_title(
+    cfg: AiModelConfig,
+    user_text: String,
+    assistant_text: String,
+) -> Result<String, String> {
+    let u: String = user_text.chars().take(400).collect();
+    let a: String = assistant_text.chars().take(400).collect();
+    let prompt = format!(
+        "请用不超过14个字的简短标题概括以下对话主题（只输出标题本身，不要标点符号、引号或解释）：\n用户：{}\n助手：{}",
+        u, a
+    );
+    complete_short_title(cfg, prompt, 18).await
+}
+
+/// Generate a concise note title from the note's content.
+pub async fn summarize_note_title(cfg: AiModelConfig, content: String) -> Result<String, String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Err("笔记内容为空，无法生成标题".into());
+    }
+    let snippet: String = trimmed.chars().take(1500).collect();
+    let prompt = format!(
+        "请根据以下笔记内容生成一个简短准确的标题（不超过16个字，只输出标题本身，不要标点符号、引号或解释）：\n{}",
+        snippet
+    );
+    complete_short_title(cfg, prompt, 24).await
 }
 
 /// Stream a chat completion and emit `ai-stream` events to the frontend.

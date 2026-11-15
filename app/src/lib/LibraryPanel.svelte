@@ -16,6 +16,7 @@
   import { startScopeDrag } from "./scopeDrag.js";
   import { installTextDrag } from "./textDrag.js";
   import { confirmWritable, isEditableName } from "./writable.js";
+  import { isAiReady, toBackendAiConfig } from "./settings.svelte.js";
 
   let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
 
@@ -320,6 +321,16 @@
       okLabel: "确定",
       hint: file ? nameRules : "",
       validate: file ? checkName : null,
+      aiSuggest: !dir && isAiReady()
+        ? async () => {
+            const doc = await api.aiDocText(lib, null, node.path ?? node.rel);
+            const body = (doc?.text || "").trim();
+            if (!body) throw new Error("笔记内容为空，请先输入内容后再使用 AI 自动命名");
+            let suggested = await api.aiSummarizeNoteTitle(toBackendAiConfig(), body);
+            if (file) suggested = suggested.replace(/[\\/:*?"<>|]/g, "").trim();
+            return suggested;
+          }
+        : null,
       onok: guard(lib, async (title) => {
         if (!file) {
           await api.renameNote(lib, node.rel, title);

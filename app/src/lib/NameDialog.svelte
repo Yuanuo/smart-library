@@ -4,10 +4,11 @@
 
   // `hint`: a rule shown under the box; `validate(text)`: resolves to the reason
   // the text is not acceptable (or "" when it is), checked as the user types.
-  let { title, label = "名称", value = "", okLabel = "确定", hint = "", validate = null, allowEmpty = false, onok, onclose } = $props();
+  let { title, label = "名称", value = "", okLabel = "确定", hint = "", validate = null, allowEmpty = false, aiSuggest = null, onok, onclose } = $props();
   let text = $state(untrack(() => value));
   let input = $state();
   let busy = $state(false);
+  let aiBusy = $state(false);
   let error = $state("");
   let bad = $state("");
 
@@ -29,9 +30,27 @@
     input?.select();
   });
 
+  async function runAiSuggest() {
+    if (!aiSuggest || busy || aiBusy) return;
+    aiBusy = true;
+    error = "";
+    try {
+      const next = (await aiSuggest())?.trim();
+      if (next) {
+        text = next;
+        input?.focus();
+        input?.select();
+      }
+    } catch (err) {
+      error = String(err);
+    } finally {
+      aiBusy = false;
+    }
+  }
+
   async function submit(e) {
     e.preventDefault();
-    if ((!allowEmpty && !text.trim()) || busy || bad) return;
+    if ((!allowEmpty && !text.trim()) || busy || aiBusy || bad) return;
     busy = true;
     error = "";
     try {
@@ -50,13 +69,22 @@
     <form style="display:contents" onsubmit={submit}>
     <header class="dialog-header"><h2>{title}</h2></header>
     <div class="dialog-content">
-    <label>{label}<input type="text" bind:value={text} bind:this={input} /></label>
+    <label>{label}
+      <div class="input-row">
+        <input type="text" bind:value={text} bind:this={input} disabled={busy || aiBusy} />
+        {#if aiSuggest}
+          <button type="button" class="ai-btn" onclick={runAiSuggest} disabled={busy || aiBusy} title="根据笔记内容使用 AI 自动生成标题">
+            {aiBusy ? "生成中…" : "AI 命名"}
+          </button>
+        {/if}
+      </div>
+    </label>
     {#if bad}<p class="error">{bad}</p>{:else if error}<p class="error">{error}</p>{/if}
     {#if hint}<p class="hint muted">{hint}</p>{/if}
     </div>
     <div class="actions">
       <button type="button" onclick={onclose}>取消</button>
-      <button class="primary" disabled={(!allowEmpty && !text.trim()) || busy || !!bad}>{okLabel}</button>
+      <button class="primary" disabled={(!allowEmpty && !text.trim()) || busy || aiBusy || !!bad}>{okLabel}</button>
     </div>
     </form>
   </div>
@@ -70,6 +98,9 @@
   .dialog { width: min(420px, calc(100vw - 32px)); }
   h2 { margin: 0 0 10px; font-size: 18px; color: var(--accent); }
   label { display: flex; flex-direction: column; gap: 4px; }
+  .input-row { display: flex; gap: 6px; align-items: center; }
+  .input-row input { flex: 1; min-width: 0; }
+  .ai-btn { flex: none; white-space: nowrap; font-size: 13px; padding: 6px 10px; }
   .error { color: var(--hl); font-size: 13px; }
   .hint { font-size: 12px; margin: 6px 0 0; white-space: pre-line; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
