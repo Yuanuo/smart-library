@@ -5,7 +5,7 @@ import { settings } from "./settings.svelte.js";
 export const SHORTCUT_DEFS = [
   { id: "quick", label: "标题快搜", defaultKey: "Ctrl+G", note: "也可双击 Shift" },
   { id: "search", label: "全文搜索", defaultKey: "Ctrl+H" },
-  { id: "recent", label: "最近打开", defaultKey: "Ctrl+E" },
+  { id: "recent", label: "最近访问", defaultKey: "Ctrl+E" },
   { id: "marks", label: "收藏与标签", defaultKey: "Ctrl+B" },
   { id: "settings", label: "打开设置", defaultKey: "Ctrl+," },
   { id: "diary", label: "今日日记", defaultKey: "Ctrl+J" },
@@ -20,6 +20,8 @@ export const SHORTCUT_DEFS = [
   { id: "close", label: "关闭当前标签", defaultKey: "Ctrl+W", docOnly: true },
   { id: "next-tab", label: "下一个标签", defaultKey: "Ctrl+Tab" },
   { id: "prev-tab", label: "上一个标签", defaultKey: "Ctrl+Shift+Tab" },
+  { id: "nav-back", label: "上一个视图（后退）", defaultKey: "Ctrl+Shift+ArrowLeft" },
+  { id: "nav-forward", label: "下一个视图（前进）", defaultKey: "Ctrl+Shift+ArrowRight" },
   { id: "script", label: "简体 / 原文切换", defaultKey: "Ctrl+Shift+S" },
   { id: "rename", label: "重命名（目录树）", defaultKey: "F2", local: true },
   { id: "save", label: "保存（笔记 / 脑图 / 白板）", defaultKey: "Ctrl+S", local: true },

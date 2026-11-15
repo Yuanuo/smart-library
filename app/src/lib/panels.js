@@ -4,7 +4,7 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 const PANELS = {
-  recent: { title: "最近打开", width: 820, height: 680 },
+  recent: { title: "最近访问", width: 820, height: 680 },
   marks: { title: "收藏与标签", width: 1000, height: 720 },
 };
 

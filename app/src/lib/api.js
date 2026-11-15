@@ -49,6 +49,7 @@ export const noteChain = (lib, id) => invoke("note_chain", { lib, id });
 export const diaryToday = (date) => invoke("diary_today", { date });
 export const mindmapAddClip = (lib, id, topic, link, tag) => invoke("mindmap_add_clip", { lib, id, topic, link, tag });
 export const recentTouch = (lib, path, bookId, title) => invoke("recent_touch", { lib, path, bookId, title });
+export const recentBump = (lib, path) => invoke("recent_bump", { lib, path });
 export const recentProgress = (lib, path, lb, mode) => invoke("recent_progress", { lib, path, lb, mode });
 export const recentList = (filter = "", limit = 300) => invoke("recent_list", { filter, limit });
 export const openedSet = (lib) => invoke("opened_set", { lib });

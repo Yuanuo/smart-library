@@ -3858,6 +3858,11 @@ pub async fn recent_touch(lib: String, path: String, book_id: Option<String>, ti
 }
 
 #[tauri::command]
+pub async fn recent_bump(lib: String, path: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.history.bump(&lib, &path)
+}
+
+#[tauri::command]
 pub async fn recent_progress(lib: String, path: String, lb: String, mode: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
     state.history.set_progress(&lib, &path, &lb, mode.as_deref())
 }

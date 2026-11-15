@@ -78,6 +78,17 @@ impl History {
         Ok(())
     }
 
+    /// Update only the last-accessed timestamp (e.g. when a document tab is closed).
+    pub fn bump(&self, lib: &str, path: &str) -> Result<(), String> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "UPDATE history SET opened = ?3 WHERE lib = ?1 AND path = ?2",
+            params![lib, path, now()],
+        )
+        .map_err(err)?;
+        Ok(())
+    }
+
     /// The reading position of a document (no change if it is not listed).
     pub fn set_progress(&self, lib: &str, path: &str, lb: &str, mode: Option<&str>) -> Result<(), String> {
         let c = self.conn.lock().unwrap();

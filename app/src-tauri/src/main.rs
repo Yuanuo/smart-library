@@ -179,6 +179,7 @@ fn main() {
             commands::node_tags_set,
             commands::cite_text,
             commands::recent_touch,
+            commands::recent_bump,
             commands::recent_progress,
             commands::recent_list,
             commands::recent_remove,

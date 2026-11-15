@@ -51,7 +51,7 @@
       // about this window's document: its tags and bookmark; closing closes this window
       if (type === "tag" || type === "bookmark") return forward({ type, lb: lastLb, vol: { lib: start.lib, path: start.path, book_id: start.bookId, title, author: "" } });
       if (type === "close") return win.close();
-      if (type === "props" || type === "locate" || type === "next-tab" || type === "prev-tab") return;
+      if (type === "props" || type === "locate" || type === "next-tab" || type === "prev-tab" || type === "nav-back" || type === "nav-forward") return;
       emit("popout-shortcut", { type, text: readerSelection().slice(0, 200) });
     });
     return () => {

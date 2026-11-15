@@ -24,6 +24,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // 2: tabs are `<library>|<path>` (version 1 had CBETA paths only)
 const WORKSPACE_VERSION = 2;
 const MAX_PROGRESS = 500;
+const MAX_VIEW_HISTORY = 100;
 
 let dv = null; // DockviewApi
 let hostEl = null; // the element holding the dockview
@@ -46,6 +47,9 @@ let searchResults = {}; // tab -> { query, hits, totalVolumes, totalBooks }
 let restoring = false;
 let saveTimer = null;
 let defaultMode = "para";
+let viewHistory = []; // [{ tab, lib, bookId, path }]
+let viewIndex = -1;
+let navigatingHistory = false;
 
 export const ws = $state({ empty: true, current: null, opened: 0, activeDoc: null, activeSearch: null }); // current: { title, lib } of the active reading tab
 
@@ -67,7 +71,7 @@ async function save() {
   progress = Object.fromEntries(entries.slice(0, MAX_PROGRESS));
   const layout = dv.toJSON();
   try {
-    await api.saveWorkspace({ version: WORKSPACE_VERSION, layout, progress, popouts, defaultMode });
+    await api.saveWorkspace({ version: WORKSPACE_VERSION, layout, progress, popouts, defaultMode, viewHistory, viewIndex });
   } catch (e) {
     console.warn("save workspace", e);
   }
@@ -499,8 +503,12 @@ export async function popOutAiChat(id) {
 function listenToPopouts() {
   listen("popout-progress", (e) => recordProgress(e.payload.tab, e.payload.lb, e.payload.mode));
   listen("popout-closed", (e) => {
+    const w = popouts[e.payload.tab];
     delete popouts[e.payload.tab];
     scheduleSave();
+    if (w) {
+      api.recentBump(w.lib, w.path).then(() => emit("data-changed").catch(() => {})).catch(() => {});
+    }
   });
   listen("popout-dock", (e) => {
     const q = e.payload;
@@ -553,6 +561,7 @@ export async function init(element, h) {
   dv.onDidActivePanelChange((e) => {
     const panel = e?.panel; // the event is { panel, origin }; panel is undefined when nothing is active
     if (panel && isSearchTab(panel.id)) lastSearchId = panel.id;
+    recordViewHistory(panel);
     // a restored tab that was never shown has no document info yet: its parameters have it
     const i = panel && (infos[panel.id] || (panel.params?.lib ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null, author: "" } : null));
     if (i) ws.current = { ...i, title: panel.title || i.title };
@@ -577,6 +586,15 @@ export async function init(element, h) {
       ws.activeDoc = null;
       ws.activeSearch = null;
     }
+    if (!restoring && panel?.params?.lib && panel?.params?.path != null) {
+      const { lib, path } = panel.params;
+      const tabId = panel.id;
+      queueMicrotask(() => {
+        if (!popouts[tabId]) {
+          api.recentBump(lib, path).then(() => emit("data-changed").catch(() => {})).catch(() => {});
+        }
+      });
+    }
   });
   listenToPopouts();
 
@@ -590,6 +608,14 @@ export async function init(element, h) {
     progress = saved.progress || {};
     defaultMode = saved.defaultMode || "para";
     const known = new Set((h.libraries || []).map((l) => l.id));
+    if (Array.isArray(saved.viewHistory)) {
+      viewHistory = saved.viewHistory
+        .filter((x) => x && typeof x.lib === "string" && x.path != null && known.has(x.lib))
+        .map((x) => ({ tab: `${x.lib}|${x.path}`, lib: x.lib, bookId: x.bookId ?? null, path: x.path }))
+        .slice(-MAX_VIEW_HISTORY);
+      const idx = Number.isInteger(saved.viewIndex) ? saved.viewIndex : viewHistory.length - 1;
+      viewIndex = viewHistory.length ? Math.max(0, Math.min(idx, viewHistory.length - 1)) : -1;
+    }
     restoring = true;
     try {
       if (saved.layout) dv.fromJSON(saved.layout);
@@ -613,6 +639,7 @@ export async function init(element, h) {
     }
   }
   refreshEmpty();
+  if (dv.activePanel) recordViewHistory(dv.activePanel);
 }
 
 /**
@@ -666,6 +693,72 @@ export function cycleTab(delta) {
   if (list.length < 2) return;
   const i = list.indexOf(dv.activePanel);
   list[(i + delta + list.length) % list.length].api.setActive();
+}
+
+function recordViewHistory(panel) {
+  if (restoring || navigatingHistory) return;
+  const lib = panel?.params?.lib;
+  const path = panel?.params?.path;
+  if (!lib || path == null) return;
+  const tab = `${lib}|${path}`;
+  if (viewIndex >= 0 && viewHistory[viewIndex]?.tab === tab) return;
+  viewHistory = viewHistory.slice(0, viewIndex + 1);
+  viewHistory.push({ tab, lib, bookId: panel.params.bookId ?? null, path });
+  if (viewHistory.length > MAX_VIEW_HISTORY) {
+    viewHistory.shift();
+  }
+  viewIndex = viewHistory.length - 1;
+  scheduleSave();
+}
+
+async function activateHistoryEntry(entry) {
+  if (popouts[entry.tab]) {
+    const w = await WebviewWindow.getByLabel(popouts[entry.tab].label);
+    if (w) {
+      await w.unminimize().catch(() => {});
+      await w.setFocus();
+      return true;
+    }
+    delete popouts[entry.tab];
+  }
+  const panel = dv?.getPanel(entry.tab);
+  if (panel) {
+    panel.api.setActive();
+    return true;
+  }
+  try {
+    await api.openNode(entry.lib, entry.bookId, entry.path);
+    await openVolume({ lib: entry.lib, bookId: entry.bookId, path: entry.path });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Navigate document view history: `-1` for previous view, `+1` for next view. */
+export async function navigateHistory(delta) {
+  if (!dv || navigatingHistory || !viewHistory.length) return false;
+  navigatingHistory = true;
+  try {
+    let idx = viewIndex + delta;
+    while (idx >= 0 && idx < viewHistory.length) {
+      const entry = viewHistory[idx];
+      if (await activateHistoryEntry(entry)) {
+        viewIndex = idx;
+        scheduleSave();
+        return true;
+      }
+      viewHistory.splice(idx, 1);
+      scheduleSave();
+      if (delta < 0) {
+        if (viewIndex > idx) viewIndex -= 1;
+        idx -= 1;
+      }
+    }
+    return false;
+  } finally {
+    navigatingHistory = false;
+  }
 }
 
 /** The line the active tab was last read at (null: none known). */

@@ -77,9 +77,9 @@
 </script>
 
 <div class="backdrop" class:embedded role="presentation" onmousedown={(e) => !embedded && e.target === e.currentTarget && onclose()}>
-  <div class="box" role="dialog" aria-modal="true" aria-label="最近打开" tabindex="-1" onkeydown={key}>
+  <div class="box" role="dialog" aria-modal="true" aria-label="最近访问" tabindex="-1" onkeydown={key}>
     <div class="head">
-      <strong>最近打开</strong>
+      <strong>最近访问</strong>
       <input type="search" placeholder="按标题筛选" bind:value={filter} bind:this={input} oninput={changed} />
       <button class="link" onclick={clearAll} disabled={!items.length}>清空历史</button>
       {#if onpopout && !embedded}<button class="link" onclick={onpopout} title="在独立窗口中持续显示，可以和主窗口同时操作">新窗口</button>{/if}
