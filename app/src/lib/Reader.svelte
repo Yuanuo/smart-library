@@ -35,6 +35,7 @@
   import TitleLink from "./TitleLink.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import { makePinyinItem } from "./pinyinMenu.svelte.js";
+  import { localDate } from "./diary.js";
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
   import { parseSource, sourceUrl } from "./clip.js";
