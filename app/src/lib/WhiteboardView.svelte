@@ -8,7 +8,7 @@
   import TitleLink from "./TitleLink.svelte";
   import Icon from "./Icon.svelte";
 
-  let { vol, title = vol.title, lib, path, onlocate = null, ontag = null, extra = null } = $props();
+  let { vol, title = vol.title, lib, path, onlocate = null, ontag = null, onprops = null, extra = null } = $props();
 
   let el = $state();
   let error = $state("");
@@ -275,11 +275,12 @@
 <div class="board" onkeydown={key}>
   <div class="bar">
     <TitleLink {title} {onlocate} />
+    {#if ontag}<button type="button" class="tool-btn" onclick={ontag} title="为本篇加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>{/if}
+    {#if onprops}<button type="button" class="tool-btn" onclick={onprops} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>{/if}
+    {@render extra?.()}
     <span class="muted status">{status}</span>
     {#if error}<span class="error">{error}</span>{/if}
     <span class="grow"></span>
-    {@render extra?.()}
-    {#if ontag}<button class="icon" onclick={ontag} title="为本篇加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
   </div>
   <div class="canvas" bind:this={el}></div>
 </div>
@@ -289,8 +290,13 @@
   .bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px; border-bottom: 1px solid var(--line); }
   .status { font-size: 12px; }
   .grow { flex: 1; }
-  .icon { border: none; background: none; padding: 3px 7px; border-radius: 4px; display: inline-flex; align-items: center; color: var(--accent); }
-  .icon:hover { background: var(--accent-soft); }
+  .tool-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; line-height: 1; font-size: 13px;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: var(--paper); color: var(--accent); cursor: pointer;
+  }
+  .tool-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
   .error { color: var(--hl); font-size: 13px; }
   .canvas { flex: 1; min-height: 0; position: relative; overflow: clip; }
   /* Excalidraw's containers must not be scrolled by the browser (a focused popover does that) */

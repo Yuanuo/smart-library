@@ -123,13 +123,7 @@
     if (type === "tag") markAction({ type: "tag", vol });
     else if (type === "bookmark") markAction({ type: "bookmark", vol, lb: workspace.currentLine() });
     else if (type === "locate") locate({ lib: c.lib, bookId: c.bookId ?? null, path: c.path });
-    else if (type === "props") {
-      const l = libraries.find((x) => x.id === c.lib);
-      const bookId = l?.kind === "cbeta" ? c.bookId : null;
-      const path = l?.kind === "cbeta" ? "" : c.path;
-      const nodePath = l ? (libPanel?.nodePath(l.id, { bookId, path }) || [l.title, c.title].filter(Boolean).join("/")) : "";
-      if (l) propsDlg = { lib: l.id, libTitle: l.title, bookId, path, title: c.title, nodePath };
-    }
+    else if (type === "props") openPropsOf(c);
   }
 
   let quickQuery = $state(null); // text to start the quick search with
@@ -306,6 +300,8 @@
         const bookId = v.book_id ?? null;
         const nodePath = libPanel?.nodePath(v.lib, { bookId, path: v.path }) || [l?.title, docTitle(v)].filter(Boolean).join("/");
         tagNode(v.lib, bookId, v.path, docTitle(v), nodePath);
+      } else if (a.type === "props") {
+        openPropsOf({ lib: v.lib, bookId: v.book_id ?? null, path: v.path, title: docTitle(v) });
       }
     } catch (e) {
       error = String(e);
@@ -326,6 +322,14 @@
   }
 
   let propsDlg = $state(null); // { lib, libTitle, bookId, path, title, nodePath }
+  function openPropsOf(c) {
+    const l = libraries.find((x) => x.id === c.lib);
+    if (!l) return;
+    const bookId = l.kind === "cbeta" ? c.bookId : null;
+    const path = l.kind === "cbeta" ? "" : c.path;
+    const nodePath = libPanel?.nodePath(l.id, { bookId, path }) || [l.title, c.title].filter(Boolean).join("/");
+    propsDlg = { lib: l.id, libTitle: l.title, bookId, path, title: c.title, nodePath };
+  }
   /** The properties dialog of a node: CBETA the whole book; the others the article / file / folder / note. */
   function propsFromTree(l, node, treeKey = "", nodePath = "") {
     if (!node) {

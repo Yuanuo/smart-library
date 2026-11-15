@@ -28,6 +28,8 @@
     <path d="M6.5 3.5h11v17l-5.5-4-5.5 4z" fill="currentColor" fill-opacity="0.2" />
   {:else if name === "tag"}
     <path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7a1 1 0 0 1 .7.3l7.6 7.6a1 1 0 0 1 0 1.4l-7.7 7.7a1 1 0 0 1-1.4 0l-7.6-7.6a1 1 0 0 1-.3-.7z" /><circle cx="8.3" cy="8.3" r="1.4" fill="currentColor" />
+  {:else if name === "sliders"}
+    <path d="M4 6h16M4 12h16M4 18h16" /><circle cx="9" cy="6" r="2" fill="var(--paper)" /><circle cx="15" cy="12" r="2" fill="var(--paper)" /><circle cx="10" cy="18" r="2" fill="var(--paper)" />
   {:else if name === "clock"}
     <circle cx="12" cy="12" r="8.5" /><path d="M12 7v5.5l3.5 2" />
   {:else if name === "mindmap"}

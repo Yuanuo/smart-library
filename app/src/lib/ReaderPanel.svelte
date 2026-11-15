@@ -332,7 +332,7 @@
 {#snippet aiBtn()}
   {#if settings.aiOn && onai}
     <button type="button" class="ai-btn" onclick={() => sendToAi({ toggle: true })} title="打开 / 收起右侧 AI 助手栏">
-      <Icon name="sparkles" size={16} /> AI 助手
+      <Icon name="sparkles" size={16} /> AI
     </button>
   {/if}
 {/snippet}
@@ -351,6 +351,7 @@
           title={p.retitled ?? vol.title}
           {onlocate}
           ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
+          onprops={onaction ? () => onaction({ type: "props", vol }) : null}
           lib={p.lib}
           path={p.path}
           onjump={onopen}
@@ -372,6 +373,7 @@
           title={p.retitled ?? vol.title}
           {onlocate}
           ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
+          onprops={onaction ? () => onaction({ type: "props", vol }) : null}
           lib={p.lib}
           path={p.path}
           extra={aiBtn} />
@@ -384,14 +386,17 @@
     <div class="editor" onkeydown={noteKey}>
       <div class="bar">
         <TitleLink title={p.retitled ?? vol.title} {onlocate} />
+        {#if onaction}
+          <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title="为本篇加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>
+          <button type="button" class="tool-btn" onclick={() => onaction({ type: "props", vol })} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>
+        {/if}
+        {@render aiBtn()}
         <span class="muted status">{status}</span>
         <span class="grow"></span>
-        {@render aiBtn()}
         <div class="seg" role="group" aria-label="编辑方式">
           <button class:on={visual} onclick={() => !visual && setVisual(true)} title="所见即所得">排版</button>
           <button class:on={!visual} onclick={() => visual && setVisual(false)} title="直接编辑 Markdown 源码">源码</button>
         </div>
-        {#if onaction}<button class="icon" onclick={() => onaction({ type: "tag", vol })} title="为本篇加标签" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
       </div>
       <div class="body">
         {#key `${ver}-${isAiReady()}`}
@@ -465,11 +470,13 @@
 {/if}
 
 <style>
-  .ai-btn {
-    display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;
-    font-size: 13px; border-radius: 6px;
+  .ai-btn, .tool-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; line-height: 1; font-size: 13px;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: var(--paper); color: var(--accent); cursor: pointer;
   }
-  .ai-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+  .ai-btn:hover, .tool-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
   .error { padding: 24px; color: var(--hl); }
   .editor { display: flex; flex-direction: column; height: 100%; }
   .bar { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); }
@@ -481,11 +488,6 @@
   .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
   .seg button:last-child { border-radius: 0 6px 6px 0; }
   .seg button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
-  .icon {
-    display: inline-flex; align-items: center; justify-content: center; border: none; background: none;
-    padding: 2px 4px; color: var(--accent); border-radius: 6px;
-  }
-  .icon:hover { background: var(--accent-soft); }
   textarea {
     flex: 1; border: none; resize: none; padding: 14px 18px; outline: none;
     font: 15px/1.7 ui-monospace, Consolas, "Microsoft YaHei", monospace; background: var(--paper); color: inherit;

@@ -475,8 +475,13 @@
             {/each}
           </select>
         {/if}
+        {#if onaction}
+          <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title="为本卷（本篇）加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>
+          <button type="button" class="tool-btn" onclick={() => onaction({ type: "props", vol })} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>
+        {/if}
         {@render extra?.()}
         <span class="grow"></span>
+        {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
         <div class="seg" role="group" aria-label="版式">
           <button class:on={mode === "para"} onclick={() => (mode = "para")}>段落</button>
           <button class:on={mode === "lines"} onclick={() => (mode = "lines")}>原书行</button>
@@ -501,8 +506,6 @@
             </div>
           {/if}
         {/if}
-        {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
-        {#if onaction}<button class="locate" onclick={() => onaction({ type: "tag", vol })} title="为本卷（本篇）加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={20} /></button>{/if}
       </div>
     </header>
     <!-- svelte-ignore a11y_mouse_events_have_key_events, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -580,7 +583,13 @@
   .seg button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
   .seg button.on { background: var(--accent); color: var(--paper); border-color: var(--accent); }
   .check { display: flex; gap: 4px; align-items: center; }
-  .locate { padding: 3px 9px; line-height: 1; display: inline-flex; align-items: center; }
+  .tool-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; line-height: 1; font-size: 13px;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: var(--paper); color: var(--accent); cursor: pointer;
+  }
+  .tool-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
   .scroll { flex: 1; overflow: auto; background: var(--paper); }
   .attribution { margin: 12px 24px 32px; padding: 12px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.5; }
 
