@@ -12,7 +12,7 @@
   import * as workspace from "./workspace.svelte.js";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { fullPath } from "./paths.js";
-  import { monthPath, localDate } from "./diary.js";
+  import { DIARY_LIBRARY_ID, monthNodeId, monthPath, localDate } from "./diary.js";
   import { startScopeDrag } from "./scopeDrag.js";
   import { installTextDrag } from "./textDrag.js";
   import { confirmWritable, isEditableName } from "./writable.js";
@@ -968,13 +968,17 @@
     if (ex[key]) delete ex[key];
     else {
       // opening the current month of the diary makes sure that today's entry is there
-      if (libraries.find((l) => l.id === lib)?.title === monthPath().split("/")[0] && pathOf(lib, key) === monthPath()) {
+      const n = nodeAt(lib, key);
+      const libObj = libraries.find((l) => l.id === lib);
+      const isCurDiaryMonth =
+        (lib === DIARY_LIBRARY_ID && n?.rel === monthNodeId()) ||
+        (libObj?.title === monthPath().split("/")[0] && pathOf(lib, key) === monthPath());
+      if (isCurDiaryMonth) {
         try {
           const r = await api.diaryToday(localDate());
           await refresh(lib, key);
         } catch {}
       }
-      const n = nodeAt(lib, key);
       await loadChildren(lib, n);
       ex[key] = true;
       // a folder that was read before is compared with the disk again

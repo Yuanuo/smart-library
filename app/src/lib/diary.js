@@ -1,4 +1,5 @@
 // The diary (design-spec 6.4): dates and times are the user's local ones.
+export const DIARY_LIBRARY_ID = "diaries";
 export const DIARY_LIBRARY = "我的日记";
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -8,6 +9,11 @@ export const localDate = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMont
 
 /** `HH:MM` now (or of `d`). */
 export const localTime = (d = new Date()) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+/** Fixed numeric node IDs for the diary hierarchy. */
+export const yearNodeId = (d = new Date()) => `${d.getFullYear()}0000`;
+export const monthNodeId = (d = new Date()) => `${d.getFullYear()}${pad(d.getMonth() + 1)}00`;
+export const dayNodeId = (d = new Date()) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 
 /** The tree path of the month of a date: `我的日记/2026年/11月`. */
 export const monthPath = (d = new Date()) => `${DIARY_LIBRARY}/${d.getFullYear()}年/${d.getMonth() + 1}月`;

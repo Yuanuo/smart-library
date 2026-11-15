@@ -229,7 +229,7 @@
       workspace.refreshDocument(t.lib, t.id);
     }
     await libPanel?.showNew(t, false);
-    notice = `已发送到今日记：${localDate()}`;
+    notice = `已追加到今日记：${localDate()}`;
     api.prepareTitles().catch(() => {});
   }
 

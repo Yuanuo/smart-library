@@ -1158,7 +1158,7 @@ pub async fn create_note_at(
         }
         None => default_lib
             .and_then(|d| libs.iter().find(|l| l.id == d))
-            .or_else(|| libs.iter().find(|l| l.title != smart_library_core::diary::LIBRARY))
+            .or_else(|| libs.iter().find(|l| l.id != smart_library_core::diary::LIBRARY_ID && l.title != smart_library_core::diary::LIBRARY))
             .unwrap_or(&libs[0])
             .clone(),
     };
@@ -1192,19 +1192,36 @@ pub struct DiaryDto {
 fn diary_note(state: &AppState, date: &str) -> Result<(Arc<NotesStore>, NewNoteDto), String> {
     use smart_library_core::diary;
     let titles = diary::path_of(date)?;
-    let existing = state.libraries.read().unwrap().iter().find(|l| l.kind == "notes" && l.title == diary::LIBRARY).cloned();
+    let ids = diary::ids_of(date)?;
+    let existing = {
+        let libs = state.libraries.read().unwrap();
+        libs.iter()
+            .find(|l| l.kind == "notes" && l.id == diary::LIBRARY_ID)
+            .or_else(|| libs.iter().find(|l| l.kind == "notes" && l.title == diary::LIBRARY))
+            .cloned()
+    };
     let lib = match existing {
         Some(l) => l,
-        None => add_notes_library(state, diary::LIBRARY, None)?,
+        None => add_notes_library(state, diary::LIBRARY, Some(diary::LIBRARY_ID))?,
     };
     state.titles.write().unwrap().remove(&lib.id);
     let store = state.notes(&lib)?;
-    let parent = store.ensure_path(&titles[..2])?;
-    let id = match store.find_child(parent, &titles[2])? {
-        Some(id) => id,
-        None => store.create(parent, &titles[2], "")?,
+    let year_id = if store.get(ids[0])?.is_some() {
+        ids[0]
+    } else {
+        store.create_with_id(ids[0], None, &titles[0], "", "md")?
     };
-    let dto = NewNoteDto { lib: lib.id, chain: store.chain(id)?.iter().map(|i| i.to_string()).collect(), id: id.to_string() };
+    let month_id = if store.get(ids[1])?.is_some() {
+        ids[1]
+    } else {
+        store.create_with_id(ids[1], Some(year_id), &titles[1], "", "md")?
+    };
+    let day_id = if store.get(ids[2])?.is_some() {
+        ids[2]
+    } else {
+        store.create_with_id(ids[2], Some(month_id), &titles[2], "", "md")?
+    };
+    let dto = NewNoteDto { lib: lib.id, chain: store.chain(day_id)?.iter().map(|i| i.to_string()).collect(), id: day_id.to_string() };
     state.mark_dirty(&dto.lib, dto.chain.iter().cloned());
     Ok((store, dto))
 }
@@ -2480,7 +2497,10 @@ fn external_context_menu_script(ai_on: bool, token: &str) -> String {
       items.push({{ label: "页内查找：" + q, action: () => window.find && window.find(text, false, false, true) }});
       items.push("sep");
       items.push({{ label: "加入笔记…", action: () => sendAction({{ type: "note", text, vol: pageVol() }}) }});
-      items.push({{ label: "发送到今日记", action: () => sendAction({{ type: "diary", text, vol: pageVol() }}) }});
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const today = `${{d.getFullYear()}}-${{pad(d.getMonth() + 1)}}-${{pad(d.getDate())}}`;
+      items.push({{ label: `追加到今日记：${{today}}`, action: () => sendAction({{ type: "diary", text, vol: pageVol() }}) }});
       items.push({{ label: "追加到最近的笔记", action: () => sendAction({{ type: "note-last", text, vol: pageVol() }}) }});
       if (AI_ON) {{
         items.push("sep");

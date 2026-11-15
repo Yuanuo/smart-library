@@ -14,6 +14,7 @@
   import TitleLink from "./TitleLink.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import { makePinyinItem } from "./pinyinMenu.svelte.js";
+  import { localDate } from "./diary.js";
   import Icon from "./Icon.svelte";
 
   const loadMindMap = () => import("./MindMapView.svelte");
@@ -299,7 +300,7 @@
       items.push(
         "separator",
         { label: "加入笔记…", action: act("note") },
-        { label: "发送到今日记", action: act("diary") },
+        { label: `追加到今日记：${localDate()}`, action: act("diary") },
         { label: "添加书签", action: act("bookmark") },
         { label: "添加收藏…", action: act("clip") },
       );

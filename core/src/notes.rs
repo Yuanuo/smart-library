@@ -257,6 +257,15 @@ impl NotesStore {
 
     /// [`NotesStore::create`] with a content type (`md` or `mindmap`).
     pub fn create_typed(&self, parent: Option<i64>, title: &str, content: &str, content_type: &str) -> Result<i64, String> {
+        self.create_inner(None, parent, title, content, content_type)
+    }
+
+    /// Create a note with an explicit numeric `id` (used for fixed diary node IDs).
+    pub fn create_with_id(&self, id: i64, parent: Option<i64>, title: &str, content: &str, content_type: &str) -> Result<i64, String> {
+        self.create_inner(Some(id), parent, title, content, content_type)
+    }
+
+    fn create_inner(&self, fixed_id: Option<i64>, parent: Option<i64>, title: &str, content: &str, content_type: &str) -> Result<i64, String> {
         let title = title.trim();
         if title.is_empty() {
             return Err("标题不能为空".into());
@@ -275,12 +284,21 @@ impl NotesStore {
             .query_row("SELECT COALESCE(MAX(position) + 1, 0) FROM notes WHERE parent_id IS ?1", params![parent], |r| r.get(0))
             .map_err(err)?;
         let t = now();
-        tx.execute(
-            "INSERT INTO notes (parent_id, title, content, content_type, position, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            params![parent, title, content, content_type, pos, t],
-        )
-        .map_err(err)?;
-        let id = tx.last_insert_rowid(); // before `bump` writes another table
+        let id = if let Some(fid) = fixed_id {
+            tx.execute(
+                "INSERT INTO notes (id, parent_id, title, content, content_type, position, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                params![fid, parent, title, content, content_type, pos, t],
+            )
+            .map_err(err)?;
+            fid
+        } else {
+            tx.execute(
+                "INSERT INTO notes (parent_id, title, content, content_type, position, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![parent, title, content, content_type, pos, t],
+            )
+            .map_err(err)?;
+            tx.last_insert_rowid() // before `bump` writes another table
+        };
         bump(&tx, &crate::attach::refs(content), 1)?;
         tx.commit().map_err(err)?;
         Ok(id)
