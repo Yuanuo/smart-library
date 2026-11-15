@@ -12,8 +12,9 @@
 //   Ctrl/Cmd+W                 close the tab
 //   Ctrl/Cmd+Tab (+Shift)      next / previous tab
 //   Ctrl/Cmd+Shift+S           original / simplified characters
+//   F1                         toggle AI assistant panel
 // `fire(type)` is called with "quick", "search", "recent", "marks", "diary",
-// "settings", "tag", "bookmark", "props", "locate", "new", "new-mindmap",
+// "settings", "ai", "tag", "bookmark", "props", "locate", "new", "new-mindmap",
 // "new-whiteboard", "close", "next-tab", "prev-tab" or "script". Returns a function that removes the listeners.
 
 /** The text selected in a reader (not in an input), else "". */
@@ -35,6 +36,12 @@ export function installShortcuts(fire) {
   const ownKeys = ".excalidraw, .mind-elixir, .map-container";
 
   function down(e) {
+    if (e.key === "F1" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      shiftAlone = false;
+      fire("ai");
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
       const type = keys[e.key.toLowerCase()];
       if (type) {

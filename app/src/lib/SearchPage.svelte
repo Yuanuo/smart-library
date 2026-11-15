@@ -242,7 +242,7 @@
     </span>
     <button class="primary" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
     {#if settings.aiOn && onai}
-      <button type="button" class="ai-btn" onclick={() => onai({ toggle: true })} title="打开 / 收起右侧 AI 助手栏（可根据搜索结果编写创新方案）">
+      <button type="button" class="ai-btn" onclick={() => onai({ toggle: true })} title="打开 / 收起右侧 AI 助手栏（F1，可根据搜索结果编写创新方案）">
         <Icon name="sparkles" size={16} /> AI 助手
       </button>
     {/if}

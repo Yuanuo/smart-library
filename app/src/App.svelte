@@ -101,6 +101,9 @@
     else if (type === "recent") openRecent();
     else if (type === "marks") openMarks();
     else if (type === "settings") settingsBox = true;
+    else if (type === "ai") {
+      if (settings.aiOn) setAiOpen(!aiOpen);
+    }
     else if (type === "diary") libPanel?.openDiary();
     else if (type === "new") libPanel?.newNote();
     else if (type === "new-mindmap") libPanel?.newMindMap();
@@ -800,7 +803,7 @@
           <button class="icon" onclick={openMarks} title="收藏与标签（Ctrl+B）" aria-label="收藏与标签"><Icon name="bookmark" size={18} /></button>
           <button class="icon" onclick={openRecent} title="最近打开（Ctrl+E）" aria-label="最近打开"><Icon name="clock" size={18} /></button>
           {#if settings.aiOn}
-            <button class="icon" class:on={aiOpen} onclick={() => setAiOpen(!aiOpen)} title="打开 / 收起右侧 AI 助手栏" aria-label="AI 助手"><Icon name="sparkles" size={18} /></button>
+            <button class="icon" class:on={aiOpen} onclick={() => setAiOpen(!aiOpen)} title="打开 / 收起右侧 AI 助手栏（F1）" aria-label="AI 助手"><Icon name="sparkles" size={18} /></button>
           {/if}
         </span>
       </div>

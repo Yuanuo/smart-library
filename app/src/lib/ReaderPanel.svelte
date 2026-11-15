@@ -331,7 +331,7 @@
 
 {#snippet aiBtn()}
   {#if settings.aiOn && onai}
-    <button type="button" class="ai-btn" onclick={() => sendToAi({ toggle: true })} title="打开 / 收起右侧 AI 助手栏">
+    <button type="button" class="ai-btn" onclick={() => sendToAi({ toggle: true })} title="打开 / 收起右侧 AI 助手栏（F1）">
       <Icon name="sparkles" size={16} /> AI
     </button>
   {/if}
