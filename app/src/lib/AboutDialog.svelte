@@ -11,8 +11,6 @@
     <p class="ver">版本 {info?.version ?? ""}（年.月.日）</p>
     <p>本地知识库桌面软件：快速、精确地阅读和检索《大藏经》等大量文本，也可以链接本机文件夹、写自己的笔记。</p>
     <p class="muted">数据位置：<span class="path">{info?.data_dir ?? ""}</span></p>
-    <p class="muted keys">快捷键：双击 Shift / Ctrl+G 标题快搜　Ctrl+H 全文搜索　Ctrl+E 最近打开　Ctrl+B 收藏与标签　Ctrl+, 设置　Ctrl+J 今日日记　F1 AI 助手</p>
-    <p class="muted keys">当前文档：Ctrl+T 标签　Ctrl+D 书签　Ctrl+P 属性　Ctrl+L 在目录树中定位　Ctrl+N / Ctrl+Shift+1 新建笔记　Ctrl+Shift+2 新建脑图　Ctrl+Shift+3 新建白板　Ctrl+W 关闭标签　Ctrl+Tab / Ctrl+Shift+Tab 切换标签　Ctrl+Shift+S 简体 / 原文　F2 重命名　Ctrl+S 保存</p>
     </div>
     <div class="actions"><button onclick={oncheckupdate}>检查更新</button><button class="primary" onclick={onclose}>关闭</button></div>
   </div>
@@ -27,6 +25,5 @@
   h2 { margin: 0 0 4px; font-size: 22px; color: var(--accent); }
   .ver { margin: 0 0 10px; color: var(--muted); }
   .path { overflow-wrap: anywhere; user-select: text; }
-  .keys { font-size: 13px; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 </style>

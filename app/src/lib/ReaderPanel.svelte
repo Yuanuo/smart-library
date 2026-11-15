@@ -17,6 +17,7 @@
   import { localDate } from "./diary.js";
   import Icon from "./Icon.svelte";
   import SnapshotDialog from "./SnapshotDialog.svelte";
+  import { matchesShortcut } from "./shortcuts.js";
 
   const loadMindMap = () => import("./MindMapView.svelte");
   const loadWhiteboard = () => import("./WhiteboardView.svelte");
@@ -266,7 +267,7 @@
   }
 
   function noteKey(e) {
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    if (matchesShortcut(e, "save")) {
       e.preventDefault();
       saveNow();
     }

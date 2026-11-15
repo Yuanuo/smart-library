@@ -7,6 +7,7 @@
   import * as api from "./api.js";
   import TitleLink from "./TitleLink.svelte";
   import Icon from "./Icon.svelte";
+  import { matchesShortcut } from "./shortcuts.js";
 
   let { vol, title = vol.title, lib, path, onlocate = null, ontag = null, onprops = null, extra = null } = $props();
 
@@ -62,7 +63,7 @@
   }
 
   function key(e) {
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    if (matchesShortcut(e, "save")) {
       e.preventDefault();
       save();
     }

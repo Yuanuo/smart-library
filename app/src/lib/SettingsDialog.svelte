@@ -1,10 +1,11 @@
 <script>
   // Settings: theme, interface zoom and font, reader font, size and line
   // height. Changes apply at once and are kept.
-  import { onMount } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import * as api from "./api.js";
   import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { settings, update, reset, FONTS, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
+  import { SHORTCUT_DEFS, getShortcut, comboParts, eventToCombo, setShortcutRecording } from "./shortcuts.js";
 
   let { onclose } = $props();
 
@@ -15,9 +16,82 @@
     ["dict", "词典"],
     ["daily", "每日一句"],
     ["ai", "AI 助手"],
+    ["shortcuts", "快捷键"],
     ["clean", "数据清理"],
   ];
   let activeTab = $state("appearance");
+
+  // Shortcuts customization
+  let recordingId = $state(null);
+  let recorderEl = $state(null);
+  const hasCustomShortcuts = $derived(Object.keys(settings.shortcuts || {}).length > 0);
+  const shortcutConflicts = $derived.by(() => {
+    const byCombo = new Map();
+    for (const d of SHORTCUT_DEFS) {
+      const combo = getShortcut(d.id, settings.shortcuts);
+      if (!combo) continue;
+      const k = combo.toLowerCase();
+      if (!byCombo.has(k)) byCombo.set(k, []);
+      byCombo.get(k).push(d);
+    }
+    const conflicts = {};
+    for (const list of byCombo.values()) {
+      if (list.length > 1) {
+        for (const d of list) {
+          conflicts[d.id] = list.filter((x) => x.id !== d.id).map((x) => x.label).join("、");
+        }
+      }
+    }
+    return conflicts;
+  });
+
+  async function startRecording(id) {
+    recordingId = id;
+    setShortcutRecording(true);
+    await tick();
+    recorderEl?.focus();
+  }
+
+  function stopRecording() {
+    recordingId = null;
+    setShortcutRecording(false);
+  }
+
+  function setShortcutValue(id, combo) {
+    const def = SHORTCUT_DEFS.find((d) => d.id === id);
+    const next = { ...(settings.shortcuts || {}) };
+    if (def && combo === def.defaultKey) {
+      delete next[id];
+    } else {
+      next[id] = combo;
+    }
+    update({ shortcuts: next });
+  }
+
+  function onRecorderKey(e, id) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+      stopRecording();
+      return;
+    }
+    const combo = eventToCombo(e);
+    if (!combo) return;
+    setShortcutValue(id, combo);
+    stopRecording();
+  }
+
+  function restoreDefaultShortcuts() {
+    stopRecording();
+    update({ shortcuts: {} });
+  }
+
+  function selectTab(id) {
+    stopRecording();
+    activeTab = id;
+  }
+
+  onDestroy(() => setShortcutRecording(false));
 
   // Dictionary settings
   let dictPaths = $state([]);
@@ -383,12 +457,12 @@
 
 <div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="设置" tabindex="-1"
-    onkeydown={(e) => e.key === "Escape" && onclose()}>
+    onkeydown={(e) => { if (e.key === "Escape" && !recordingId) onclose(); }}>
     <header class="dialog-header"><h2>设置</h2></header>
     <div class="dialog-content settings-split">
       <nav class="tabs" aria-label="设置分组">
         {#each TABS as [id, label] (id)}
-          <button type="button" class="tab-btn" class:on={activeTab === id} onclick={() => (activeTab = id)}>{label}</button>
+          <button type="button" class="tab-btn" class:on={activeTab === id} onclick={() => selectTab(id)}>{label}</button>
         {/each}
       </nav>
       <div class="tab-body">
@@ -726,6 +800,59 @@
             </div>
           </div>
 
+        {:else if activeTab === "shortcuts"}
+          <div class="sec-head">
+            <h3>快捷键</h3>
+            <p class="muted">点击右侧按键即可录制新快捷键；按 Esc 取消录制。</p>
+          </div>
+          <div class="card shortcut-list">
+            {#each SHORTCUT_DEFS as d (d.id)}
+              {@const combo = getShortcut(d.id, settings.shortcuts)}
+              {@const parts = comboParts(combo)}
+              {@const isCustom = Object.prototype.hasOwnProperty.call(settings.shortcuts || {}, d.id)}
+              <div class="shortcut-row">
+                <div class="shortcut-meta">
+                  <span class="shortcut-label">{d.label}</span>
+                  {#if d.note}<span class="shortcut-note muted">{d.note}</span>{/if}
+                  {#if shortcutConflicts[d.id]}
+                    <span class="shortcut-conflict">与「{shortcutConflicts[d.id]}」冲突</span>
+                  {/if}
+                </div>
+                <div class="shortcut-ctrl">
+                  {#if recordingId === d.id}
+                    <button type="button" class="shortcut-recording" bind:this={recorderEl}
+                      data-shortcut-recorder
+                      onkeydown={(e) => onRecorderKey(e, d.id)}
+                      onblur={stopRecording}>
+                      请按下快捷键… (Esc 取消)
+                    </button>
+                  {:else}
+                    <button type="button" class="shortcut-keys" onclick={() => startRecording(d.id)} title="点击修改快捷键">
+                      {#if parts.length}
+                        {#each parts as k, i (i)}
+                          <kbd class="kbd">{k}</kbd>
+                        {/each}
+                      {:else}
+                        <span class="shortcut-empty muted">未设置</span>
+                      {/if}
+                    </button>
+                    <div class="shortcut-ops">
+                      {#if combo}
+                        <button type="button" class="icon-op" onclick={() => setShortcutValue(d.id, "")} title="清空此快捷键" aria-label="清空此快捷键">×</button>
+                      {/if}
+                      {#if isCustom}
+                        <button type="button" class="icon-op" onclick={() => setShortcutValue(d.id, d.defaultKey)} title="恢复默认（{d.defaultKey}）" aria-label="恢复默认">↺</button>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+          <div class="shortcut-foot">
+            <button type="button" onclick={restoreDefaultShortcuts} disabled={!hasCustomShortcuts}>恢复默认快捷键</button>
+          </div>
+
         {:else if activeTab === "clean"}
           <div class="sec-head">
             <h3>数据清理</h3>
@@ -821,4 +948,43 @@
   .dict-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dict-badge { font-size: 11px; padding: 0 4px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); flex: none; }
   .dict-count { font-size: 12px; flex: none; }
+  .shortcut-list { margin-bottom: 12px; }
+  .shortcut-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 9px 14px; border-bottom: 1px solid var(--line);
+  }
+  .shortcut-row:last-child { border-bottom: none; }
+  .shortcut-meta { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .shortcut-label { font-size: 14px; color: var(--ink); }
+  .shortcut-note { font-size: 12px; }
+  .shortcut-conflict { font-size: 12px; color: var(--hl); }
+  .shortcut-ctrl { display: flex; align-items: center; gap: 6px; flex: none; }
+  .shortcut-keys {
+    display: inline-flex; align-items: center; gap: 5px; min-height: 28px; min-width: 64px;
+    padding: 2px 6px; border: 1px solid transparent; border-radius: 6px;
+    background: transparent; cursor: pointer; justify-content: flex-start;
+  }
+  .shortcut-keys:hover { border-color: var(--line); background: var(--bg); }
+  .shortcut-empty { font-size: 12px; }
+  .kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 24px; height: 24px; padding: 0 8px; border-radius: 999px;
+    background: var(--accent); color: var(--paper);
+    font-family: inherit; font-size: 12px; font-weight: 600; line-height: 1;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  }
+  .shortcut-recording {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid var(--accent);
+    background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600;
+    cursor: pointer; outline: none;
+  }
+  .shortcut-ops { display: inline-flex; align-items: center; gap: 2px; min-width: 44px; justify-content: flex-end; }
+  .icon-op {
+    width: 22px; height: 22px; padding: 0; border: none; border-radius: 4px;
+    background: transparent; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer;
+    opacity: 0.45;
+  }
+  .shortcut-row:hover .icon-op, .icon-op:focus-visible { opacity: 1; }
+  .icon-op:hover { background: var(--bg); color: var(--ink); }
+  .shortcut-foot { display: flex; justify-content: flex-end; }
 </style>

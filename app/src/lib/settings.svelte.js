@@ -48,12 +48,16 @@ const DEFAULTS = {
   aiSavePath: "", // default folder/parent path
   aiSnapshotMax: 10, // max temporary AI snapshots per document
   aiSnapshotDays: 7, // retention days for temporary AI snapshots
+  shortcuts: {}, // { [actionId]: comboString } overrides
 };
 
 function load() {
   try {
     const parsed = JSON.parse(localStorage.getItem(KEY) || "{}");
     const raw = { ...DEFAULTS, ...parsed };
+    if (!raw.shortcuts || typeof raw.shortcuts !== "object" || Array.isArray(raw.shortcuts)) {
+      raw.shortcuts = {};
+    }
     if (!["window", "ask", "browser"].includes(raw.externalLink)) {
       raw.externalLink = "window";
     }

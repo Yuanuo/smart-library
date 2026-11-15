@@ -17,6 +17,7 @@
   import { installTextDrag } from "./textDrag.js";
   import { confirmWritable, isEditableName } from "./writable.js";
   import { isAiReady, toBackendAiConfig } from "./settings.svelte.js";
+  import { matchesShortcut } from "./shortcuts.js";
 
   let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
 
@@ -1203,9 +1204,9 @@
     };
   }
 
-  /** F2 renames what has the focus in the tree (a library, or a note), else the last note opened from the tree. */
+  /** Rename shortcut renames what has the focus in the tree (a library, or a note), else the last note opened from the tree. */
   function f2(e) {
-    if (e.key !== "F2" || e.ctrlKey || e.altKey || e.shiftKey || nameDlg) return;
+    if (!matchesShortcut(e, "rename") || nameDlg) return;
     const t = e.target;
     if (t?.closest?.("input, textarea, select, [contenteditable], .ProseMirror, .excalidraw")) return;
     const lib = libraries.find((x) => x.id === t?.closest?.("[data-lib]")?.dataset.lib);
