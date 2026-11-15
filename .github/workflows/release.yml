@@ -1,4 +1,4 @@
-name: Windows release
+name: Release
 on:
   push:
     tags: ['v*']
@@ -8,15 +8,35 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --bundles nsis
+            targets: ""
+          - os: ubuntu-latest
+            args: --bundles deb,rpm,appimage
+            targets: ""
+          - os: macos-latest
+            args: --target universal-apple-darwin --bundles dmg,app
+            targets: x86_64-apple-darwin,aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
@@ -43,6 +63,6 @@ jobs:
           releaseBody: '请在发布前填写更新说明。'
           releaseDraft: true
           prerelease: false
-          args: --bundles nsis
+          args: ${{ matrix.args }}
           updaterJsonPreferNsis: true
 
