@@ -703,6 +703,7 @@
         },
         oncopypath: copyTabPath,
         ontreepath: (d) => libPanel?.treePath(d),
+        onnodepath: (v) => libPanel?.nodePath(v.lib, { bookId: v.book_id ?? null, path: v.path }) || "",
       }).catch((e) => (error = String(e)));
     }
   });

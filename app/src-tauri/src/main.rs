@@ -118,7 +118,9 @@ fn main() {
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(120));
-                handle.state::<AppState>().sweep_all_pictures();
+                let st = handle.state::<AppState>();
+                st.sweep_all_pictures();
+                st.sweep_expired_snapshots();
                 std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
             });
             Ok(())
@@ -241,6 +243,13 @@ fn main() {
             commands::dict_search,
             commands::dict_entry,
             commands::dict_lookup,
+            commands::list_snapshots,
+            commands::create_snapshot,
+            commands::get_snapshot,
+            commands::restore_snapshot,
+            commands::delete_snapshot,
+            commands::get_snapshot_policy,
+            commands::set_snapshot_policy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Smart Library");

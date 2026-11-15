@@ -64,6 +64,8 @@
     <path d="M5 4.5A2 2 0 0 1 7 2.5h11.5v16H7a2 2 0 0 0-2 2z" fill="currentColor" fill-opacity="0.18" /><path d="M5 18.5v1A2 2 0 0 0 7 21.5h11.5" /><path d="M9 7h6M9 10.5h4" />
   {:else if name === "open-window"}
     <path d="M14 4h6v6" /><path d="M20 4 11 13" /><path d="M18 13v5.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H11" />
+  {:else if name === "snapshot"}
+    <path d="M4.2 15.5A8.5 8.5 0 1 0 3.6 10.5" /><path d="M1.8 9.2 3.5 11.4 5.8 9.7" /><path d="M12 7v5.2l2.8 3.2" />
   {/if}
 </svg>
 

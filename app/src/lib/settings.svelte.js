@@ -46,6 +46,8 @@ const DEFAULTS = {
   aiSaveMode: "ask", // ask | default
   aiSaveLib: "", // default target library id
   aiSavePath: "", // default folder/parent path
+  aiSnapshotMax: 10, // max temporary AI snapshots per document
+  aiSnapshotDays: 7, // retention days for temporary AI snapshots
 };
 
 function load() {

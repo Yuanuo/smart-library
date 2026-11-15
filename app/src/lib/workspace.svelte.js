@@ -165,6 +165,7 @@ function readerRenderer() {
         target: element,
         props: {
           p,
+          getNodePath: hooks.onnodepath,
           onopen: (req) => openVolume(req),
           onlocate: () => hooks.onlocate?.({ lib: state.lib, bookId: state.bookId, path: state.path }),
           onaction: (a) => hooks.onaction?.(a),

@@ -34,6 +34,7 @@ pub mod props;
 pub mod render;
 pub mod search;
 pub mod sidecar;
+pub mod snapshots;
 pub mod source;
 pub mod text;
 pub mod titles;

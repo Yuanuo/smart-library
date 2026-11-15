@@ -706,6 +706,24 @@
                   oninput={(e) => update({ aiSavePath: e.currentTarget.value })} />
               </div>
             {/if}
+            <div class="row">
+              <span>AI 临时快照上限</span>
+              <input type="number" min="1" max="100" value={settings.aiSnapshotMax ?? 10}
+                onchange={(e) => {
+                  const max = Math.max(1, Math.min(100, Number(e.currentTarget.value) || 10));
+                  update({ aiSnapshotMax: max });
+                  api.setSnapshotPolicy(max, settings.aiSnapshotDays ?? 7).catch(() => {});
+                }} />
+            </div>
+            <div class="row">
+              <span>AI 临时快照保留天数</span>
+              <input type="number" min="1" max="365" value={settings.aiSnapshotDays ?? 7}
+                onchange={(e) => {
+                  const days = Math.max(1, Math.min(365, Number(e.currentTarget.value) || 7));
+                  update({ aiSnapshotDays: days });
+                  api.setSnapshotPolicy(settings.aiSnapshotMax ?? 10, days).catch(() => {});
+                }} />
+            </div>
           </div>
 
         {:else if activeTab === "clean"}

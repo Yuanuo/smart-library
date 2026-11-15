@@ -22,6 +22,7 @@ use smart_library_core::nav::NavNode;
 use smart_library_core::notes::{self, NotesStore};
 use smart_library_core::render::RenderOptions;
 use smart_library_core::search::{facet_label, locate, snippets, Filter, MatchMode, SearchIndex, SearchRequest, Within};
+use smart_library_core::snapshots::{SnapshotMeta, SnapshotPolicy, SnapshotRecord, SnapshotStore};
 use smart_library_core::source::{DirSource, Source, ZipSource};
 use smart_library_core::cite::{parse_citations, parse_command};
 use smart_library_core::dict::{DictConfig, DictEntryDetail, DictInfo, DictManager, DictSearchResult};
@@ -109,6 +110,7 @@ pub struct AppState {
     /// user properties of nodes (部类, 时域, 人物, 藏经, 典类)
     props: Props,
     ai_chat: AiChatStore,
+    pub(crate) snapshots: SnapshotStore,
     dicts: RwLock<Option<DictManager>>,
 }
 
@@ -143,6 +145,10 @@ impl AppState {
             eprintln!("failed to open ai_chat.db: {e}");
             AiChatStore::memory().unwrap()
         });
+        let snapshots = SnapshotStore::open(&data_dir_for_history.with_file_name("snapshots.db")).unwrap_or_else(|e| {
+            eprintln!("failed to open snapshots.db: {e}");
+            SnapshotStore::memory().unwrap()
+        });
         AppState {
             workspace_file: data_dir.join("workspace.json"),
             window_file,
@@ -166,6 +172,7 @@ impl AppState {
             marks,
             props,
             ai_chat,
+            snapshots,
             dicts: RwLock::new(None),
         }
     }
@@ -4046,6 +4053,97 @@ pub use ai_cmds::*;
 #[path = "commands/dict_cmds.rs"]
 mod dict_cmds;
 pub use dict_cmds::*;
+
+// ------------------------------------------------------------ snapshots
+
+impl AppState {
+    pub fn sweep_expired_snapshots(&self) {
+        let _ = self.snapshots.cleanup_expired_ai();
+    }
+}
+
+pub(crate) fn read_writable_raw(state: &AppState, lib: &str, id: &str) -> Result<(String, String, String), String> {
+    if let Some(f) = rw_folder(state, lib)? {
+        let name = id.rsplit('/').next().unwrap_or(id);
+        let title = folder::title_of(name).to_string();
+        let kind = folder::EditKind::of(name)
+            .map(|k| k.content_type().to_string())
+            .unwrap_or_else(|| "md".to_string());
+        let (raw, stamp) = f.read_edit(id)?;
+        state.stamps.lock().unwrap().insert(format!("{}|{}", lib, id), stamp);
+        return Ok((title, kind, raw));
+    }
+    let note = notes_of(state, lib)?
+        .get(note_id(id)?)?
+        .ok_or_else(|| "笔记不存在".to_string())?;
+    let ctype = if note.content_type.is_empty() {
+        "md".to_string()
+    } else {
+        note.content_type
+    };
+    Ok((note.title, ctype, note.content))
+}
+
+#[tauri::command]
+pub async fn list_snapshots(lib: String, doc_id: String, state: State<'_, AppState>) -> Result<Vec<SnapshotMeta>, String> {
+    state.snapshots.list(&lib, &doc_id)
+}
+
+#[tauri::command]
+pub async fn create_snapshot(
+    lib: String,
+    doc_id: String,
+    kind: Option<String>,
+    label: Option<String>,
+    content: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<SnapshotMeta, String> {
+    let (_, ctype, stored_raw) = read_writable_raw(&state, &lib, &doc_id)?;
+    let body = content.unwrap_or(stored_raw);
+    let kind_str = kind.as_deref().unwrap_or("manual");
+    let label_str = label.unwrap_or_else(|| {
+        if kind_str == "ai" {
+            "AI 修改前".to_string()
+        } else {
+            "手动快照".to_string()
+        }
+    });
+    state.snapshots.create(&lib, &doc_id, kind_str, &label_str, &ctype, &body)
+}
+
+#[tauri::command]
+pub async fn get_snapshot(id: i64, state: State<'_, AppState>) -> Result<Option<SnapshotRecord>, String> {
+    state.snapshots.get(id)
+}
+
+#[tauri::command]
+pub async fn restore_snapshot(id: i64, state: State<'_, AppState>) -> Result<SnapshotRecord, String> {
+    let rec = state
+        .snapshots
+        .get(id)?
+        .ok_or_else(|| "快照不存在或已被删除".to_string())?;
+    save_note(rec.lib.clone(), rec.doc_id.clone(), rec.content.clone(), state).await?;
+    Ok(rec)
+}
+
+#[tauri::command]
+pub async fn delete_snapshot(id: i64, state: State<'_, AppState>) -> Result<bool, String> {
+    state.snapshots.delete(id)
+}
+
+#[tauri::command]
+pub async fn get_snapshot_policy(state: State<'_, AppState>) -> Result<SnapshotPolicy, String> {
+    state.snapshots.policy()
+}
+
+#[tauri::command]
+pub async fn set_snapshot_policy(
+    ai_max_per_doc: usize,
+    ai_ttl_days: u64,
+    state: State<'_, AppState>,
+) -> Result<SnapshotPolicy, String> {
+    state.snapshots.set_policy(ai_max_per_doc, ai_ttl_days)
+}
 
 #[cfg(test)]
 mod library_id_tests {

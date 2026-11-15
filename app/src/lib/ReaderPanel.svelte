@@ -16,11 +16,12 @@
   import { makePinyinItem } from "./pinyinMenu.svelte.js";
   import { localDate } from "./diary.js";
   import Icon from "./Icon.svelte";
+  import SnapshotDialog from "./SnapshotDialog.svelte";
 
   const loadMindMap = () => import("./MindMapView.svelte");
   const loadWhiteboard = () => import("./WhiteboardView.svelte");
 
-  let { p, onopen, onprogress, ontitle, onlocate = null, onaction = null, onai = null, ondocstate = null } = $props();
+  let { p, onopen, onprogress, ontitle, onlocate = null, onaction = null, onai = null, ondocstate = null, getNodePath = null } = $props();
 
   let vol = $state(null);
   let error = $state("");
@@ -31,6 +32,7 @@
   let mindRef = $state();
   let boardRef = $state();
   let externalPrompt = $state(null);
+  let snapshotOpen = $state(false);
 
   async function openExternal(url, mode = "window", remember = false) {
     externalPrompt = null;
@@ -79,8 +81,17 @@
     return readerRef?.getText?.() || "";
   }
 
+  function getCurrentRawContent() {
+    if (!vol || vol.raw == null) return null;
+    if (vol.content_type === "mindmap") return mindRef?.getRaw?.() ?? vol.raw;
+    if (vol.content_type === "whiteboard") return boardRef?.getRaw?.() ?? vol.raw;
+    return draft;
+  }
+
   async function handleEditDoc({ mode, text }) {
     if (!vol || vol.raw == null || !text?.trim()) return;
+    const raw = getCurrentRawContent();
+    await api.createSnapshot(p.lib, p.path, "ai", "AI 修改前", raw).catch(() => {});
     if (vol.content_type === "mindmap") {
       await mindRef?.applyAi?.({ mode, text });
     } else if (vol.content_type === "whiteboard") {
@@ -330,6 +341,11 @@
 </script>
 
 {#snippet aiBtn()}
+  {#if vol?.raw != null}
+    <button type="button" class="tool-btn" onclick={() => (snapshotOpen = true)} title="文档快照（查看、创建或还原历史版本）" aria-label="文档快照">
+      <Icon name="snapshot" size={16} />
+    </button>
+  {/if}
   {#if settings.aiOn && onai}
     <button type="button" class="ai-btn" onclick={() => sendToAi({ toggle: true })} title="打开 / 收起右侧 AI 助手栏（F1）">
       <Icon name="sparkles" size={16} /> AI
@@ -450,6 +466,23 @@
   {/if}
 {:else}
   <p class="loading muted">载入中…</p>
+{/if}
+
+{#if snapshotOpen && vol?.raw != null}
+  <SnapshotDialog
+    lib={p.lib}
+    docId={p.path}
+    title={p.retitled ?? vol.title}
+    nodePath={getNodePath?.(vol) || [p.lib, p.retitled ?? vol.title].filter(Boolean).join("/")}
+    getCurrentContent={getCurrentRawContent}
+    onrestored={() => {
+      clearTimeout(saveTimer);
+      editSeq = 0;
+      savedSeq = 0;
+      loaded = false;
+      p.reload = (p.reload ?? 0) + 1;
+    }}
+    onclose={() => (snapshotOpen = false)} />
 {/if}
 
 {#if externalPrompt}
