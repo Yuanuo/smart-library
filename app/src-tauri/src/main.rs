@@ -21,7 +21,9 @@ use tauri::Manager;
 fn data_dirs() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let exe = std::env::current_exe().ok()?;
     let root = exe.parent()?.join("data");
-    if root.is_dir() || !cfg!(debug_assertions) {
+    // Only auto-create a portable `data` folder next to the executable in Windows release builds;
+    // macOS .app bundles and Linux system/AppImage paths are read-only or signed.
+    if root.is_dir() || (cfg!(windows) && !cfg!(debug_assertions)) {
         std::fs::create_dir_all(&root).ok()?;
         return Some((root.join("config"), root.clone()));
     }
@@ -30,6 +32,7 @@ fn data_dirs() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
 
 fn main() {
     let portable = data_dirs();
+    #[cfg(windows)]
     if let Some((_, data)) = &portable {
         // WebView2 keeps its own profile (local storage …): keep it here too
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", data.join("webview"));

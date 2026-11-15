@@ -2326,7 +2326,23 @@ fn open_external_url_sync(url: &str) -> Result<(), String> {
         if result as isize <= 32 { return Err("无法打开系统浏览器".into()); }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url.as_str())
+            .spawn()
+            .map_err(|_| "无法打开系统浏览器".to_string())?;
+        Ok(())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url.as_str())
+            .spawn()
+            .map_err(|_| "无法打开系统浏览器".to_string())?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, unix)))]
     { let _ = url; Err("当前系统暂不支持打开外部链接".into()) }
 }
 
@@ -3912,14 +3928,14 @@ pub async fn list_fonts() -> Result<Vec<FontDto>, String> {
 /// the page cannot do it, and the bar takes the selected text as its input.
 #[tauri::command]
 pub async fn find_in_page(window: tauri::WebviewWindow) -> Result<(), String> {
-    if !window.is_focused().unwrap_or(false) {
-        let _ = window.set_focus();
-        if !window.is_focused().unwrap_or(false) {
-            return Err("当前窗口未处于活动焦点".into());
-        }
-    }
     #[cfg(windows)]
     {
+        if !window.is_focused().unwrap_or(false) {
+            let _ = window.set_focus();
+            if !window.is_focused().unwrap_or(false) {
+                return Err("当前窗口未处于活动焦点".into());
+            }
+        }
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
             GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
             VK_CONTROL, VK_MENU, VK_SHIFT,
@@ -3951,6 +3967,7 @@ pub async fn find_in_page(window: tauri::WebviewWindow) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     {
+        let _ = window;
         Err("不支持".into())
     }
 }
