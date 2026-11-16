@@ -226,12 +226,12 @@ fn format_with_tone(raw: &str) -> String {
 }
 
 enum Token<'a> {
-    Pinyin(&'a str),
+    Pinyin { ch: char, raw: &'a str },
     Other(char),
 }
 
-/// Walk `text` with greedy longest-match, calling `on_token` for each matched
-/// Chinese character syllable or unmatched character.
+/// Walk `text` with greedy longest-match, calling `on_token` for every matched
+/// Chinese character (with its syllable) or unmatched character.
 fn walk_pinyin(text: &str, mut on_token: impl FnMut(Token<'_>)) {
     if text.is_empty() {
         return;
@@ -260,10 +260,16 @@ fn walk_pinyin(text: &str, mut on_token: impl FnMut(Token<'_>)) {
         }
         if let Some((len, syls)) = matched {
             if len == 1 {
-                on_token(Token::Pinyin(syls[0].as_ref()));
+                on_token(Token::Pinyin {
+                    ch: chars[i],
+                    raw: syls[0].as_ref(),
+                });
             } else {
-                for s in syls {
-                    on_token(Token::Pinyin(s.as_ref()));
+                for (k, s) in syls.iter().enumerate() {
+                    on_token(Token::Pinyin {
+                        ch: chars[i + k],
+                        raw: s.as_ref(),
+                    });
                 }
             }
             i += len;
@@ -289,7 +295,7 @@ pub fn to_pinyin(text: &str) -> String {
     let mut out = String::with_capacity(text.len() * 2);
     let mut prev = Prev::None;
     walk_pinyin(text, |tok| match tok {
-        Token::Pinyin(raw) => {
+        Token::Pinyin { raw, .. } => {
             if prev == Prev::Pinyin || prev == Prev::Alnum {
                 out.push(' ');
             }
@@ -312,13 +318,88 @@ pub fn to_pinyin(text: &str) -> String {
     out
 }
 
+/// One character of a `convert` result; `pinyin` is `None` for non-Chinese text.
+#[derive(serde::Serialize)]
+pub struct PinyinChar {
+    pub text: String,
+    pub pinyin: Option<String>,
+}
+
+/// Everything the 查拼音 dialog needs, from a single walk over the text.
+#[derive(serde::Serialize)]
+pub struct PinyinResult {
+    /// Per-character pairs, for ruby annotation above each character.
+    pub chars: Vec<PinyinChar>,
+    /// Plain toned pinyin, e.g. `zhōng wén`.
+    pub plain: String,
+    /// Character followed by its pinyin in parentheses, e.g. `中(zhōng) 文(wén)`.
+    pub annotated: String,
+}
+
+/// Convert `text` for the 查拼音 dialog: per-character pairs plus the two copy formats.
+pub fn convert(text: &str) -> PinyinResult {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Prev {
+        None,
+        Pinyin,
+        Alnum,
+        Other,
+    }
+
+    let mut chars = Vec::with_capacity(text.chars().count());
+    let mut plain = String::with_capacity(text.len() * 3);
+    let mut annotated = String::with_capacity(text.len() * 4);
+    let mut prev = Prev::None;
+    walk_pinyin(text, |tok| match tok {
+        Token::Pinyin { ch, raw } => {
+            let syl = format_with_tone(raw);
+            if prev == Prev::Pinyin || prev == Prev::Alnum {
+                plain.push(' ');
+                annotated.push(' ');
+            }
+            plain.push_str(&syl);
+            annotated.push(ch);
+            annotated.push('(');
+            annotated.push_str(&syl);
+            annotated.push(')');
+            chars.push(PinyinChar {
+                text: ch.to_string(),
+                pinyin: Some(syl),
+            });
+            prev = Prev::Pinyin;
+        }
+        Token::Other(ch) => {
+            if ch.is_ascii_alphanumeric() {
+                if prev == Prev::Pinyin {
+                    plain.push(' ');
+                    annotated.push(' ');
+                }
+                prev = Prev::Alnum;
+            } else {
+                prev = Prev::Other;
+            }
+            plain.push(ch);
+            annotated.push(ch);
+            chars.push(PinyinChar {
+                text: ch.to_string(),
+                pinyin: None,
+            });
+        }
+    });
+    PinyinResult {
+        chars,
+        plain,
+        annotated,
+    }
+}
+
 /// Build `(full_toneless_pinyin, pinyin_initials)` for title quick-search matching.
 /// ASCII alphanumeric characters are kept in lowercase; punctuation and spaces are dropped.
 pub fn pinyin_key(text: &str) -> (String, String) {
     let mut full = String::with_capacity(text.len() * 3);
     let mut initials = String::with_capacity(text.len());
     walk_pinyin(text, |tok| match tok {
-        Token::Pinyin(raw) => {
+        Token::Pinyin { raw, .. } => {
             let (base, _) = split_tone(raw);
             full.push_str(base);
             if let Some(first) = base.chars().next() {
@@ -357,6 +438,26 @@ mod tests {
         assert_eq!(to_pinyin("第一行\n第二行"), "dì yī xíng\ndì èr xíng");
         assert_eq!(to_pinyin("T0262 妙法蓮華經"), "T0262 miào fǎ lián huá jīng");
         assert_eq!(to_pinyin("略履"), "lüè lǚ");
+    }
+
+    #[test]
+    fn annotates_each_character_and_builds_both_copy_formats() {
+        let r = convert("如是我聞，一時佛在！");
+        assert_eq!(r.chars.len(), 10);
+        assert_eq!(r.chars[0].text, "如");
+        assert_eq!(r.chars[0].pinyin.as_deref(), Some("rú"));
+        assert_eq!(r.chars[4].text, "，");
+        assert_eq!(r.chars[4].pinyin, None);
+        assert_eq!(r.plain, "rú shì wǒ wén，yī shí fó zài！");
+        assert_eq!(
+            r.annotated,
+            "如(rú) 是(shì) 我(wǒ) 聞(wén)，一(yī) 時(shí) 佛(fó) 在(zài)！"
+        );
+
+        // Phrase-level polyphone readings reach the per-character pairs.
+        assert_eq!(convert("銀行").annotated, "銀(yín) 行(háng)");
+        assert_eq!(convert("般若abc").annotated, "般(bō) 若(rě) abc");
+        assert_eq!(convert("第一行\n第二行").annotated, "第(dì) 一(yī) 行(xíng)\n第(dì) 二(èr) 行(xíng)");
     }
 
     #[test]

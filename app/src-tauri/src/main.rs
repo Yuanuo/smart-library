@@ -216,6 +216,7 @@ fn main() {
             commands::quick_search,
             commands::prepare_titles,
             commands::to_pinyin,
+            commands::pinyin_convert,
             commands::pinyin_text,
             commands::set_pinyin_text,
             commands::citation_command,

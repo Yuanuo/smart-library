@@ -3450,6 +3450,11 @@ pub fn to_pinyin(text: String) -> String {
 }
 
 #[tauri::command]
+pub fn pinyin_convert(text: String) -> smart_library_core::pinyin::PinyinResult {
+    smart_library_core::pinyin::convert(&text)
+}
+
+#[tauri::command]
 pub async fn pinyin_text(state: State<'_, AppState>) -> Result<String, String> {
     Ok(std::fs::read_to_string(state.config_dir.join("pinyin.txt")).unwrap_or_default())
 }
