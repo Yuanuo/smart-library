@@ -1784,8 +1784,7 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, nav_file: Option<&str>, n: &
             let toc = entry
                 .as_ref()
                 .filter(|e| e.start.is_none())
-                .and_then(|e| bc.book(&e.book_id).map(|b| b.toc_path()))
-                .filter(|p| bc.source.exists(p));
+                .and_then(|e| bc.book_source_path(&e.book_id));
             NodeDto {
                 title: match &entry {
                     Some(e) if !e.cloned => format!("{} {}", e.book_id, e.title),
@@ -2406,11 +2405,7 @@ pub async fn raw_source(
                 Some(p) => p,
                 None if l.kind == "cbeta" => {
                     let book = book_id.ok_or("没有指定文档")?;
-                    bc.volumes(&book)
-                        .iter()
-                        .find(|v| v.exists)
-                        .map(|v| v.path.clone())
-                        .ok_or_else(|| format!("{} 没有可读的卷", book))?
+                    bc.first_existing_volume(&book).ok_or_else(|| format!("{} 没有可读的卷", book))?
                 }
                 None => return Err("没有指定文档".into()),
             };

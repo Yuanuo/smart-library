@@ -816,9 +816,11 @@
     return out;
   }
 
-  /** The original file: a file path for folders, `<package>!/<path>` for data packages. */
+  /** The original file: a file path for folders, `<package>!/<path>` for data packages.
+   *  `href` is not used: it may point at a file the package does not have, and an
+   *  unresolved leaf is better served by the package path itself. */
   function filePath(l, node) {
-    const p = node.path ?? node.rel ?? node.start ?? node.toc ?? node.nav ?? node.href;
+    const p = node.path ?? node.rel ?? node.start ?? node.toc ?? node.nav;
     return p ? fullPath(l, p) : l.source;
   }
 

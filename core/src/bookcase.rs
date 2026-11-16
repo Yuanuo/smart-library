@@ -180,6 +180,22 @@ impl Bookcase {
         self.catalog.books.get(id)
     }
 
+    /// The first volume of a book that is really in the source.
+    pub fn first_existing_volume(&self, book_id: &str) -> Option<String> {
+        self.volumes(book_id).into_iter().find(|v| v.exists).map(|v| v.path)
+    }
+
+    /// The file that stands for a whole book: its table of contents, or its
+    /// first existing volume when it has no toc file.
+    pub fn book_source_path(&self, book_id: &str) -> Option<String> {
+        let toc = self.book(book_id)?.toc_path();
+        if self.source.exists(&toc) {
+            Some(toc)
+        } else {
+            self.first_existing_volume(book_id)
+        }
+    }
+
     /// Resolve a leaf of a navigation tree to a book.
     ///
     /// Links look like `XML/T/T01/T01n0004_001.xml` with the text `T0004 七佛父母姓字經`;
@@ -392,6 +408,10 @@ T , 法華部類 , , 09 , 0262 , 7 , 妙法蓮華經 , 姚秦 鳩摩羅什譯
 </ol></li></ol></nav></body></html>"#;
 
     fn fixture() -> Bookcase {
+        Bookcase::open(Box::new(base_source())).unwrap()
+    }
+
+    fn base_source() -> MemSource {
         let mut src = MemSource::new();
         src.add(
             "index.xml",
@@ -413,7 +433,7 @@ T , 法華部類 , , 09 , 0262 , 7 , 妙法蓮華經 , 姚秦 鳩摩羅什譯
         for i in 1..=5 {
             src.add(&format!("XML/T/T09/T09n0262_{:03}.xml", i), "x");
         }
-        Bookcase::open(Box::new(src)).unwrap()
+        src
     }
 
     #[test]
@@ -479,6 +499,21 @@ T , 法華部類 , , 09 , 0262 , 7 , 妙法蓮華經 , 姚秦 鳩摩羅什譯
         // no toc file and no volume file present -> nothing
         assert!(bc.volumes("T0001").is_empty());
         assert!(bc.volumes("T9999").is_empty());
+    }
+
+    #[test]
+    fn a_book_source_is_its_toc_or_its_first_existing_volume() {
+        let bc = fixture();
+        assert_eq!(bc.book_source_path("T0004").as_deref(), Some("toc/T/T0004.xml"));
+        assert_eq!(bc.first_existing_volume("T0262").as_deref(), Some("XML/T/T09/T09n0262_001.xml"));
+        assert_eq!(bc.first_existing_volume("T0220"), None);
+        assert_eq!(bc.book_source_path("T9999"), None);
+
+        // no toc file: the first volume that is really there
+        let mut src = base_source();
+        src.add("XML/T/T01/T01n0001_001.xml", "x");
+        let bc = Bookcase::open(Box::new(src)).unwrap();
+        assert_eq!(bc.book_source_path("T0001").as_deref(), Some("XML/T/T01/T01n0001_001.xml"));
     }
 
     #[test]
