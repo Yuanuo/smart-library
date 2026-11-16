@@ -38,6 +38,7 @@ let searchStates = {}; // tab -> the reactive state of a search page
 let searchSeq = 0; // search tabs are `search:<n>`
 let lastSearchId = null; // the search tab used last (it receives "add to range")
 let searchWinSeq = 0;
+let rawWinSeq = 0;
 let aiChatStates = {}; // tab -> { sessionId, title }
 let aiChatSeq = 0; // ai chat tabs are `aichat:<n>`
 let aiChatWinSeq = 0;
@@ -416,6 +417,13 @@ function tabMenu({ panel, group }) {
         },
       });
     }
+    items.push({
+      label: "查看原始（Raw）数据",
+      action: () => {
+        const i = infos[panel.id] || panel.params || {};
+        openRaw({ lib: i.lib, bookId: i.bookId ?? null, path: i.path ?? null, title: panel.title });
+      },
+    });
   }
   return items;
 }
@@ -469,6 +477,16 @@ async function popOut(panel) {
   const title = panel.title || prm.path;
   panel.api.close();
   await createPopout({ tab: panel.id, lib: prm.lib, bookId: prm.bookId, path: prm.path, title });
+}
+
+/** A document's original file, read-only, in a window of its own. */
+function openRaw(info) {
+  new WebviewWindow(`raw-win-${Date.now()}-${++rawWinSeq}`, {
+    url: "/?raw=" + encodeURIComponent(JSON.stringify(info)),
+    title: `${info.title || "原始数据"} — 原始数据 — Smart Library`,
+    width: 1000,
+    height: 860,
+  });
 }
 
 /** A search tab into a window of its own (not kept after a restart). */

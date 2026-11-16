@@ -89,6 +89,8 @@ export const tree = (lib) => invoke("tree", { lib });
 export const openNode = (lib, bookId, path, query = null, phrase = false) =>
   invoke("open_node", { lib, bookId, path, query, phrase });
 export const resolveNode = (lib, bookId = null, path = null) => invoke("resolve_node", { lib, bookId, path });
+/** The original text of a document, for the raw data window. */
+export const rawSource = (lib, path = null, bookId = null) => invoke("raw_source", { lib, path, bookId });
 export const search = (args) => invoke("search", args);
 export const randomSentence = (args) => invoke("random_sentence", args);
 export const quickSearch = (query, lib = null, limit = 200, quote = null, within = null, pinyin = false) =>
