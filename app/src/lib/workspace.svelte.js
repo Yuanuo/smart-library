@@ -428,6 +428,35 @@ function tabMenu({ panel, group }) {
   return items;
 }
 
+/**
+ * Show the active tab's context menu at `(x, y)` (client coordinates), the
+ * same menu a right-click on the tab itself builds. The reader's title link
+ * uses it, so the menu is not defined twice.
+ */
+export function showTabMenuAt(x, y) {
+  const panel = dv?.activePanel;
+  if (!panel) return;
+  const tab = [...(hostEl?.querySelectorAll(".dv-tab") || [])].find((el) => el.dataset?.tabPanelId === panel.id);
+  if (!tab) return;
+  tab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: x, clientY: y }));
+}
+
+/**
+ * Bring the active tab into view. Tabs that do not fit stay in the strip but
+ * are clipped (dockview lists them in a dropdown), so activating one of them
+ * would otherwise leave its tab out of sight.
+ */
+function revealActiveTab(panel = dv?.activePanel) {
+  const strip = panel?.group?.element?.querySelector(".dv-tabs-container");
+  if (!strip) return;
+  const tab = [...strip.children].find((el) => el.dataset?.tabPanelId === panel.id);
+  if (!tab) return;
+  const left = tab.offsetLeft;
+  const right = left + tab.offsetWidth;
+  if (left < strip.scrollLeft) strip.scrollLeft = left;
+  else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
+}
+
 /** Float a tab over the workspace, at a size large enough to read. */
 function float(panel) {
   const box = hostEl?.getBoundingClientRect() || { width: 1000, height: 700 };
@@ -595,6 +624,7 @@ export async function init(element, h) {
       ws.activeDoc = null;
       ws.activeSearch = null;
     }
+    requestAnimationFrame(() => revealActiveTab(panel));
   });
   dv.onDidAddPanel(refreshEmpty);
   dv.onDidRemovePanel((panel) => {
