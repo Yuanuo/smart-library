@@ -818,7 +818,7 @@
 
   /** The original file: a file path for folders, `<package>!/<path>` for data packages. */
   function filePath(l, node) {
-    const p = node.path ?? node.rel ?? node.start;
+    const p = node.path ?? node.rel ?? node.start ?? node.toc ?? node.nav ?? node.href;
     return p ? fullPath(l, p) : l.source;
   }
 

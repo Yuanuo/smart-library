@@ -1726,6 +1726,10 @@ pub struct NodeDto {
     book_id: Option<String>,
     /// CBETA: first volume of a part of a big book (`T0220a`)
     start: Option<String>,
+    /// CBETA: the book's table of contents file inside the data package
+    toc: Option<String>,
+    /// CBETA/HTML: the navigation file this level of the tree comes from
+    nav: Option<String>,
     /// HTML libraries: the article (only when it can be read)
     path: Option<String>,
     /// original link
@@ -1741,28 +1745,32 @@ pub struct NodeDto {
     children: Vec<NodeDto>,
 }
 
-fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
+fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, nav_file: Option<&str>, n: &NavNode) -> NodeDto {
     match n {
         NavNode::Folder { title, children } => NodeDto {
             title: title.clone(),
             book_id: None,
             start: None,
+            toc: None,
+            nav: nav_file.map(str::to_string),
             path: None,
             href: None,
             rel: None,
             lazy: false,
             mind: false,
             board: false,
-            children: children.iter().map(|c| node_dto(bc, html, c)).collect(),
+            children: children.iter().map(|c| node_dto(bc, html, nav_file, c)).collect(),
         },
         NavNode::Leaf { href, text, children, .. } => {
-            let children = children.iter().map(|c| node_dto(bc, html, c)).collect();
+            let children = children.iter().map(|c| node_dto(bc, html, nav_file, c)).collect();
             if let Some(t) = html {
                 let p = href.split('#').next().unwrap_or("");
                 return NodeDto {
                     title: text.clone(),
                     book_id: None,
                     start: None,
+                    toc: None,
+                    nav: None,
                     path: t.leaf(p).map(|l| l.path.clone()),
                     href: Some(href.clone()),
                     rel: None,
@@ -1773,6 +1781,11 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
                 };
             }
             let entry = bc.resolve_leaf(href, text);
+            let toc = entry
+                .as_ref()
+                .filter(|e| e.start.is_none())
+                .and_then(|e| bc.book(&e.book_id).map(|b| b.toc_path()))
+                .filter(|p| bc.source.exists(p));
             NodeDto {
                 title: match &entry {
                     Some(e) if !e.cloned => format!("{} {}", e.book_id, e.title),
@@ -1781,6 +1794,8 @@ fn node_dto(bc: &Bookcase, html: Option<&HtmlTree>, n: &NavNode) -> NodeDto {
                 },
                 book_id: entry.as_ref().map(|e| e.book_id.clone()),
                 start: entry.as_ref().and_then(|e| e.start.clone()),
+                toc,
+                nav: None,
                 path: None,
                 href: Some(href.clone()),
                 rel: None,
@@ -1797,7 +1812,8 @@ fn navigation_nodes(state: &AppState, l: &Library) -> Result<Vec<NodeDto>, Strin
     let bc = state.bookcase_of(l)?;
     let html = if l.kind == "html" { Some(state.html_tree(l)?) } else { None };
     let doc = bc.nav(&l.tree)?;
-    Ok(doc.items.iter().map(|n| node_dto(&bc, html.as_deref(), n)).collect())
+    let nav_file = bc.trees.iter().find(|t| t.id == l.tree).map(|t| t.file.clone());
+    Ok(doc.items.iter().map(|n| node_dto(&bc, html.as_deref(), nav_file.as_deref(), n)).collect())
 }
 
 fn index_overlay(state: &AppState, l: &Library) -> Result<props::Overlay, String> {
@@ -1871,6 +1887,8 @@ fn note_nodes(n: &NotesStore, parent: Option<i64>) -> Result<Vec<NodeDto>, Strin
             title: r.title,
             book_id: None,
             start: None,
+            toc: None,
+            nav: None,
             path: Some(r.id.to_string()),
             href: None,
             rel: Some(r.id.to_string()),
@@ -1892,6 +1910,8 @@ fn folder_nodes(f: &FolderLibrary, rel: &str) -> Result<Vec<NodeDto>, String> {
                 title: if e.is_dir { e.name.clone() } else { folder::title_of(&e.name).to_string() },
                 book_id: None,
                 start: None,
+                toc: None,
+                nav: None,
                 path: if e.is_dir { None } else { Some(e.rel.clone()) },
                 href: None,
                 rel: Some(e.rel),
@@ -1930,12 +1950,13 @@ pub async fn tree(lib: String, state: State<'_, AppState>) -> Result<Vec<NodeDto
         return folder_nodes(&f, "");
     }
     let bc = state.bookcase_of(&l)?;
+    let nav_file = bc.trees.iter().find(|t| t.id == l.tree).map(|t| t.file.clone());
     if l.kind == "html" {
         let t = state.html_tree(&l)?;
-        Ok(t.nav.items.iter().map(|n| node_dto(&bc, Some(&t), n)).collect())
+        Ok(t.nav.items.iter().map(|n| node_dto(&bc, Some(&t), nav_file.as_deref(), n)).collect())
     } else {
         let doc = bc.nav(&l.tree)?;
-        Ok(doc.items.iter().map(|n| node_dto(&bc, None, n)).collect())
+        Ok(doc.items.iter().map(|n| node_dto(&bc, None, nav_file.as_deref(), n)).collect())
     }
 }
 
@@ -4169,7 +4190,7 @@ mod library_id_tests {
     #[test]
     fn navigation_groups_inherit_properties_and_descendants_override() {
         fn node(path: Option<&str>, children: Vec<NodeDto>) -> NodeDto {
-            NodeDto { title: "".into(), book_id: None, start: None, path: path.map(str::to_string), href: None, rel: None, lazy: false, mind: false, board: false, children }
+            NodeDto { title: "".into(), book_id: None, start: None, toc: None, nav: None, path: path.map(str::to_string), href: None, rel: None, lazy: false, mind: false, board: false, children }
         }
         let nodes = vec![node(None, vec![node(Some("article"), vec![node(Some("child"), vec![])])])];
         let props = Props::memory().unwrap();
