@@ -444,6 +444,11 @@ fn html_tag(el: &Elem) -> (&'static str, String) {
     }
 }
 
+/// Whether the element becomes a block in the rendered HTML.
+fn is_block_html(el: &Elem) -> bool {
+    matches!(html_tag(el).0, "div" | "p" | "ul" | "li" | "table" | "tr" | "td")
+}
+
 /// A collation note at the foot of the page (not an inline note).
 fn is_foot_note(e: &Elem) -> bool {
     e.name == "note" && e.attr("place") != Some("inline") && e.attr("place") != Some("interlinear")
@@ -620,6 +625,19 @@ impl<'a> Extractor<'a> {
                     .elems()
                     .find(|e| e.is(Ns::Tei, "lem"))
                     .or_else(|| el.elems().find(|e| e.is(Ns::Tei, "rdg")));
+                // An edition may omit a whole section, so that the `lem` (or a
+                // `rdg`) is a block instead of a few words (T16n0663_004: the
+                // 明 edition omits a chapter). Wrapping such a reading in the
+                // inline variant span would make the whole section one
+                // hover/colour target and put its text in the title; the note
+                // with the same `n` says what was left out, so render the
+                // block as plain text.
+                if el.elems().any(|e| (e.name == "lem" || e.name == "rdg") && e.elems().any(is_block_html)) {
+                    if let Some(p) = pick {
+                        self.children(p);
+                    }
+                    return;
+                }
                 let variants = el.elems().filter(|e| e.name == "rdg").count();
                 let title = if self.html.is_some() {
                     let mut t = String::new();

@@ -324,6 +324,36 @@ mod tests {
     }
 
     #[test]
+    fn a_reading_that_is_a_whole_block_stays_plain_text() {
+        // T16n0663_004: the 明 edition omits the whole chapter, so the `lem`
+        // (the 大 reading) is block-level. It must not become one inline
+        // variant around the chapter, with the chapter text as its title.
+        let xml = wrap(concat!(
+            r#"<cb:div type="pin"><note n="1" type="orig" place="foot text">〔金光…而去〕一品四百二十八字－【明】</note>"#,
+            r#"<note n="1" type="mod">〔金光…而去〕一品四百二十八字－【明】</note>"#,
+            r#"<app n="1"><lem wit="【大】"><head><title>金光明經</title>囑累品第十九</head>"#,
+            r#"<lb n="0001a03" ed="T"/><p xml:id="pT16p0001a0301">爾時釋迦牟尼佛，從三昧起現大神力。</p></lem>"#,
+            r#"<rdg resp="Taisho" wit="【明】"><space quantity="0"/></rdg></app></cb:div>"#,
+        ));
+        let r = render_volume(&xml, &RenderOptions::default()).unwrap();
+        assert!(
+            r.html.contains("<div class=\"head\"><span class=\"x-title\">金光明經</span>囑累品第十九</div>"),
+            "{}",
+            r.html
+        );
+        assert!(
+            r.html.contains("<p class=\"p\" id=\"pT16p0001a0301\">爾時釋迦牟尼佛，從三昧起現大神力。</p>"),
+            "{}",
+            r.html
+        );
+        assert!(!r.html.contains("title=\"【大】"), "{}", r.html);
+        assert!(!r.html.contains("<span class=\"app"), "{}", r.html);
+        assert!(r.html.contains("<span class=\"note\""), "{}", r.html);
+        let v = extract_volume(&xml).unwrap();
+        assert_eq!(r.plain_chars, v.plain.chars().count());
+    }
+
+    #[test]
     fn keeps_only_safe_styles() {
         assert_eq!(safe_style("margin-left:1em;text-indent:-1em;"), "margin-left:1em;text-indent:-1em");
         assert_eq!(safe_style("color:red;margin-left:expression(x)"), "");
