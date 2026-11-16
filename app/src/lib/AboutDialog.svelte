@@ -8,7 +8,7 @@
     onkeydown={(e) => e.key === "Escape" && onclose()}>
     <header class="dialog-header"><h2>{info?.name ?? "Smart Library"}</h2></header>
     <div class="dialog-content">
-    <p class="ver">版本 {info?.version ?? ""}（年.月.日）</p>
+    <p class="ver">版本 {info?.version ?? ""}</p>
     <p>本地知识库桌面软件：快速、精确地阅读和检索《大藏经》等大量文本，也可以链接本机文件夹、写自己的笔记。</p>
     </div>
     <div class="actions"><button onclick={oncheckupdate}>检查更新</button><button class="primary" onclick={onclose}>关闭</button></div>
