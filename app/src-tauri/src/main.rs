@@ -206,6 +206,7 @@ fn main() {
             commands::unbind_library,
             commands::tree,
             commands::open_node,
+            commands::raw_source,
             commands::resolve_node,
             commands::resolve_zim_link,
             commands::open_external_url,

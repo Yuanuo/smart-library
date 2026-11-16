@@ -2346,6 +2346,98 @@ pub async fn open_node(
 }
 
 #[derive(Serialize)]
+pub struct RawDto {
+    /// file, `<package>!/<path>`, or `library / note` for an internal note
+    file: String,
+    /// xml | html | markdown | json | text
+    lang: String,
+    text: String,
+}
+
+fn raw_lang(name: &str) -> &'static str {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "xml" => "xml",
+        "html" | "htm" | "xhtml" => "html",
+        "md" | "markdown" => "markdown",
+        "json" => "json",
+        _ => "text",
+    }
+}
+
+/// The original text of a document, for the raw data window. Read-only: the
+/// file as it is, without the reader's rendering.
+#[tauri::command]
+pub async fn raw_source(
+    lib: String,
+    path: Option<String>,
+    book_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<RawDto, String> {
+    let l = state.library(&lib)?;
+    match l.kind.as_str() {
+        "notes" => {
+            let id: i64 = path.ok_or("没有指定笔记")?.parse().map_err(|_| "笔记编号不对")?;
+            let note = state.notes(&l)?.get(id)?.ok_or("笔记不存在")?;
+            let lang = match note.content_type.as_str() {
+                "mindmap" | "whiteboard" => "json",
+                _ => "markdown",
+            };
+            Ok(RawDto { file: format!("{} / {}", l.title, note.title), lang: lang.to_string(), text: note.content })
+        }
+        "folder" => {
+            let path = path.ok_or("没有指定文件")?;
+            let p = state.folder(&l)?.abs(&path)?;
+            let name = path.rsplit('/').next().unwrap_or(&path);
+            let ext = name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
+            if smart_library_core::doctext::is_document(&ext) || !folder::is_text_file(name) {
+                return Err(format!("{}：这是二进制文档，没有可显示的原始文本", name));
+            }
+            let bytes = std::fs::read(&p).map_err(|e| format!("{}: {}", p.display(), e))?;
+            Ok(RawDto {
+                file: p.display().to_string(),
+                lang: raw_lang(name).to_string(),
+                text: smart_library_core::text::decode_auto(&bytes),
+            })
+        }
+        "cbeta" | "html" => {
+            let bc = state.bookcase_of(&l)?;
+            let path = match path {
+                Some(p) => p,
+                None if l.kind == "cbeta" => {
+                    let book = book_id.ok_or("没有指定文档")?;
+                    bc.volumes(&book)
+                        .iter()
+                        .find(|v| v.exists)
+                        .map(|v| v.path.clone())
+                        .ok_or_else(|| format!("{} 没有可读的卷", book))?
+                }
+                None => return Err("没有指定文档".into()),
+            };
+            let bytes = bc.source.read(&path).ok_or_else(|| format!("{}：数据包里没有这个文件", path))?;
+            Ok(RawDto {
+                file: format!("{}!/{}", l.source, path),
+                lang: raw_lang(&path).to_string(),
+                text: smart_library_core::text::decode_auto(&bytes),
+            })
+        }
+        "zim" => {
+            let path = path.ok_or("没有指定条目")?;
+            let z = state.zim(&l)?;
+            let mut z = z.lock().unwrap();
+            let index = z.entry_index(&path).ok_or_else(|| format!("没有这个条目：{}", path))?;
+            let bytes = z.read(index)?;
+            Ok(RawDto {
+                file: format!("{}!/{}", l.source, path),
+                lang: "html".to_string(),
+                text: smart_library_core::text::decode_auto(&bytes),
+            })
+        }
+        kind => Err(format!("这种知识库没有原始文本：{}", kind)),
+    }
+}
+
+#[derive(Serialize)]
 pub struct NodeIdDto {
     /// tab id: `<lib>|<path>`
     tab: String,
@@ -4185,6 +4277,16 @@ mod library_id_tests {
         assert!(library_id(Some("ABC"), "zim", &libs).is_err());
         assert_eq!(library_id(None, "wikiquote", &libs).unwrap(), "wikiquote-2");
         assert_eq!(library_id(None, "../坏", &libs).unwrap(), "lib");
+    }
+
+    #[test]
+    fn raw_lang_follows_the_file_suffix() {
+        assert_eq!(raw_lang("XML/T/T01/T01n0004_001.xml"), "xml");
+        assert_eq!(raw_lang("a/x.html"), "html");
+        assert_eq!(raw_lang("notes/readme.md"), "markdown");
+        assert_eq!(raw_lang("a.map.json"), "json");
+        assert_eq!(raw_lang("plain.txt"), "text");
+        assert_eq!(raw_lang("noext"), "text");
     }
 
     #[test]

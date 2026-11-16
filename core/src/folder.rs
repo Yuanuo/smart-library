@@ -72,6 +72,12 @@ fn ext_of(name: &str) -> String {
     name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default()
 }
 
+/// Whether a file name is text this program can show as it is.
+pub fn is_text_file(name: &str) -> bool {
+    let ext = ext_of(name);
+    EditKind::of(name).is_some() || TEXT_EXTS.contains(&ext.as_str())
+}
+
 fn stem_of(name: &str) -> &str {
     if let Some(k) = EditKind::of(name) {
         return &name[..name.len() - k.suffix().len()];
@@ -1096,6 +1102,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn tells_text_files_apart_from_binary_ones() {
+        assert!(is_text_file("a.md"));
+        assert!(is_text_file("a.map.json"));
+        assert!(is_text_file("a.txt"));
+        assert!(!is_text_file("a.pdf"));
+        assert!(!is_text_file("a.jpg"));
+        assert!(!is_text_file("a.docx"));
     }
 
     #[test]
