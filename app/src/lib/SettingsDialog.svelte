@@ -196,7 +196,7 @@
   async function importDicts() {
     const picked = await openDialog({
       multiple: true,
-      title: "导入词典（TXT / StarDict / MDX，可多选）",
+      title: "导入第三方词典（TXT / StarDict / MDX，可多选）",
       filters: [
         { name: "词典文件", extensions: ["txt", "ifo", "idx", "dict", "mdx", "mdd", "gz", "dz"] },
         { name: "所有文件", extensions: ["*"] },
@@ -210,7 +210,7 @@
     const picked = await openDialog({
       directory: true,
       multiple: false,
-      title: "导入词典文件夹（会递归查找 TXT / StarDict / MDX）",
+      title: "导入第三方词典文件夹（会递归查找 TXT / StarDict / MDX）",
     });
     if (!picked || typeof picked !== "string") return;
     await runDictImport([picked]);
@@ -606,6 +606,18 @@
                 oninput={(e) => update({ readerPara: Number(e.currentTarget.value) })} />
               <output>{settings.readerPara} em</output>
             </div>
+            <div class="row">
+              <span>版心宽度</span>
+              <input type="range" min="20" max="100" step="2" value={settings.readerWidth}
+                disabled={settings.readerFullWidth}
+                oninput={(e) => update({ readerWidth: Number(e.currentTarget.value) })} />
+              <output>{settings.readerFullWidth ? "全宽" : `${settings.readerWidth} em`}</output>
+            </div>
+            <label class="row">
+              <input type="checkbox" checked={settings.readerFullWidth}
+                onchange={(e) => update({ readerFullWidth: e.currentTarget.checked })} />
+              <span class="wide">全宽（版心按可视区宽度自适应，不再限宽）</span>
+            </label>
             <div class="preview-wrap">
               <div class="sample" aria-label="预览">
                 <p>这是一段示例文字，用来预览字体、字号、字重、字间距、行间距和段间距的效果。<strong>这是着重强调的粗体文字</strong>。Sample 0123，ABCabc。</p>
@@ -637,10 +649,10 @@
               <output>{settings.quickLimit} 项</output>
             </div>
             <p class="muted hint card-note">标题快搜先显示这么多条，列表滚到底（或用键盘走到末尾）时自动再加载一批。</p>
-            <label class="check row-top">
+            <label class="row row-top">
               <input type="checkbox" checked={settings.quickPinyin}
                 onchange={(e) => update({ quickPinyin: e.currentTarget.checked })} />
-              <span>标题快搜支持拼音匹配（可输入全拼或首字母，如 <code>miaofa</code> 或 <code>mflhj</code>）</span>
+              <span class="wide">标题快搜支持拼音匹配（可输入全拼或首字母，如 <code>miaofa</code> 或 <code>mflhj</code>）</span>
             </label>
           </div>
 
@@ -696,9 +708,9 @@
           </div>
           <div class="card">
             <div class="card-block">
-              <div class="block-title">导入词典</div>
+              <div class="block-title">导入第三方词典</div>
               <div class="row-plain">
-                <button type="button" onclick={importDicts} disabled={dictLoading}>{dictLoading ? "导入中…" : "导入词典…"}</button>
+                <button type="button" onclick={importDicts} disabled={dictLoading}>{dictLoading ? "导入中…" : "导入第三方词典…"}</button>
                 <button type="button" onclick={importDictDir} disabled={dictLoading}>{dictLoading ? "导入中…" : "导入文件夹…"}</button>
               </div>
               <p class="muted hint">TXT 每行一条：【词条】词义；StarDict 选 .ifo 或 .idx 任一即可，会自己找同名的 .dict（.gz/.dz 也行）；MDX 旁边的 .mdd 图片会自动带上。导入到数据目录的 dicts 下，同名会覆盖。</p>
@@ -1025,6 +1037,7 @@
     border-bottom: 1px solid var(--line);
   }
   .card .row:last-child { border-bottom: none; }
+  .card .row.row-top { border-top: 1px solid var(--line); }
   .card-block { padding: 12px 14px; }
   .block-title { font-weight: 600; margin-bottom: 4px; }
   .row-plain { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }

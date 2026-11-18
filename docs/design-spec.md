@@ -402,15 +402,15 @@ M2 的实现（`core/src/titles.rs`，命令行 `titles`，界面 `app/src/lib/Q
 
 **设置（2026-11）**
 
-- 目录树下方的设置图标或 Ctrl/Cmd+,：主题（跟随系统、浅色、深色，深色靠 `<html data-theme>`）、界面缩放（80–300%，用 WebView 的缩放）、界面字体、阅读器字体、字号基准（14–72 px，正文和其它元素都按 em 跟它缩放）、字重（标准、稍粗、加粗）、字间距（0–0.3 em，默认 0.04）、行间距（1.4–2.6）、段间距（0–2 em，默认 0.35）。不做复杂的主题机制，只有明暗两套颜色变量。字体下拉列表由后端读本机字体文件（`fonts.rs`，ttf-parser + memmap2，只读 name 表，每次运行算一次）：有中文名的在前面，显示中文名；值为 `sys:<英文族名>`，也可以手动输入字体名。
+- 目录树下方的设置图标或 Ctrl/Cmd+,：主题（跟随系统、浅色、深色，深色靠 `<html data-theme>`）、界面缩放（80–300%，用 WebView 的缩放）、界面字体、阅读器字体、字号基准（14–72 px，正文和其它元素都按 em 跟它缩放）、字重（标准、稍粗、加粗）、字间距（0–0.3 em，默认 0.04）、行间距（1.4–2.6）、段间距（0–2 em，默认 0.35）、版心宽度（20–100 em，默认 46；可勾选「全宽」按可视区宽度自适应）。不做复杂的主题机制，只有明暗两套颜色变量。字体下拉列表由后端读本机字体文件（`fonts.rs`，ttf-parser + memmap2，只读 name 表，每次运行算一次）：有中文名的在前面，显示中文名；值为 `sys:<英文族名>`，也可以手动输入字体名。
 - 字重是三个档位而不是滑杆：CSS 没有相对字重（`font-weight` 不能像 rem 那样按基数放大），中文字体也大多只有两三个真实字面，连续数值会被吸附到同一档。`settings.svelte.js` 的 `WEIGHTS` 表给出每档的正文和强调字重，以及正文 / 强调的描边宽度（`-webkit-text-stroke-width`，用 em，字体没有对应字面时靠它保证档位有效）。正文用 `--reader-weight`，强调用 `--reader-strong-weight`；`b`、`strong`、`.head`、`.juan`、CBETA 粗体读法都用强调档，覆盖浏览器的 `bolder`（它按固定阶梯走，600 以上饱和，基准提高后强调会和正文一样粗）。加粗档的强调另加 0.024em 描边，否则两字面字体到顶后强调无法区分。只作用于阅读器和词典详情，笔记编辑器不跟随。
-- 保存在 WebView 的 localStorage（便携模式下就在 `data/webview/` 里），`settings.svelte.js` 把它写成 CSS 变量（`--ui-font`、`--reader-font`、`--reader-size`、`--reader-line`、`--reader-spacing`、`--reader-para`、`--reader-weight`、`--reader-strong-weight`、`--reader-stroke`、`--reader-strong-stroke`）；弹出的阅读窗口同源，改动通过 `storage` 事件同步。
+- 保存在 WebView 的 localStorage（便携模式下就在 `data/webview/` 里），`settings.svelte.js` 把它写成 CSS 变量（`--ui-font`、`--reader-font`、`--reader-size`、`--reader-line`、`--reader-spacing`、`--reader-para`、`--reader-max-width`、`--reader-weight`、`--reader-strong-weight`、`--reader-stroke`、`--reader-strong-stroke`）；弹出的阅读窗口同源，改动通过 `storage` 事件同步。
 
 **查词典与词典导入（2026-11）**
 
 - 词典窗口（`core/src/dict.rs`、`DictWindow.svelte`、`DictReaderView.svelte`）读 `.words`：文件头（版本 3、字符集、压缩方式、元数据、条目数、内容分区表），标题区按记录顺序存放（`entry_size i16`、`pid i32`、`type u8`、`content_mark i64`、`title_len i16`、标题字节），词义区按 `content_mark` 存 `i32` 长度加压缩字节；标题区用 mmap 扫描，多个标题可以指向同一份词义。读词典不建索引，搜索是标题区线性扫描（前缀 / 包含 / 后缀 / 精确由查询语法决定）。
 - 配置在 `<配置目录>/dicts.json`：`paths`（`.words` 文件或目录，目录递归扫描）和 `disabled`（停用的词典 id）。设置 → 词典里添加、启用、排序过滤。词典 id 由名称和文件大小算出。
-- **导入**（`core/src/dict_import.rs`、`core/src/dict_build.rs`）：设置 → 词典的「导入词典…」/「导入文件夹…」选择文件；支持的来源转换成 `.words` 放在 `<数据目录>/dicts/`（自动加入 `paths`），同名再导入时覆盖。源文件不动，转换结果可以删除后重新生成。
+- **导入**（`core/src/dict_import.rs`、`core/src/dict_build.rs`）：设置 → 词典的「导入第三方词典…」/「导入文件夹…」选择文件；支持的来源转换成 `.words` 放在 `<数据目录>/dicts/`（自动加入 `paths`），同名再导入时覆盖。源文件不动，转换结果可以删除后重新生成。
   - **TXT**：按旧 Java `DictFileTxt` 的规则，一行 `【词条】词义`，`\\n`（两个反斜杠加 n）表示换行；没有 `】` 的行忽略。文件按 BOM 判断 UTF-8 / UTF-16；无 BOM 且不是合法 UTF-8 时按 GB18030 读。文件名是词典名。
   - **StarDict**：同名 `.ifo` + `.idx`（或 `.idx.gz`）+ `.dict`（或 `.dict.dz`，dictzip 是 gzip 兼容的，整个解压）；`bookname` 作词典名，`sametypesequence` 有则按类型序列读，没有则按 `type + 数据` 逐段读；默认 32 位偏移，`idxoffsetbits=64` 时用 64 位。文本类型（`m l h x t y k w n r`）转正文，`x` 去标签，`g`/`P` 图片写入 `.words_extra` 并在正文里写 `<PIC>名</PIC>`。
   - **MDict**：`.mdx`（可选同名 `.mdd` 资源）。支持引擎版本 1 和 2、zlib 压缩、UTF-8/GBK/GB18030/UTF-16；`Encrypted="2"`（键块信息加密）用旧 Java 的 RIPEMD-128 + `_fast_decrypt`（先按 `key = ripemd128(块[4..8] + 0x3695)` 派生，再逐字节交换半字节、异或前一个密文字节、序号和密钥）解开；`@@@LINK=词条` 重定向在导入时解析（最多 8 跳）。`Encrypted="1"`（词条块加密）和 LZO 压缩暂不支持，会给出原因。
@@ -459,7 +459,7 @@ app_data/
 - **M1 界面骨架**（已完成骨架）：`app/`，Tauri 2 + Svelte 5 + Vite。左侧目录树（可切换树，`a/` 叶子灰显、暂不可读），右侧阅读区按原书行显示一卷（行号在页边，卷与目次可切换，目次跨卷跳转），顶部搜索（宽松或精确短语），结果页带分面（点击即限定范围，部类可下钻）、分页、片段；点片段打开该卷、跳到行并高亮全部命中。没有索引时可在界面里建立，后台线程执行并显示进度。
   - 命令层 `app/src-tauri/src/commands.rs`：`status`、`open_bookcase`、`tree`、`open_volume`、`search`、`build_index`（事件 `index-progress`、`index-done`）。耗时命令都是 async，不阻塞窗口主线程。
   - 设置：bookcase 路径存在 `%APPDATA%\org.smartlibrary.desktop\config.json`（也可用环境变量 `SMART_LIBRARY_BOOKCASE`）；索引在 `%APPDATA%\org.smartlibrary.desktop\repos\cbeta\index`。
-  - 阅读区有两种版式：「段落」是附录 A.6 的结构化渲染（段落、偈颂、科判、表格、词条、图片、编注、异文、缺字；编注的显示方式见 A.6 末尾），「原书行」是一行一行的纯文本；两者都支持命中高亮和跳行。版式选择存在前端本地。阅读器头部有「原文 | 简体」：简体只改显示，用同一张繁简表（`analyzer::simplified_pairs`，一字对一字，所以命中位置不变），前端对文字和 `title` 做替换（`simplify.svelte.js`），文件和索引不变。
+  - 阅读区有两种版式：「段落」是附录 A.6 的结构化渲染（段落、偈颂、科判、表格、词条、图片、编注、异文、缺字；编注的显示方式见 A.6 末尾），「原书行」是一行一行的纯文本；两者都支持命中高亮和跳行，并共用设置里的「版心宽度」（`--reader-max-width`，默认 46em，随阅读字号缩放；设为全宽时按可视区宽度排版）。版式选择存在前端本地。阅读器头部有「原文 | 简体」：简体只改显示，用同一张繁简表（`analyzer::simplified_pairs`，一字对一字，所以命中位置不变），前端对文字和 `title` 做替换（`simplify.svelte.js`），文件和索引不变。
 - **M2 标题快搜**（已完成，见 8.7）：双击 Shift 即时检索经、目次、卷和文章标题。
 - **M3 本地目录适配器**：文件系统、增量索引、文档文本提取。
 - **M4 自维护知识库**：Note 模型、编辑器、实时索引。

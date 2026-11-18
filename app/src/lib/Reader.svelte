@@ -574,10 +574,16 @@
   .vols { max-width: 16em; }
   .check { display: flex; gap: 4px; align-items: center; }
   .scroll { flex: 1; overflow: auto; background: var(--paper); }
-  .attribution { margin: 12px 24px 32px; padding: 12px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .attribution {
+    max-width: var(--reader-max-width, 46em); margin: 12px auto 32px; padding: 12px 32px 0;
+    border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.5;
+  }
 
   /* original lines */
-  .lines { padding: 16px 24px 48px; }
+  .lines {
+    max-width: var(--reader-max-width, 46em); margin: 0 auto; padding: 16px 24px 48px;
+    font-size: var(--reader-size, 19px); /* for the em-based max-width */
+  }
   .line { display: flex; gap: 16px; line-height: var(--reader-line, 2); font-size: var(--reader-size, 19px); font-family: var(--reader-font, inherit); border-radius: 4px; }
   .line:global(.flash) { background: var(--focus); animation: fade 2.5s ease-out 0.5s forwards; }
   .lbn {
@@ -592,7 +598,7 @@
 
   /* structured view: the HTML comes from core/src/render.rs */
   .doc {
-    max-width: 46em; margin: 0 auto; padding: 24px 32px 64px; font-size: var(--reader-size, 19px);
+    max-width: var(--reader-max-width, 46em); margin: 0 auto; padding: 24px 32px 64px; font-size: var(--reader-size, 19px);
     line-height: var(--reader-line, 2); letter-spacing: var(--reader-spacing, 0.04em); font-family: var(--reader-font, inherit);
     font-weight: var(--reader-weight, 400); -webkit-text-stroke-width: var(--reader-stroke, 0);
   }

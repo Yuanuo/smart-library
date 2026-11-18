@@ -54,6 +54,8 @@ const DEFAULTS = {
   readerLine: 2, // line height
   readerSpacing: 0.04, // em
   readerPara: 0.35, // paragraph spacing, em
+  readerWidth: 46, // max width of the reading column, em
+  readerFullWidth: false, // stretch the reading column to the visible area
   readerWeight: "std", // std | mid | bold
   readerScript: "orig", // orig: as the text is | simp: shown in simplified characters
   externalLink: "window", // window | ask | browser
@@ -152,6 +154,7 @@ export function apply() {
   set("--reader-line", String(settings.readerLine));
   set("--reader-spacing", `${settings.readerSpacing}em`);
   set("--reader-para", `${settings.readerPara}em`);
+  set("--reader-max-width", settings.readerFullWidth ? "none" : `${settings.readerWidth}em`);
   const weight = WEIGHTS[settings.readerWeight] ?? WEIGHTS.std;
   set("--reader-weight", String(weight.body));
   set("--reader-strong-weight", String(weight.strong));
