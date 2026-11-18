@@ -40,6 +40,7 @@
 - 已完成（待点验，旧版数据包）：导入没有 manifest.json 的旧版 `.smartlib`（html → 笔记，保留 base64 图片和标注；kmind → 脑图），见 design-spec 导出导入一节。
 - 已完成（待点验，第十批；**`INDEX_VERSION` 4，要重建索引**）：内部库图片按引用计数、24 小时后清理；内部库笔记可拖到笔记或库根；时域表（设置里编辑 / 导入 / 导出，别称并入、年代排序，无 bookinfo 的经解析作译者）；异体字表 `data/variants.txt`；节点「别名」和快搜里的文件夹条目；本地文件夹读 PDF / docx / pptx / odt 文字；阅读器「简体」显示；当前文档快捷键（Ctrl+T 标签、D 书签、P 属性、L 定位、N 新建、W 关闭、Ctrl+Tab 切换、Ctrl+Shift+S 简体）。详见 design-spec。
 - 已完成（待点验）：阅读器「底本读法」（正文换成大正藏读法）。
+- 已完成（待点验）：阅读器「字重」三档（标准 / 稍粗 / 加粗）。正文与强调分用 `--reader-weight` / `--reader-strong-weight`，不用 `bolder`；稍粗、加粗两档在字体没有对应字面时靠描边（`--reader-stroke`）保证档位有效。见 design-spec 设置一节、session-notes 5o。
 - 下一步待定：媒体标签、ZIM 适配器。
 
 ## 代码约定

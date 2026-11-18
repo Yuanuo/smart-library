@@ -12,6 +12,24 @@ export const FONTS = [
   ["custom", "自定义…", null],
 ];
 
+// Reader text weight. CSS cannot scale a font's weight against a base (there
+// is no rem for font-weight), and most CJK fonts only carry a couple of real
+// faces, so this is a small table of levels rather than a slider. `stroke` is
+// a fake-bold width in em: it thickens text even when the font has no face for
+// the requested weight (0 = off). On fonts with only regular and bold the top
+// level has no headroom left, so its emphasis adds a stroke of its own.
+export const WEIGHT_LEVELS = [
+  ["std", "标准"],
+  ["mid", "稍粗"],
+  ["bold", "加粗"],
+];
+
+const WEIGHTS = {
+  std: { body: 400, strong: 700, stroke: 0, strongStroke: 0 },
+  mid: { body: 500, strong: 800, stroke: 0.012, strongStroke: 0.012 },
+  bold: { body: 650, strong: 900, stroke: 0, strongStroke: 0.024 },
+};
+
 const KEY = "sl.settings";
 export const DEFAULT_AI_PRESET = {
   id: "default-openai",
@@ -34,6 +52,9 @@ const DEFAULTS = {
   readerFontCustom: "",
   readerSize: 19, // px
   readerLine: 2, // line height
+  readerSpacing: 0.04, // em
+  readerPara: 0.35, // paragraph spacing, em
+  readerWeight: "std", // std | mid | bold
   readerScript: "orig", // orig: as the text is | simp: shown in simplified characters
   externalLink: "window", // window | ask | browser
   quickLimit: 200, // title quick search: results per batch
@@ -60,6 +81,9 @@ function load() {
     }
     if (!["window", "ask", "browser"].includes(raw.externalLink)) {
       raw.externalLink = "window";
+    }
+    if (!WEIGHTS[raw.readerWeight]) {
+      raw.readerWeight = "std";
     }
     if (!Array.isArray(raw.aiPresets) || !raw.aiPresets.length) {
       raw.aiPresets = [{ ...DEFAULT_AI_PRESET }];
@@ -126,6 +150,13 @@ export function apply() {
   set("--reader-font", stack(settings.readerFont, settings.readerFontCustom, "serif"));
   set("--reader-size", `${settings.readerSize}px`);
   set("--reader-line", String(settings.readerLine));
+  set("--reader-spacing", `${settings.readerSpacing}em`);
+  set("--reader-para", `${settings.readerPara}em`);
+  const weight = WEIGHTS[settings.readerWeight] ?? WEIGHTS.std;
+  set("--reader-weight", String(weight.body));
+  set("--reader-strong-weight", String(weight.strong));
+  set("--reader-stroke", `${weight.stroke}em`);
+  set("--reader-strong-stroke", `${weight.strongStroke}em`);
   if (settings.uiZoom !== appliedZoom) {
     appliedZoom = settings.uiZoom;
     getCurrentWebview().setZoom(settings.uiZoom / 100).catch(() => {});

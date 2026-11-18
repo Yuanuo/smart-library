@@ -4,7 +4,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import * as api from "./api.js";
   import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import { settings, update, reset, FONTS, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
+  import { settings, update, reset, FONTS, WEIGHT_LEVELS, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
   import { SHORTCUT_DEFS, getShortcut, comboParts, eventToCombo, setShortcutRecording } from "./shortcuts.js";
   import DialogHeader from "./DialogHeader.svelte";
 
@@ -495,7 +495,7 @@
 
         {:else if activeTab === "reader"}
           <div class="sec-head">
-            <h3>阅读与链接</h3>
+            <h3>阅读器</h3>
             <p class="muted">设置阅读器排版样式，以及所有编辑器和阅读器中外部链接的打开方式。</p>
           </div>
           <div class="card">
@@ -505,18 +505,41 @@
             </div>
             <div class="row">
               <span>字号</span>
-              <input type="range" min="14" max="34" step="1" value={settings.readerSize}
+              <input type="range" min="14" max="72" step="1" value={settings.readerSize}
                 oninput={(e) => update({ readerSize: Number(e.currentTarget.value) })} />
               <output>{settings.readerSize} px</output>
             </div>
             <div class="row">
-              <span>行距</span>
+              <span>字重</span>
+              <div class="seg" role="group" aria-label="字重">
+                {#each WEIGHT_LEVELS as [v, label]}
+                  <button class:on={settings.readerWeight === v} onclick={() => update({ readerWeight: v })}>{label}</button>
+                {/each}
+              </div>
+            </div>
+            <div class="row">
+              <span>字间距</span>
+              <input type="range" min="0" max="0.3" step="0.01" value={settings.readerSpacing}
+                oninput={(e) => update({ readerSpacing: Number(e.currentTarget.value) })} />
+              <output>{settings.readerSpacing} em</output>
+            </div>
+            <div class="row">
+              <span>行间距</span>
               <input type="range" min="1.4" max="2.6" step="0.1" value={settings.readerLine}
                 oninput={(e) => update({ readerLine: Number(e.currentTarget.value) })} />
               <output>{settings.readerLine}</output>
             </div>
+            <div class="row">
+              <span>段间距</span>
+              <input type="range" min="0" max="2" step="0.05" value={settings.readerPara}
+                oninput={(e) => update({ readerPara: Number(e.currentTarget.value) })} />
+              <output>{settings.readerPara} em</output>
+            </div>
             <div class="preview-wrap">
-              <p class="sample" aria-label="预览">如是我聞。一時佛在舍衛國祇樹給孤獨園。Sample 0123</p>
+              <div class="sample" aria-label="预览">
+                <p>这是一段示例文字，用来预览字体、字号、字重、字间距、行间距和段间距的效果。<strong>这是着重强调的粗体文字</strong>。Sample 0123，ABCabc。</p>
+                <p>这是第二段，<strong>段间距</strong>在两段之间生效。</p>
+              </div>
             </div>
           </div>
           <div class="card">
@@ -933,6 +956,13 @@
   .sample {
     margin: 0; padding: 10px 14px; background: var(--bg); border-radius: 6px;
     font-family: var(--reader-font, inherit); font-size: var(--reader-size, 19px); line-height: var(--reader-line, 2);
+    letter-spacing: var(--reader-spacing, 0.04em);
+    font-weight: var(--reader-weight, 400); -webkit-text-stroke-width: var(--reader-stroke, 0);
+  }
+  .sample p { margin: 0; }
+  .sample p + p { margin-top: var(--reader-para, 0.35em); }
+  .sample strong {
+    font-weight: var(--reader-strong-weight, 700); -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
   }
   .row > span.wide, .wide { width: auto; flex: 1 1 0%; min-width: 0; white-space: normal; line-height: 1.5; }
   .sources { flex: 1; min-width: 0; }

@@ -399,8 +399,9 @@ M2 的实现（`core/src/titles.rs`，命令行 `titles`，界面 `app/src/lib/Q
 
 **设置（2026-11）**
 
-- 目录树下方的设置图标或 Ctrl/Cmd+,：主题（跟随系统、浅色、深色，深色靠 `<html data-theme>`）、界面缩放（80–150%，用 WebView 的缩放）、界面字体、阅读器字体、字号（14–34）、行距。不做复杂的主题机制，只有明暗两套颜色变量。字体下拉列表由后端读本机字体文件（`fonts.rs`，ttf-parser + memmap2，只读 name 表，每次运行算一次）：有中文名的在前面，显示中文名；值为 `sys:<英文族名>`，也可以手动输入字体名。
-- 保存在 WebView 的 localStorage（便携模式下就在 `data/webview/` 里），`settings.svelte.js` 把它写成 CSS 变量（`--ui-font`、`--reader-font`、`--reader-size`、`--reader-line`）；弹出的阅读窗口同源，改动通过 `storage` 事件同步。
+- 目录树下方的设置图标或 Ctrl/Cmd+,：主题（跟随系统、浅色、深色，深色靠 `<html data-theme>`）、界面缩放（80–300%，用 WebView 的缩放）、界面字体、阅读器字体、字号基准（14–72 px，正文和其它元素都按 em 跟它缩放）、字重（标准、稍粗、加粗）、字间距（0–0.3 em，默认 0.04）、行间距（1.4–2.6）、段间距（0–2 em，默认 0.35）。不做复杂的主题机制，只有明暗两套颜色变量。字体下拉列表由后端读本机字体文件（`fonts.rs`，ttf-parser + memmap2，只读 name 表，每次运行算一次）：有中文名的在前面，显示中文名；值为 `sys:<英文族名>`，也可以手动输入字体名。
+- 字重是三个档位而不是滑杆：CSS 没有相对字重（`font-weight` 不能像 rem 那样按基数放大），中文字体也大多只有两三个真实字面，连续数值会被吸附到同一档。`settings.svelte.js` 的 `WEIGHTS` 表给出每档的正文和强调字重，以及正文 / 强调的描边宽度（`-webkit-text-stroke-width`，用 em，字体没有对应字面时靠它保证档位有效）。正文用 `--reader-weight`，强调用 `--reader-strong-weight`；`b`、`strong`、`.head`、`.juan`、CBETA 粗体读法都用强调档，覆盖浏览器的 `bolder`（它按固定阶梯走，600 以上饱和，基准提高后强调会和正文一样粗）。加粗档的强调另加 0.024em 描边，否则两字面字体到顶后强调无法区分。只作用于阅读器和词典详情，笔记编辑器不跟随。
+- 保存在 WebView 的 localStorage（便携模式下就在 `data/webview/` 里），`settings.svelte.js` 把它写成 CSS 变量（`--ui-font`、`--reader-font`、`--reader-size`、`--reader-line`、`--reader-spacing`、`--reader-para`、`--reader-weight`、`--reader-strong-weight`、`--reader-stroke`、`--reader-strong-stroke`）；弹出的阅读窗口同源，改动通过 `storage` 事件同步。
 
 **阅读器选中文字菜单、打开过标记、收藏与标签（2026-11）**
 

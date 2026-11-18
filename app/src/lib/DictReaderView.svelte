@@ -245,7 +245,13 @@
     font-family: var(--reader-font, var(--font-serif));
     font-size: var(--reader-size, 18px);
     line-height: var(--reader-line, 1.9);
+    font-weight: var(--reader-weight, 400);
+    -webkit-text-stroke-width: var(--reader-stroke, 0);
     user-select: text;
+  }
+  .detail-scroll :global(b), .detail-scroll :global(strong) {
+    font-weight: var(--reader-strong-weight, 700);
+    -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
   }
   .detail-scroll :global(.dict-entry-title) {
     text-align: center;

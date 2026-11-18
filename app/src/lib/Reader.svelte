@@ -601,22 +601,38 @@
     flex: none; width: 64px; text-align: right; font-family: ui-monospace, Consolas, monospace;
     font-size: 12px; color: var(--muted); padding-top: 6px; user-select: none;
   }
-  .txt { letter-spacing: 0.04em; }
+  .txt {
+    letter-spacing: var(--reader-spacing, 0.04em); font-weight: var(--reader-weight, 400);
+    -webkit-text-stroke-width: var(--reader-stroke, 0);
+  }
   @keyframes fade { to { background: transparent; } }
 
   /* structured view: the HTML comes from core/src/render.rs */
   .doc {
     max-width: 46em; margin: 0 auto; padding: 24px 32px 64px; font-size: var(--reader-size, 19px);
-    line-height: var(--reader-line, 2); letter-spacing: 0.04em; font-family: var(--reader-font, inherit);
+    line-height: var(--reader-line, 2); letter-spacing: var(--reader-spacing, 0.04em); font-family: var(--reader-font, inherit);
+    font-weight: var(--reader-weight, 400); -webkit-text-stroke-width: var(--reader-stroke, 0);
   }
+  /* The browser's default for <b>/<strong> is "bolder", a relative keyword that
+     saturates at 900; the reader uses explicit levels instead, so a heavier
+     base does not swallow the emphasis. */
+  .doc :global(b), .doc :global(strong), .doc :global(th) {
+    font-weight: var(--reader-strong-weight, 700);
+    -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
+  }
+  .doc :global(h1), .doc :global(h2), .doc :global(h3),
+  .doc :global(h4), .doc :global(h5), .doc :global(h6) { font-weight: var(--reader-strong-weight, 700); }
   .doc :global(mark) { color: var(--hl); background: var(--hl-bg); border-radius: 2px; }
   .doc :global(.div) { margin: 0.2em 0; }
-  .doc :global(.head) { font-weight: 700; font-size: 1.08em; margin: 1em 0 0.4em; color: var(--accent); }
-  .doc :global(.juan) { font-weight: 700; margin: 0.6em 0; }
+  .doc :global(.head) { font-weight: var(--reader-strong-weight, 700); font-size: 1.08em; margin: 1em 0 0.4em; color: var(--accent); }
+  .doc :global(.juan) {
+    font-weight: var(--reader-strong-weight, 700); margin: 0.6em 0;
+    -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
+  }
   .doc :global(.juan.f-close) { margin-top: 2em; color: var(--muted); }
   .doc :global(.byline) { margin: 0.2em 0 0.2em 6em; color: var(--muted); }
   .doc :global(.docnumber) { margin: 0; font-size: 0.75em; color: var(--muted); }
-  .doc :global(p.p) { margin: 0.35em 0; }
+  .doc :global(p.p) { margin: var(--reader-para, 0.35em) 0; }
   .doc :global(p.quote) { margin: 0.2em 0; padding: 0.1em 0 0.1em 14px; border-left: 3px solid var(--accent-soft); color: var(--muted); }
   .doc :global(a.src) { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
   .doc :global(a.zim-link), .doc :global(a.ext-link) { color: var(--accent); cursor: pointer; text-decoration: underline; }
@@ -631,10 +647,16 @@
   .doc :global(.table) { border-collapse: collapse; margin: 0.5em 0; font-size: 0.95em; }
   .doc :global(.table td) { border: 1px solid var(--line); padding: 2px 8px; vertical-align: top; }
   .doc :global(.entry) { margin: 0.4em 0; }
-  .doc :global(.entry .form) { font-weight: 700; margin-right: 0.5em; }
+  .doc :global(.entry .form) {
+    font-weight: var(--reader-strong-weight, 700); margin-right: 0.5em;
+    -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
+  }
   .doc :global(.entry .def), .doc :global(.entry .def p) { display: inline; }
   .doc :global(.sp) { margin: 0.3em 0 0.3em 1em; }
-  .doc :global(.hi.r-bold) { font-weight: 700; }
+  .doc :global(.hi.r-bold) {
+    font-weight: var(--reader-strong-weight, 700);
+    -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
+  }
   .doc :global(.hi.r-border) { border: 1px solid var(--muted); padding: 0 2px; }
   .doc :global(.hi.r-circle) { border: 1px solid var(--muted); border-radius: 50%; padding: 0 2px; }
   .doc :global(.g) { color: #8a3c6a; font-size: 0.85em; }
@@ -646,7 +668,7 @@
   /* footnote mark of an HTML article: the "(注)" is CSS content, so it is
      not copied with the text; the note shows on hover */
   .doc :global(.fn)::before {
-    content: "（注）"; color: var(--note); font-weight: 700; font-size: 0.8em; cursor: help; user-select: none;
+    content: "（注）"; color: var(--note); font-weight: var(--reader-strong-weight, 700); font-size: 0.8em; cursor: help; user-select: none;
   }
   .doc :global(.fn:hover)::before { background: var(--accent-soft); border-radius: 3px; }
   .doc.base-text :global(.app.o) { font-size: 0; }
@@ -654,7 +676,7 @@
   .doc.notes-none :global(.fn) { display: none; }
   .doc.notes-num :global(.note) { cursor: help; }
   .doc.notes-num :global(.note sup) {
-    display: inline; color: var(--accent); font-size: 0.85em; font-weight: 700; padding: 0 3px; margin: 0 1px;
+    display: inline; color: var(--accent); font-size: 0.85em; font-weight: var(--reader-strong-weight, 700); padding: 0 3px; margin: 0 1px;
     border-radius: 4px; background: var(--accent-soft); vertical-align: super; line-height: 1;
   }
   .doc.notes-num :global(.note:hover sup) { background: var(--accent); color: var(--paper); }
@@ -679,5 +701,5 @@
     content: attr(data-lb); font-family: ui-monospace, Consolas, monospace; font-size: 10px; color: var(--muted);
     vertical-align: super; margin: 0 2px; letter-spacing: 0;
   }
-  .doc.show-lb :global(.lb.flash)::before { color: var(--hl); font-weight: 700; }
+  .doc.show-lb :global(.lb.flash)::before { color: var(--hl); font-weight: var(--reader-strong-weight, 700); }
 </style>
