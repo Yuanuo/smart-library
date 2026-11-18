@@ -12,9 +12,10 @@
 
   const TABS = [
     ["appearance", "外观"],
-    ["reader", "阅读与链接"],
-    ["search", "搜索与时域"],
+    ["reader", "阅读器"],
+    ["search", "搜索"],
     ["dict", "词典"],
+    ["custom", "自定义"],
     ["daily", "每日一句"],
     ["ai", "AI 助手"],
     ["shortcuts", "快捷键"],
@@ -555,8 +556,8 @@
 
         {:else if activeTab === "search"}
           <div class="sec-head">
-            <h3>搜索与时域</h3>
-            <p class="muted">调整标题快搜加载数量，以及管理索引与检索使用的朝代时域表。</p>
+            <h3>搜索</h3>
+            <p class="muted">调整标题快搜的加载数量与拼音匹配。</p>
           </div>
           <div class="card">
             <div class="row">
@@ -571,6 +572,12 @@
                 onchange={(e) => update({ quickPinyin: e.currentTarget.checked })} />
               <span>标题快搜支持拼音匹配（可输入全拼或首字母，如 <code>miaofa</code> 或 <code>mflhj</code>）</span>
             </label>
+          </div>
+
+        {:else if activeTab === "custom"}
+          <div class="sec-head">
+            <h3>自定义</h3>
+            <p class="muted">管理索引与检索使用的朝代时域表，以及拼音词典。</p>
           </div>
           <div class="card">
             <div class="card-block">
@@ -593,12 +600,12 @@
           </div>
           <div class="card">
             <div class="card-block">
-              <div class="block-title">自定义拼音词典</div>
+              <div class="block-title">拼音词典</div>
               <p class="muted hint">在内置词库之外增补或覆盖字词读音（先加载默认词库，再加载此处条目）。</p>
               {#if !pyDict}
-                <div class="row-plain"><button onclick={openPyDict}>编辑自定义拼音…</button></div>
+                <div class="row-plain"><button onclick={openPyDict}>编辑拼音词典…</button></div>
               {:else}
-                <textarea class="dyn" bind:value={pyDict.text} spellcheck="false" aria-label="自定义拼音词典"
+                <textarea class="dyn" bind:value={pyDict.text} spellcheck="false" aria-label="拼音词典"
                   placeholder={"# 示例：\n阿弥陀经=e1,mi2,tuo2,jing1\n般若=bo1,re3"}></textarea>
                 <div class="row-plain">
                   <button onclick={savePyDict}>保存</button>
