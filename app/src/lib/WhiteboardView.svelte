@@ -381,7 +381,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="board" onkeydown={key}>
-  <div class="bar">
+  <div class="view-bar">
     <TitleLink {title} {onlocate} />
     {#if ontag}<button type="button" class="tool-btn" onclick={ontag} title="为本篇加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>{/if}
     {#if onprops}<button type="button" class="tool-btn" onclick={onprops} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>{/if}
@@ -395,16 +395,6 @@
 
 <style>
   .board { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: clip; }
-  .bar { display: flex; align-items: center; gap: 10px; padding: 4px 12px; border-bottom: 1px solid var(--line); }
-  .status { font-size: 12px; }
-  .grow { flex: 1; }
-  .tool-btn {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 3px 8px; line-height: 1; font-size: 13px;
-    border: 1px solid var(--line); border-radius: 5px;
-    background: var(--paper); color: var(--accent); cursor: pointer;
-  }
-  .tool-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
   .error { color: var(--hl); font-size: 13px; }
   .canvas { flex: 1; min-height: 0; position: relative; overflow: clip; }
   /* Excalidraw's containers must not be scrolled by the browser (a focused popover does that) */

@@ -457,7 +457,7 @@
 
 {#if vol}
   <div class="reader">
-    <header>
+    <header class="view-bar">
       <div class="nav">
         <TitleLink title={vol.label ? `${vol.title} ${vol.label}` : vol.title} text={shownTitle} onlocate={vol.kind === "zim" ? null : onlocate} />
         {#if vol.volumes.length}
@@ -569,27 +569,10 @@
   .tip tr.sep td { padding: 0; height: 9px; border-bottom: 1px solid color-mix(in srgb, var(--paper) 35%, transparent); }
   .tip tr.sep + tr td { padding-top: 6px; }
   .reader { display: flex; flex-direction: column; height: 100%; }
-  /* title, author and path are in the tab's tooltip */
-  header {
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 8px 24px; border-bottom: 1px solid var(--line); background: var(--paper);
-  }
-  .grow { flex: 1; }
-  .nav { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+  /* title, author and path are in the tab's tooltip; the bar itself is .view-bar (app.css) */
+  .nav { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .vols { max-width: 16em; }
-  .seg { display: inline-flex; }
-  .seg button { border-radius: 0; padding: 4px 10px; }
-  .seg button:first-child { border-radius: 6px 0 0 6px; }
-  .seg button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
-  .seg button.on { background: var(--accent); color: var(--paper); border-color: var(--accent); }
   .check { display: flex; gap: 4px; align-items: center; }
-  .tool-btn {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 3px 8px; line-height: 1; font-size: 13px;
-    border: 1px solid var(--line); border-radius: 5px;
-    background: var(--paper); color: var(--accent); cursor: pointer;
-  }
-  .tool-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
   .scroll { flex: 1; overflow: auto; background: var(--paper); }
   .attribution { margin: 12px 24px 32px; padding: 12px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.5; }
 

@@ -164,6 +164,31 @@ body.scope-dragging, body.scope-dragging * { cursor: copy !important; user-selec
 .move-no { outline: 2px dashed var(--hl); outline-offset: -2px; }
 body.move-blocked, body.move-blocked * { cursor: not-allowed !important; }
 
+/* ---- tool bar at the top of every document view (reader, note, mind map, whiteboard) ----
+   One rule set for all of them, so margins, title size and controls stay the same. */
+.view-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 8px; min-width: 0;
+  border-bottom: 1px solid var(--line); background: var(--paper);
+  font-size: 14px;
+}
+.view-bar .grow { flex: 1; }
+.view-bar .status { font-size: 12px; white-space: nowrap; }
+.view-bar .tool-btn,
+.view-bar .ai-btn {
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; white-space: nowrap;
+  padding: 3px 8px; line-height: 1; font-size: 13px;
+  border: 1px solid var(--line); border-radius: 5px;
+  background: var(--paper); color: var(--accent); cursor: pointer;
+}
+.view-bar .tool-btn:hover,
+.view-bar .ai-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+.view-bar .seg { display: inline-flex; }
+.view-bar .seg button { border-radius: 0; padding: 4px 10px; margin-left: -1px; }
+.view-bar .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.view-bar .seg button:last-child { border-radius: 0 6px 6px 0; }
+.view-bar .seg button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+
 /* Shared structure for title, scrollable content, and dialog actions. */
 .dialog-shell { display: flex; flex-direction: column; max-height: calc(100vh - 48px); overflow: hidden; background: var(--paper); border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25); outline: none; }
 .dialog-shell > .dialog-header,

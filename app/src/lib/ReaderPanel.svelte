@@ -401,7 +401,7 @@
   {:else if isNote(vol)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="editor" onkeydown={noteKey}>
-      <div class="bar">
+      <div class="view-bar">
         <TitleLink title={p.retitled ?? vol.title} {onlocate} />
         {#if onaction}
           <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title="为本篇加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>
@@ -504,24 +504,9 @@
 {/if}
 
 <style>
-  .ai-btn, .tool-btn {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 3px 8px; line-height: 1; font-size: 13px;
-    border: 1px solid var(--line); border-radius: 5px;
-    background: var(--paper); color: var(--accent); cursor: pointer;
-  }
-  .ai-btn:hover, .tool-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
   .error { padding: 24px; color: var(--hl); }
   .editor { display: flex; flex-direction: column; height: 100%; }
-  .bar { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line); }
-  .status { font-size: 12px; }
-  .grow { flex: 1; }
   .body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .seg { display: flex; }
-  .seg button { border-radius: 0; margin-left: -1px; padding: 2px 12px; }
-  .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
-  .seg button:last-child { border-radius: 0 6px 6px 0; }
-  .seg button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
   textarea {
     flex: 1; border: none; resize: none; padding: 14px 18px; outline: none;
     font: 15px/1.7 ui-monospace, Consolas, "Microsoft YaHei", monospace; background: var(--paper); color: inherit;
