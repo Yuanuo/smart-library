@@ -2,7 +2,7 @@
   // The view history (what the back / forward arrows walk through), newest
   // first. One row of controls on top, a list below (like 最近访问): pick a
   // row to go to that view, filter it, or clear the whole history. The view
-  // being read now is marked by a bar on the left of its row.
+  // being read now has a tinted background and a bar on the left of its row.
   import { onMount } from "svelte";
   import * as workspace from "./workspace.svelte.js";
 
@@ -75,7 +75,7 @@
     {#if error}<p class="error">{error}</p>{/if}
     <ul bind:this={list}>
       {#each items as it, i (it.index)}
-        <li class:on={i === sel} class:current={it.index === snap.index}>
+        <li class:on={i === sel} class:current={it.index === snap.index} class:row-current={it.index === snap.index}>
           <button class="row" onclick={() => pick(it)} onmousemove={() => (sel = i)} title={it.path || it.title}>
             <span class="title">{it.title}</span>
             <span class="meta">{it.libTitle}</span>
@@ -103,7 +103,8 @@
   ul { list-style: none; margin: 0; padding: 4px; overflow: auto; min-height: 0; }
   li { display: flex; align-items: center; border-radius: 6px; }
   li.on { background: var(--accent-soft); }
-  li.current { box-shadow: inset 4px 0 0 var(--accent); }
+  /* the row of the view being read now is .row-current (app.css), so it keeps
+     its fill and bar after the cursor (li.on) has moved to another row */
   .row {
     flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: baseline;
     text-align: left; border: none; background: none; padding: 7px 10px;

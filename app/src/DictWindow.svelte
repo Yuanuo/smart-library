@@ -313,6 +313,7 @@
           <div
             class="hit"
             class:selected={i === selectedIdx}
+            class:row-current={i === selectedIdx}
             onclick={() => selectHit(i)}
             role="option"
             tabindex="0"
@@ -475,11 +476,7 @@
     cursor: pointer;
   }
   .hit:hover { background: var(--accent-soft); }
-  .hit.selected {
-    background: var(--accent-soft);
-    border-left: 3px solid var(--accent);
-    padding-left: 7px;
-  }
+  /* .row-current (app.css) marks the entry shown on the right */
   .hit-main {
     flex: 1;
     min-width: 0;

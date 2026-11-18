@@ -209,6 +209,13 @@ body.scope-dragging, body.scope-dragging * { cursor: copy !important; user-selec
 .move-no { outline: 2px dashed var(--hl); outline-offset: -2px; }
 body.move-blocked, body.move-blocked * { cursor: not-allowed !important; }
 
+/* ---- the row that is "the current one" in a list ----
+   The dictionary's left list, the view history, the AI session list and the
+   directory tree all pick out one row; they share this mark (a soft accent
+   fill and a bar on the left). Pointing at or hovering a row is a plain
+   accent-soft fill, styled by each list. */
+.row-current { background: var(--accent-soft); box-shadow: inset 3px 0 0 0.2px var(--accent); }
+
 /* ---- tool bar at the top of every document view (reader, note, mind map, whiteboard) ----
    One rule set for all of them, so margins, title size and controls stay the same. */
 .view-bar {

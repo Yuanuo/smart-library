@@ -27,7 +27,7 @@
     {@const hasChildren = node.children.length > 0 || !!node.lazy}
     {@const open = !!expanded[key]}
     <li>
-      <div class="row" class:current={current === key} class:active={active === key} class:marked={marked === key} class:picked={picked?.has(key)} data-key={key} data-rel={node.rel ?? undefined} data-isdir={node.rel != null && node.path == null ? "1" : undefined} style="padding-left: {depth * 14 + 4}px"
+      <div class="row" class:current={current === key} class:active={active === key} class:row-current={active === key} class:marked={marked === key} class:picked={picked?.has(key)} data-key={key} data-rel={node.rel ?? undefined} data-isdir={node.rel != null && node.path == null ? "1" : undefined} style="padding-left: {depth * 14 + 4}px"
         role="presentation" oncontextmenu={(e) => oncontext?.(node, key, e)} onpointerdown={(e) => ondrag?.(node, key, e)}>
         {#if hasChildren}
           <button class="twisty" onclick={() => ontoggle(key)} aria-label={open ? "收起" : "展开"}>
@@ -67,7 +67,7 @@
   .leaf.seen { color: var(--note); }
   .row.current { background: var(--accent-soft); }
   .row.marked { background: color-mix(in srgb, var(--accent) 14%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: -1px; }
-  .row.active { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-soft); }
+  /* .row-current (app.css) gives the active row its fill and left bar */
   .row.active .leaf, .row.active .folder { color: var(--accent); font-weight: 700; }
   .row.picked { background: color-mix(in srgb, var(--accent) 24%, transparent); }
   .row.current .leaf, .row.current .folder { color: var(--accent); font-weight: 700; }

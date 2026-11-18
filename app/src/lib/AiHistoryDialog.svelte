@@ -155,7 +155,7 @@
     {#if error}<p class="error">{error}</p>{/if}
     <ul bind:this={list}>
       {#each shown as it, i (it.id)}
-        <li class:on={i === sel} class:current={it.id === activeSessionId}>
+        <li class:on={i === sel} class:current={it.id === activeSessionId} class:row-current={it.id === activeSessionId}>
           {#if editingId === it.id}
             <form class="rename-form" onsubmit={(e) => { e.preventDefault(); commitRename(it); }}>
               <input
@@ -204,7 +204,8 @@
   ul { list-style: none; margin: 0; padding: 6px; overflow: auto; }
   li { display: flex; align-items: center; border-radius: 6px; padding-right: 4px; }
   li.on { background: var(--accent-soft); }
-  li.current .title { color: var(--accent); }
+  /* the session in use is .row-current (app.css); its title no longer needs
+     a colour of its own */
   .row {
     flex: 1; min-width: 0; display: flex; gap: 10px; align-items: baseline; text-align: left;
     border: none; background: none; padding: 7px 10px;
