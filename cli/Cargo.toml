@@ -1,6 +1,6 @@
 [package]
 name = "smart-library-cli"
-version = "26.11.8"
+version = "26.11.18"
 edition = "2021"
 
 [[bin]]

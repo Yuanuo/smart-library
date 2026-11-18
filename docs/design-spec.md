@@ -382,7 +382,7 @@ M2 的实现（`core/src/titles.rs`，命令行 `titles`，界面 `app/src/lib/Q
 - 索引：以 SQLite 为准，索引手动「重建」；数据版本是「笔记数、最近修改时间、内容总长」，改动后根节点显示「索引过期」。标题快搜每次写入后失效重建。
 - **删除知识库会永久删除 notes.db**（用户自己写的数据，没有源可以重导入），确认框单独写明。备份目前靠手动复制 `repos/<id>/notes.db`。
 - 界面（2026-11）：去掉顶部工具栏。目录树工具栏左边是「＋」、标题快搜（纸飞机，双击 Shift 或 Ctrl/Cmd+G）、全文搜索（放大镜，Ctrl/Cmd+H，弹出输入框，回车搜索后结果在标签里）、查词典、收藏与标签、最近访问（以及 AI 助手开关），右边是两个视图导航箭头（← →，同 Ctrl/Cmd+Shift+←/→；没有可导航的视图时按钮不可用）；没有单独的「知识库」标题。目录树下方一行的左边是公用的状态位（`app/src/lib/status.svelte.js`：任务按 key 登记一行短文字，`status.set(key, text)` 显示、`status.clear(key)` 撤掉，多项同时存在时用全角空格连起来；建索引进度就显示在这里，没有任务时显示灰色的「知识库」），右边是设置、消息、关于三个图标按钮（消息图标带条数）。消息列表在目录树左下方弹出。
-- 版本号用 `YY.MM.DD`（如 26.11.08）。Cargo 和 Tauri 要求 semver，所以文件里写 `26.11.8`（不补零），界面显示时补零（`app_info`）。发版时改 `core`、`cli`、`app/src-tauri` 的 Cargo.toml、`tauri.conf.json`、`app/package.json` 五处。窗口标题：`文档标题 by 作译者 - 『知识库』 - Smart Library 版本`，没有打开文档时只有程序名和版本。
+- 版本号用 `YY.MM.DD`（如 26.11.08）。Cargo 和 Tauri 要求 semver，所以文件里写 `26.11.8`（不补零），界面显示时补零（`app_info`）。每次 `npm run tauri build` 前由 `tools/stamp-version.cjs` 按当天本地日期写入五处（`core`、`cli`、`app/src-tauri` 的 Cargo.toml、`tauri.conf.json`、`app/package.json`），并同步 `Cargo.lock`、`app/package-lock.json`。GitHub Actions 的正式包不盖章，沿用标签里的版本，所以发版当天先提交盖章后的版本文件，再打同日期的标签。窗口标题：`文档标题 by 作译者 - 『知识库』 - Smart Library 版本`，没有打开文档时只有程序名和版本。
 - 当前文档的快捷键（`shortcuts.js`，弹出窗口里也有效）：Ctrl+T 标签、Ctrl+D 书签（当前读到的行）、Ctrl+P 属性、Ctrl+L 在目录树中定位、Ctrl+N 新建笔记、Ctrl+W 关闭标签、Ctrl+Tab / Ctrl+Shift+Tab 切换标签、Ctrl+Shift+S 简体 / 原文；白板和脑图里不拦截这几个键（它们有自己的用法）。
 - 快捷键在阅读器里选中文字时：Ctrl/Cmd+G 或双击 Shift 以选中文字开始标题快搜，Ctrl/Cmd+H 直接以选中文字全文检索（没有选中文字时打开输入框）；Ctrl/Cmd+K 查词典（有选中文字时直接查这个词，没有时打开词典窗口）。弹出的阅读器窗口里同样有效，由主窗口执行。
 - 提示消息：以浮层显示（不挤动布局），5 秒（错误 10 秒）后自动隐藏；鼠标停在上面或期间没有任何操作则不隐藏；顶部「消息」按钮可回看本次运行的全部消息。

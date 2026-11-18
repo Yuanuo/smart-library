@@ -1,12 +1,12 @@
 {
   "name": "smart-library",
   "private": true,
-  "version": "26.11.8",
+  "version": "26.11.18",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "tauri": "tauri"
+    "tauri": "node ../tools/tauri.cjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",

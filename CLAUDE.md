@@ -48,7 +48,7 @@
 
 ## 代码约定
 
-- 版本号 `YY.MM.DD`；文件里写 semver `26.11.8`（不补零），界面补零显示。发版改五处（见 design-spec）。
+- 版本号 `YY.MM.DD`：每次 `npm run tauri build` 前由 `tools/stamp-version.cjs` 按当天本地日期写入五处（`core`、`cli`、`app/src-tauri` 的 Cargo.toml、`tauri.conf.json`、`app/package.json`），并同步 `Cargo.lock`、`app/package-lock.json`；文件里是 semver（不补零），界面补零显示。GitHub Actions 直接跑 `tauri build`，不盖章，用标签的版本；发版当天先提交盖章后的文件，再打同日期的标签。
 
 - `core` 不依赖界面或 Tauri；适配器只产生 `IndexDoc`，不碰 Tantivy。
 - 永不修改源数据；索引等衍生数据都能删除后重建。
