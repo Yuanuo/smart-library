@@ -647,7 +647,7 @@
   .doc :global(.unclear) { color: var(--muted); }
   .doc :global(img.figure) { max-width: 100%; display: block; margin: 0.5em 0; background: white; }
   /* notes by mode: a note point holds .nb-orig and/or .nb-cb */
-  .doc :global(.note sup), .doc :global(.note .nb-orig), .doc :global(.note .nb-cb) { display: none; }
+  .doc :global(.note .nb-orig), .doc :global(.note .nb-cb) { display: none; }
   /* footnote mark of an HTML article: the "(注)" is CSS content, so it is
      not copied with the text; the note shows on hover */
   .doc :global(.fn)::before {
@@ -658,11 +658,12 @@
   .doc.base-text :global(.app.o)::after { content: attr(data-orig); font-size: var(--reader-size); color: var(--note); }
   .doc.notes-none :global(.fn) { display: none; }
   .doc.notes-num :global(.note) { cursor: help; }
-  .doc.notes-num :global(.note sup) {
-    display: inline; color: var(--accent); font-size: 0.85em; font-weight: var(--reader-strong-weight, 700); padding: 0 3px; margin: 0 1px;
+  /* the number is CSS content drawn from data-note, so it is not copied with the text */
+  .doc.notes-num :global(.note)::before {
+    content: attr(data-note); color: var(--accent); font-size: 0.85em; font-weight: var(--reader-strong-weight, 700); padding: 0 3px; margin: 0 1px;
     border-radius: 4px; background: var(--accent-soft); vertical-align: super; line-height: 1;
   }
-  .doc.notes-num :global(.note:hover sup) { background: var(--accent); color: var(--paper); }
+  .doc.notes-num :global(.note:hover)::before { background: var(--accent); color: var(--paper); }
   .doc.notes-orig :global(.note .nb-orig),
   .doc.notes-cb :global(.note .nb-cb),
   .doc.notes-cb :global(.note:not(:has(.nb-cb)) .nb-orig) {

@@ -234,14 +234,13 @@ impl HtmlOut {
     /// A collation note shown as a numbered marker with a hidden bubble.
     /// A note point: a numbered marker holding the original note and
     /// CBETA's note; the reader shows them by the chosen note mode. `n` is
-    /// the note id shared with the variant reading (`app data-n`).
+    /// the note id shared with the variant reading (`app data-n`). The
+    /// number itself is CSS content drawn from `data-note` (Reader.svelte),
+    /// not text, so selecting the text does not copy it.
     pub fn note(&mut self, n: &str, orig: Option<&str>, cb: Option<&str>) {
         self.notes += 1;
         let no = self.notes.to_string();
         self.open("span", &[("class", "note"), ("tabindex", "0"), ("data-note", &no), ("data-n", n)]);
-        self.buf.push_str("<sup>");
-        self.buf.push_str(&no);
-        self.buf.push_str("</sup>");
         for (class, text) in [("nb-orig", orig), ("nb-cb", cb)] {
             if let Some(t) = text {
                 self.buf.push_str("<span class=\"");
@@ -312,9 +311,10 @@ mod tests {
         let r = render_volume(&xml, &RenderOptions::default()).unwrap();
         assert_eq!(r.notes, 1, "orig + mod with the same n -> one marker");
         assert!(r.html.contains(concat!(
-            "<span class=\"note\" tabindex=\"0\" data-note=\"1\" data-n=\"1\"><sup>1</sup>",
+            "<span class=\"note\" tabindex=\"0\" data-note=\"1\" data-n=\"1\">",
             "<span class=\"nb-orig\">〔死〕－【三】</span><span class=\"nb-cb\">〔－〕【CB】，死【大】</span></span>"
         )));
+        assert!(!r.html.contains("<sup>"), "the note number is CSS content, not text");
         assert!(r.html.contains("<span class=\"app v o\" data-n=\"1\" data-orig=\"死\" title=\"【CB】無；【大】死\">"));
         assert!(r.html.contains("[臊-品+巳]</span>"));
         assert!(r.html.contains("┌初<br><span class=\"lb\" data-lb=\"0001a03\"></span>└二"));

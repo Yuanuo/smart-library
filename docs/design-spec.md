@@ -571,7 +571,7 @@ app_data/
 - 图片：`url` 形如 `../figures/B/B06p0447_01.gif`，实际都在 bookcase 根目录的 `figures/` 下，取 `figures/` 之后的部分。桌面程序用自定义协议 `sl`（Windows 上是 `http://sl.localhost/figures/…`）从 zip 读取，只允许 `figures/` 下的文件。
 - **编注的显示方式**（参照 cbeta-explorer，用户提出）：
   - 数据：一个编注点有同一 `n` 的几条相邻 `note`：`type="orig"`（底本原编注，如大正藏 `三藏＝法師【宮】＊`）、`type="mod"`（CBETA 编注，如 `三藏【大】＊，法師【宮】＊`；CBETA 自加的是 `add`），有时另有 `rest` 等；被改变的文字是同一 `n` 的 `app`。
-  - 渲染：一个编注点输出一个标记 `<span class="note" data-note="序号" data-n="编号"><sup>序号</sup><span class="nb-orig">原编注</span><span class="nb-cb">CBETA 编注</span></span>`（没有的部分不输出；orig、mod/add 都没有时才用其他类型的文字当 CBETA 编注）。切换方式只换样式，不重新载入。2025.Q1 全部卷共 108.7 万个编注点，计数与抽取一致。
+  - 渲染：一个编注点输出一个标记 `<span class="note" data-note="序号" data-n="编号"><span class="nb-orig">原编注</span><span class="nb-cb">CBETA 编注</span></span>`（没有的部分不输出；orig、mod/add 都没有时才用其他类型的文字当 CBETA 编注）。序号不在文字里：阅读器用 `::before { content: attr(data-note) }` 画出（同 HTML 脚注的「（注）」），选中复制正文时不会带上。切换方式只换样式，不重新载入。2025.Q1 全部卷共 108.7 万个编注点，计数与抽取一致。
   - 阅读区工具栏（段落版式、CBETA 卷）六种方式，全局一种，保存在前端本地，默认「着色」：
 
   | 方式 | 编注点 | 悬停 |
