@@ -22,6 +22,7 @@
   import { localDate, localTime } from "./lib/diary.js";
   import { settings, update as updateSettings } from "./lib/settings.svelte.js";
   import { daily, check as checkDaily, again as dailyAgain, markSeen as dailySeen } from "./lib/daily.svelte.js";
+  import { status } from "./lib/status.svelte.js";
   import { openPanelWindow } from "./lib/panels.js";
   import { fullPath } from "./lib/paths.js";
   import ClipDialog from "./lib/ClipDialog.svelte";
@@ -585,16 +586,16 @@
   let wsReady = false;
 
   const libraries = $derived(st?.libraries ?? []);
-  const buildingText = $derived.by(() => {
-    const ids = Object.keys(progress);
-    if (!ids.length) return "";
-    return ids
-      .map((id) => {
-        const p = progress[id];
-        const t = libraries.find((l) => l.id === id)?.title ?? id;
-        return `${t}：建索引 ${Math.floor((100 * p.done) / Math.max(1, p.total))}%`;
-      })
-      .join("　");
+  // The bottom-of-the-tree status slot: index building here, plus whatever
+  // other tasks report through `lib/status.svelte.js`; idle text otherwise.
+  const sideStatus = $derived.by(() => {
+    const parts = Object.keys(progress).map((id) => {
+      const p = progress[id];
+      const t = libraries.find((l) => l.id === id)?.title ?? id;
+      return `${t}：建索引 ${Math.floor((100 * p.done) / Math.max(1, p.total))}%`;
+    });
+    if (status.text) parts.push(status.text);
+    return parts.join("　");
   });
 
   // the full-text search pages are tabs of the workspace (lib/SearchPage.svelte)
@@ -849,7 +850,7 @@
         {/if}
       </div>
       <div class="side-foot">
-        <span class="muted building">{buildingText}</span>
+        <span class="status" class:muted={!sideStatus} title={sideStatus || status.idle}>{sideStatus || status.idle}</span>
         <span class="tools">
           {#if settings.dailyOn}
             <button class="icon" onclick={openDaily} title="每日一句" aria-label="每日一句">
@@ -1007,7 +1008,7 @@
     display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px 8px;
     border-top: 1px solid var(--line); font-size: 12px; min-height: 32px;
   }
-  .building { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .daily {
     position: fixed; left: 12px; bottom: 44px; z-index: 995; width: min(460px, calc(100vw - 32px));
     padding: 12px 16px; border-radius: 8px; background: var(--paper); border: 1px solid var(--accent);
