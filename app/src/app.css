@@ -141,6 +141,51 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
   font-family: inherit;
 }
 .sl-dock .dv-tab { font-family: inherit; }
+
+/* dockview's own pop-ups (a tab's context menu, the list behind the tab
+   overflow button) are rendered in the shell beside the dock, so they do not
+   inherit `.sl-dock`; give them the look of the reader's context menu
+   (ContextMenu.svelte): paper, a hairline border, a soft shadow. */
+.dv-context-menu {
+  min-width: 160px;
+  padding: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  color: var(--ink);
+}
+.dv-context-menu-item {
+  height: auto;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+.dv-context-menu-item:hover { background: var(--accent-soft); }
+.dv-context-menu-separator { background: var(--line); margin: 4px 6px; }
+
+.dv-tabs-overflow-container {
+  min-width: 160px;
+  padding: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  color: var(--ink);
+  font-size: 14px;
+}
+.dv-tabs-overflow-container .dv-tab,
+.dv-tabs-overflow-container .dv-tab:not(:last-child) {
+  margin: 0;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+}
+.dv-tabs-overflow-container .dv-tab:hover { background: var(--accent-soft); }
+.dv-tabs-overflow-container .dv-tab.dv-active-tab { background: var(--accent-soft); color: var(--accent); }
+
 .panel-host { height: 100%; overflow: hidden; }
 .dock-watermark { padding: 48px; color: var(--muted); font-size: 16px; }
 
