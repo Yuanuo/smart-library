@@ -5,6 +5,7 @@ import { settings } from "./settings.svelte.js";
 export const SHORTCUT_DEFS = [
   { id: "quick", label: "标题快搜", defaultKey: "Ctrl+G", note: "也可双击 Shift" },
   { id: "search", label: "全文搜索", defaultKey: "Ctrl+H" },
+  { id: "dict", label: "查词典", defaultKey: "Ctrl+K", note: "有选中文字时查这个词" },
   { id: "recent", label: "最近访问", defaultKey: "Ctrl+E" },
   { id: "marks", label: "收藏与标签", defaultKey: "Ctrl+B" },
   { id: "settings", label: "打开设置", defaultKey: "Ctrl+," },

@@ -98,6 +98,7 @@
     text = text.slice(0, 200);
     if (type === "quick") text ? readerAction({ type: "quick", text }) : openQuickSearch();
     else if (type === "search") text ? readerAction({ type: "search", text }) : openSearch();
+    else if (type === "dict") openDictWindow(text);
     else if (type === "recent") openRecent();
     else if (type === "marks") openMarks();
     else if (type === "settings") settingsBox = true;
@@ -802,7 +803,7 @@
           <button class="icon" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加" aria-label="添加"><Icon name="plus" size={18} /></button>
           <button class="icon" onclick={openQuickSearch} title="标题快搜（双击 Shift 或 Ctrl+G）" aria-label="标题快搜"><Icon name="plane" size={18} /></button>
           <button class="icon" onclick={openSearch} title="全文搜索（Ctrl+H）" aria-label="全文搜索"><Icon name="search" size={18} /></button>
-          <button class="icon" onclick={() => openDictWindow("")} title="查词典" aria-label="查词典"><Icon name="dict" size={18} /></button>
+          <button class="icon" onclick={() => openDictWindow("")} title="查词典（Ctrl+K）" aria-label="查词典"><Icon name="dict" size={18} /></button>
           <button class="icon" onclick={openMarks} title="收藏与标签（Ctrl+B）" aria-label="收藏与标签"><Icon name="bookmark" size={18} /></button>
           <button class="icon" onclick={openRecent} title="最近访问（Ctrl+E）" aria-label="最近访问"><Icon name="clock" size={18} /></button>
           {#if settings.aiOn}
