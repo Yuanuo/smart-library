@@ -194,7 +194,7 @@ function readerRenderer() {
             Promise.resolve(hooks.ontreepath?.({ lib: state.lib, bookId: state.bookId, path: state.path }))
               .then((tp) => {
                 if (!tp || tooltips[id] === undefined) return;
-                tooltips[id] = `${tooltip}\n目录：${tp}`;
+                tooltips[id] = `${tooltip}\n${tp}`;
                 applyTooltip(id);
               })
               .catch(() => {});
