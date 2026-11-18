@@ -43,7 +43,8 @@
 - 已完成（待点验）：阅读器「字重」三档（标准 / 稍粗 / 加粗）。正文与强调分用 `--reader-weight` / `--reader-strong-weight`，不用 `bolder`；稍粗、加粗两档在字体没有对应字面时靠描边（`--reader-stroke`）保证档位有效。见 design-spec 设置一节、session-notes 5o。
 - 已完成（待点验）：标签右键菜单与标签栏下拉列表改成阅读器右键菜单的样式（`app.css`）；标签提示里的目录树路径去掉「目录：」前缀；目录树工具栏去掉「知识库」标题、图标按钮靠左，右端新增视图导航 ←/→（同 Ctrl+Shift+←/→，没有可导航记录时不可用）；右键箭头打开「视图历史」对话框（检索、直接跳转、清除记录，不做新窗口）。见 session-notes 5p。
 - 已完成（待点验）：词典导入。设置 → 词典里可导入 TXT（`【词条】词义`，`\\n` 换行）、StarDict（`.ifo`/`.idx`/`.dict`，含 `.gz`/`.dict.dz`，文本、HTML、XDXF、图片类型）、MDict（`.mdx`/`.mdd`，引擎 1/2、zlib、`Encrypted="2"` 键块解密、`@@@LINK=` 重定向；LZO 和 `Encrypted="1"` 暂不支持）。转换成 `.words` 放在 `<数据目录>/dicts/` 并自动加入词典路径；词条自动补小写/简体/繁体变体，词义按指纹去重，MDD 图片进 `.words_extra`。生成器 `core/src/dict_build.rs`，导入器 `core/src/dict_import.rs`，命令行 `dict import/list/search/lookup`，样例和生成脚本在 `samples/dict/`、`tools/make_dict_samples.py`。见 design-spec「查词典与词典导入」。
-- 已完成（待点验）：阅读器「版心宽度」（阅读器设置里 20–100 em，默认 46em，随字号缩放；可勾选「全宽」按可视区自适应，段落和原书行两种版式共用）；设置搜索页拼音匹配选项补上边距和分隔线；词典的「导入词典」改称「导入第三方词典」。
+- 已完成（待点验）：阅读器「版心宽度」（阅读器设置里 20–100 em，默认 46em，随字号缩放；可勾选「全宽」按可视区自适应，三种版式共用）；设置搜索页拼音匹配选项补上边距和分隔线；词典的「导入词典」改称「导入第三方词典」。
+- 已完成（待点验）：阅读器版式改为「段落 | 折行 | 折页」，后两种是同一份结构化 HTML 用 CSS 折行（旧程序的做法，`Reader.svelte` 的 `.doc.wrap-lines` / `.doc.wrap-pages`：块级元素 `display: inline`，`.lb::before` 用 `content: "\A" attr(data-lb) " : "` 另起一行带出行号，`.pb::before` 在页首写出页号），所以编注、异文、缺字、底本读法、简体、命中高亮在两种折行下都可用；只有 HTML 里没有 `data-lb` 的卷（如 ZIM）仍退回按 `lines` 逐行渲染的纯文本。「行号」复选框常显，折行、折页时置灰，避免工具栏随版式重排。见 design-spec 阅读区版式一段。
 - 下一步待定：媒体标签、ZIM 适配器。
 
 ## 代码约定

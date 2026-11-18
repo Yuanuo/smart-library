@@ -86,6 +86,9 @@
     if (simp) ensureSimplifier();
   });
   const html = $derived(simp ? simplifyHtml(vol?.html) : vol?.html);
+  // 原书行 is the same structured HTML laid out one original line per visual
+  // line (CSS); volumes whose HTML has no lb markers keep the plain line view
+  const canWrap = $derived(!!vol?.html && vol.html.includes("data-lb="));
   const hasFn = $derived(!!vol?.html && vol.html.includes('class="fn"')); // an article with footnotes
   const coloring = $derived(noteMode === "color" || noteMode === "color-orig");
 
@@ -484,14 +487,18 @@
         {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
         <div class="seg" role="group" aria-label="版式">
           <button class:on={mode === "para"} onclick={() => (mode = "para")}>段落</button>
-          <button class:on={mode === "lines"} onclick={() => (mode = "lines")}>原书行</button>
+          <button class:on={mode === "lines"} onclick={() => (mode = "lines")}>折行</button>
+          <button class:on={mode === "pages"} onclick={() => (mode = "pages")}>折页</button>
         </div>
         <div class="seg" role="group" aria-label="字形">
           <button class:on={!simp} title="按原文的字形显示" onclick={() => update({ readerScript: "orig" })}>原文</button>
           <button class:on={simp} title="显示成简体字（只改显示，不改文件和索引）" onclick={() => update({ readerScript: "simp" })}>简体</button>
         </div>
-        {#if mode === "para"}
-          <label class="check"><input type="checkbox" bind:checked={showLb} /> 行号</label>
+        <label class="check" class:off={mode !== "para"}
+          title={mode === "para" ? "在每行开头显示行号" : "折行、折页版式里行号总是显示"}>
+          <input type="checkbox" bind:checked={showLb} disabled={mode !== "para"} /> 行号
+        </label>
+        {#if mode === "para" || canWrap}
           {#if vol.kind === "cbeta"}
             <label class="check" title="正文用底本（大正藏等）的读法，不用 CBETA 修订的读法；只改显示"><input type="checkbox" bind:checked={baseText} /> 底本读法</label>
             <div class="seg notes" role="group" aria-label="编注显示方式">
@@ -511,8 +518,9 @@
     <!-- svelte-ignore a11y_mouse_events_have_key_events, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))} oncontextmenu={readerMenu} onclick={docClick}
       onmouseover={overDoc} onmouseout={outDoc}>
-      {#if mode === "para"}
-        <article class="doc notes-{noteMode}" class:show-lb={showLb} class:base-text={baseText}>{@html html}</article>
+      {#if mode === "para" || canWrap}
+        <article class="doc notes-{noteMode}" class:show-lb={showLb && mode === "para"} class:base-text={baseText}
+          class:wrap-lines={mode === "lines"} class:wrap-pages={mode === "pages"}>{@html html}</article>
       {:else}
         <div class="lines">
           {#each vol.lines as line}
@@ -573,6 +581,7 @@
   .nav { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .vols { max-width: 16em; }
   .check { display: flex; gap: 4px; align-items: center; }
+  .check.off { opacity: 0.5; }
   .scroll { flex: 1; overflow: auto; background: var(--paper); }
   .attribution {
     max-width: var(--reader-max-width, 46em); margin: 12px auto 32px; padding: 12px 32px 0;
@@ -692,4 +701,42 @@
     vertical-align: super; margin: 0 2px; letter-spacing: 0;
   }
   .doc.show-lb :global(.lb.flash)::before { color: var(--hl); font-weight: var(--reader-strong-weight, 700); }
+  /* 折行 / 折页 as CSS over the structured HTML (the old program's views): the
+     blocks flow inline and every lb marker opens a new visual line with its
+     id in front, so notes, variants, 缺字 and 底本读法 keep working here;
+     折页 adds the page breaks at every pb marker. */
+  .doc.wrap-lines :global(div), .doc.wrap-pages :global(div),
+  .doc.wrap-lines :global(p), .doc.wrap-pages :global(p),
+  .doc.wrap-lines :global(ul), .doc.wrap-pages :global(ul),
+  .doc.wrap-lines :global(li), .doc.wrap-pages :global(li),
+  .doc.wrap-lines :global(h1), .doc.wrap-pages :global(h1),
+  .doc.wrap-lines :global(h2), .doc.wrap-pages :global(h2),
+  .doc.wrap-lines :global(h3), .doc.wrap-pages :global(h3),
+  .doc.wrap-lines :global(h4), .doc.wrap-pages :global(h4),
+  .doc.wrap-lines :global(h5), .doc.wrap-pages :global(h5),
+  .doc.wrap-lines :global(h6), .doc.wrap-pages :global(h6) {
+    display: inline; margin: 0; padding: 0; border: 0;
+  }
+  .doc.wrap-lines :global(.list), .doc.wrap-pages :global(.list) { list-style: none; }
+  .doc.wrap-lines :global(p.r-text-right), .doc.wrap-pages :global(p.r-text-right) { text-align: inherit; }
+  .doc.wrap-lines :global(.lb)::before, .doc.wrap-pages :global(.lb)::before {
+    content: "\A" attr(data-lb) " : ";
+    white-space: pre;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.68em;
+    color: var(--muted);
+    letter-spacing: 0;
+  }
+  .doc.wrap-pages :global(.pb)::before {
+    content: "\A\A" attr(data-pb) "\A\A";
+    white-space: pre;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.68em;
+    color: var(--muted);
+    letter-spacing: 0;
+  }
+  /* the ▼ that marks a jumped-to line, which sits in ::before in the paragraph view */
+  .doc.wrap-lines :global(.lb.flash)::after, .doc.wrap-pages :global(.lb.flash)::after {
+    content: "▼"; color: var(--hl); font-size: 0.6em; vertical-align: super; margin-left: 2px;
+  }
 </style>
