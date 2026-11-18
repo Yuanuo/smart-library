@@ -39,7 +39,7 @@
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
   import { parseSource, sourceUrl } from "./clip.js";
-  import { settings } from "./settings.svelte.js";
+  import { settings, update } from "./settings.svelte.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
 
   let {
