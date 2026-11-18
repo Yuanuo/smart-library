@@ -484,7 +484,7 @@
             </div>
             <div class="row">
               <span>界面缩放</span>
-              <input type="range" min="80" max="150" step="5" value={settings.uiZoom}
+              <input type="range" min="80" max="300" step="5" value={settings.uiZoom}
                 oninput={(e) => update({ uiZoom: Number(e.currentTarget.value) })} />
               <output>{settings.uiZoom}%</output>
             </div>
@@ -916,7 +916,7 @@
     position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, 0.3);
     display: flex; align-items: center; justify-content: center;
   }
-  .dialog { width: min(760px, calc(100vw - 32px)); height: min(580px, calc(100vh - 48px)); }
+  .dialog { width: min(860px, calc(100vw - 32px)); height: min(720px, calc(100vh - 48px)); }
   .settings-split {
     display: flex; flex: 1; min-height: 0; padding: 0; overflow: hidden;
   }
