@@ -18,6 +18,10 @@
     <path d="m9 5 7 7-7 7" stroke-width="2.4" />
   {:else if name === "chevron-down"}
     <path d="m5 9 7 7 7-7" stroke-width="2.4" />
+  {:else if name === "arrow-left"}
+    <path d="M20 12H4" /><path d="m10 6-6 6 6 6" />
+  {:else if name === "arrow-right"}
+    <path d="M4 12h16" /><path d="m14 6 6 6-6 6" />
   {:else if name === "plus"}
     <path d="M12 5v14M5 12h14" stroke-width="2.2" />
   {:else if name === "plane"}

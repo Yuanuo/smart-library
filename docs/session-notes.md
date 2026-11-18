@@ -176,6 +176,14 @@
   - `-webkit-text-stroke-width` 用 em 写会随字号缩放，是加法的假粗，但能保证任意字体都有档位差别，而且不改变强调与正文的权重差；0.012–0.024em 在 19px 下观感可用，0.04em 开始糊。
 - 决定：设置项「字重」三档（标准 / 稍粗 / 加粗），不是滑杆。`settings.svelte.js` 的 `WEIGHTS` 表给出每档的正文和强调字重，以及正文 / 强调的描边宽度（em）。正文用 `--reader-weight`，强调用 `--reader-strong-weight`；`b`、`strong`、`.head`、`.juan`、CBETA 粗体读法统一走强调档，覆盖浏览器的 `bolder`。稍粗档靠 500（雅黑有的档位）加 0.012em 描边（宋体这类两字面字体）同时生效；加粗档正文 650，强调 900 另加 0.024em 描边，以免字体到顶后强调和正文一样粗。只作用于阅读器和词典详情，笔记编辑器不跟随。
 
+## 5p. 标签菜单样式、标签提示、目录树工具栏
+
+- 阅读器标签的提示最后一行原来写成「目录：…」，用户要求去掉前缀，直接显示目录树路径（`workspace.svelte.js` 的 `ontreepath` 回调）。
+- 标签右键菜单和标签栏「放不下的标签」下拉列表由 dockview 绘制。它们放在 `.dv-shell` 里、与带 `.sl-dock` 的网格元素平级（dockview 8 的 shell 结构），拿不到 `.sl-dock` 上的 `--dv-*` 变量，样子与阅读器的右键菜单不一致。决定不改 dockview 源码，在 `app.css` 里按 `dv-context-menu` / `dv-tabs-overflow-container` 的类名统一改成 `ContextMenu.svelte` 的样式（paper 底、`--line` 细边框、8px 圆角、`0 6px 20px rgba(0,0,0,.18)` 阴影、14px 字、选中行 accent-soft）。
+- 目录树工具栏重构：去掉「知识库」标题，原来的图标按钮靠左；右端新增一组视图导航按钮（`Icon` 的 `arrow-left` / `arrow-right`），与 Ctrl+Shift+←/→ 同一个 `navigateHistory`。是否可用由工作区暴露的 `ws.canBack` / `ws.canForward` 决定：`viewIndex` 变化（记录新视图、导航、恢复）时由 `syncHistoryButtons` 更新，没有可去的条目时按钮变灰。
+- 视图历史改成对话框：用户指出浏览器式的历史菜单在条目多时不敷使用，改为右键箭头打开「视图历史」对话框（`ViewHistoryDialog.svelte`）：检索（标题、路径、知识库）、`↑↓`/Enter、点一行直接跳（`navigateHistoryTo`，不经过中间条目）、「清除记录」（`clearViewHistory`）。历史条目现在带标题并存进 `workspace.json`，旧数据只是没有标题，退回路径显示。第一版用了 `.dialog-shell`（标题、说明、输入框分几行，底部按钮），用户觉得不如「最近访问」紧凑，于是照「最近访问」重排：顶部一行放标题、筛选框、清除，下面是列表；当前一条改用行左侧 4px accent 竖条（`inset box-shadow`，不挤动行内容），不写「当前」角标。
+- 两个决定：按钮的不可用状态从 `disabled` 属性改为 `aria-disabled` + `.off` 类——Chromium 的禁用按钮不派发鼠标事件，右键就弹不出历史对话框；不提供「在新窗口打开」，因为视图历史是主窗口的概念（弹出窗口各自只有一卷），还要额外处理标签唯一性、进度和最近打开的同步。
+
 ## 6. 状态
 
 | 项目 | 状态 |

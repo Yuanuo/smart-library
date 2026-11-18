@@ -9,6 +9,7 @@
   import { openDictWindow } from "./lib/dictWindow.js";
   import Icon from "./lib/Icon.svelte";
   import RecentDialog from "./lib/RecentDialog.svelte";
+  import ViewHistoryDialog from "./lib/ViewHistoryDialog.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import TagDialog from "./lib/TagDialog.svelte";
   import MarksDialog from "./lib/MarksDialog.svelte";
@@ -408,6 +409,12 @@
     quick = false;
     recentBox = true;
   }
+  let viewHistoryBox = $state(false); // the back / forward arrows' history
+  /** Right-click on a view arrow: the history dialog (a menu has no room for a long history). */
+  function openViewHistory(e) {
+    e.preventDefault();
+    viewHistoryBox = true;
+  }
   async function openRecentItem(it) {
     try {
       workspace.seedProgress(it.lib, it.path, it.lb, it.mode);
@@ -798,7 +805,6 @@
   <div class="body">
     <nav class="side" aria-label="知识库目录" style="width: {sideWidth}px">
       <div class="side-head">
-        <span class="side-title">知识库</span>
         <span class="tools">
           <button class="icon" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加" aria-label="添加"><Icon name="plus" size={18} /></button>
           <button class="icon" onclick={openQuickSearch} title="标题快搜（双击 Shift 或 Ctrl+G）" aria-label="标题快搜"><Icon name="plane" size={18} /></button>
@@ -809,6 +815,14 @@
           {#if settings.aiOn}
             <button class="icon" class:on={aiOpen} onclick={() => setAiOpen(!aiOpen)} title="打开 / 收起右侧 AI 助手栏（F1）" aria-label="AI 助手"><Icon name="sparkles" size={18} /></button>
           {/if}
+        </span>
+        <span class="tools nav">
+          <button class="icon" class:off={!workspace.ws.canBack} aria-disabled={!workspace.ws.canBack}
+            onclick={() => workspace.ws.canBack && workspace.navigateHistory(-1)} oncontextmenu={openViewHistory}
+            title="上一个视图（Ctrl+Shift+←；右键：视图历史）" aria-label="上一个视图"><Icon name="arrow-left" size={18} /></button>
+          <button class="icon" class:off={!workspace.ws.canForward} aria-disabled={!workspace.ws.canForward}
+            onclick={() => workspace.ws.canForward && workspace.navigateHistory(1)} oncontextmenu={openViewHistory}
+            title="下一个视图（Ctrl+Shift+→；右键：视图历史）" aria-label="下一个视图"><Icon name="arrow-right" size={18} /></button>
         </span>
       </div>
       <div class="tree">
@@ -962,6 +976,10 @@
   <RecentDialog onopen={openRecentItem} onclose={() => (recentBox = false)} onpopout={() => popoutPanel("recent")} />
 {/if}
 
+{#if viewHistoryBox}
+  <ViewHistoryDialog onclose={() => (viewHistoryBox = false)} />
+{/if}
+
 {#if quick}
   <QuickSearch {libraries} scope={quickScope} initialQuery={quickQuery} onopen={openQuick} onclose={() => (quick = false)} />
 {/if}
@@ -979,6 +997,7 @@
   }
   .icon:hover { background: var(--accent-soft); }
   .icon.on { background: var(--accent-soft); }
+  .icon.off, .icon:disabled { color: var(--muted); opacity: 0.45; cursor: default; background: none; }
   .icon { position: relative; }
   .badge {
     position: absolute; top: -2px; right: -4px; min-width: 14px; padding: 0 3px; border-radius: 7px;
@@ -1025,10 +1044,11 @@
   .splitter:hover, .splitter.dragging, .splitter:focus-visible { background: var(--accent-soft); outline: none; }
   .body:has(.splitter.dragging) { user-select: none; cursor: col-resize; }
   .side-head {
-    display: flex; justify-content: space-between; align-items: center; padding: 8px 12px 6px; font-size: 13px;
-    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; padding: 4px 8px;
+    border-bottom: 1px solid var(--line); font-size: 13px;
   }
-  .side-title { font-weight: 600; font-size: 14px; color: var(--ink); letter-spacing: 0.02em; }
+  .side-head .tools { flex-wrap: wrap; }
+  .side-head .tools.nav { margin-left: auto; flex-wrap: nowrap; }
   .tree { flex: 1; overflow: auto; font-size: 15px; padding: 6px 8px; }
   .content { flex: 1; min-width: 0; min-height: 0; position: relative; }
   .ai-splitter { border-right: none; border-left: 1px solid var(--line); }

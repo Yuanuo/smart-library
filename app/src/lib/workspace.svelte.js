@@ -52,7 +52,15 @@ let viewHistory = []; // [{ tab, lib, bookId, path }]
 let viewIndex = -1;
 let navigatingHistory = false;
 
-export const ws = $state({ empty: true, current: null, opened: 0, activeDoc: null, activeSearch: null }); // current: { title, lib } of the active reading tab
+export const ws = $state({
+  empty: true,
+  current: null,
+  opened: 0,
+  activeDoc: null,
+  activeSearch: null,
+  canBack: false, // a previous view is in the history
+  canForward: false, // a later view is in the history
+}); // current: { title, lib } of the active reading tab
 
 function labelFor(tab) {
   return "reader-" + tab.replace(/[^A-Za-z0-9]/g, "_");
@@ -659,7 +667,7 @@ export async function init(element, h) {
     if (Array.isArray(saved.viewHistory)) {
       viewHistory = saved.viewHistory
         .filter((x) => x && typeof x.lib === "string" && x.path != null && known.has(x.lib))
-        .map((x) => ({ tab: `${x.lib}|${x.path}`, lib: x.lib, bookId: x.bookId ?? null, path: x.path }))
+        .map((x) => ({ tab: `${x.lib}|${x.path}`, lib: x.lib, bookId: x.bookId ?? null, path: x.path, title: x.title || "" }))
         .slice(-MAX_VIEW_HISTORY);
       const idx = Number.isInteger(saved.viewIndex) ? saved.viewIndex : viewHistory.length - 1;
       viewIndex = viewHistory.length ? Math.max(0, Math.min(idx, viewHistory.length - 1)) : -1;
@@ -687,6 +695,7 @@ export async function init(element, h) {
     }
   }
   refreshEmpty();
+  syncHistoryButtons();
   if (dv.activePanel) recordViewHistory(dv.activePanel);
 }
 
@@ -751,12 +760,19 @@ function recordViewHistory(panel) {
   const tab = `${lib}|${path}`;
   if (viewIndex >= 0 && viewHistory[viewIndex]?.tab === tab) return;
   viewHistory = viewHistory.slice(0, viewIndex + 1);
-  viewHistory.push({ tab, lib, bookId: panel.params.bookId ?? null, path });
+  viewHistory.push({ tab, lib, bookId: panel.params.bookId ?? null, path, title: panel.title || infos[tab]?.title || "" });
   if (viewHistory.length > MAX_VIEW_HISTORY) {
     viewHistory.shift();
   }
   viewIndex = viewHistory.length - 1;
+  syncHistoryButtons();
   scheduleSave();
+}
+
+/** Enable the back / forward arrows of the sidebar's view navigation. */
+function syncHistoryButtons() {
+  ws.canBack = viewHistory.length > 0 && viewIndex > 0;
+  ws.canForward = viewIndex >= 0 && viewIndex < viewHistory.length - 1;
 }
 
 async function activateHistoryEntry(entry) {
@@ -806,7 +822,57 @@ export async function navigateHistory(delta) {
     return false;
   } finally {
     navigatingHistory = false;
+    syncHistoryButtons();
   }
+}
+
+/**
+ * The view history for the "视图历史" dialog, newest first: what each entry
+ * is, and which one is the view being read now (`index` is the position in
+ * the history, so a row can be picked directly).
+ */
+export function viewHistorySnapshot() {
+  const items = viewHistory.map((e, index) => ({
+    index,
+    title: e.title || infos[e.tab]?.title || e.path || e.bookId || e.tab,
+    lib: e.lib,
+    libTitle: (hooks.libraries || []).find((l) => l.id === e.lib)?.title || e.lib,
+    path: e.path,
+    bookId: e.bookId ?? null,
+  }));
+  return { index: viewIndex, items: items.reverse() };
+}
+
+/**
+ * Go straight to one entry of the view history (a row of the dialog). Unlike
+ * `navigateHistory` there are no entries in between; an entry that cannot be
+ * opened any more is dropped, as when stepping past it.
+ */
+export async function navigateHistoryTo(index) {
+  if (!dv || navigatingHistory || index < 0 || index >= viewHistory.length) return false;
+  navigatingHistory = true;
+  try {
+    if (await activateHistoryEntry(viewHistory[index])) {
+      viewIndex = index;
+      scheduleSave();
+      return true;
+    }
+    viewHistory.splice(index, 1);
+    if (viewIndex >= index) viewIndex -= 1;
+    scheduleSave();
+    return false;
+  } finally {
+    navigatingHistory = false;
+    syncHistoryButtons();
+  }
+}
+
+/** Forget the view history (the back / forward arrows become unavailable). */
+export function clearViewHistory() {
+  viewHistory = [];
+  viewIndex = -1;
+  syncHistoryButtons();
+  scheduleSave();
 }
 
 /** The line the active tab was last read at (null: none known). */
