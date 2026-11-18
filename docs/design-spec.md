@@ -406,6 +406,19 @@ M2 的实现（`core/src/titles.rs`，命令行 `titles`，界面 `app/src/lib/Q
 - 字重是三个档位而不是滑杆：CSS 没有相对字重（`font-weight` 不能像 rem 那样按基数放大），中文字体也大多只有两三个真实字面，连续数值会被吸附到同一档。`settings.svelte.js` 的 `WEIGHTS` 表给出每档的正文和强调字重，以及正文 / 强调的描边宽度（`-webkit-text-stroke-width`，用 em，字体没有对应字面时靠它保证档位有效）。正文用 `--reader-weight`，强调用 `--reader-strong-weight`；`b`、`strong`、`.head`、`.juan`、CBETA 粗体读法都用强调档，覆盖浏览器的 `bolder`（它按固定阶梯走，600 以上饱和，基准提高后强调会和正文一样粗）。加粗档的强调另加 0.024em 描边，否则两字面字体到顶后强调无法区分。只作用于阅读器和词典详情，笔记编辑器不跟随。
 - 保存在 WebView 的 localStorage（便携模式下就在 `data/webview/` 里），`settings.svelte.js` 把它写成 CSS 变量（`--ui-font`、`--reader-font`、`--reader-size`、`--reader-line`、`--reader-spacing`、`--reader-para`、`--reader-weight`、`--reader-strong-weight`、`--reader-stroke`、`--reader-strong-stroke`）；弹出的阅读窗口同源，改动通过 `storage` 事件同步。
 
+**查词典与词典导入（2026-11）**
+
+- 词典窗口（`core/src/dict.rs`、`DictWindow.svelte`、`DictReaderView.svelte`）读 `.words`：文件头（版本 3、字符集、压缩方式、元数据、条目数、内容分区表），标题区按记录顺序存放（`entry_size i16`、`pid i32`、`type u8`、`content_mark i64`、`title_len i16`、标题字节），词义区按 `content_mark` 存 `i32` 长度加压缩字节；标题区用 mmap 扫描，多个标题可以指向同一份词义。读词典不建索引，搜索是标题区线性扫描（前缀 / 包含 / 后缀 / 精确由查询语法决定）。
+- 配置在 `<配置目录>/dicts.json`：`paths`（`.words` 文件或目录，目录递归扫描）和 `disabled`（停用的词典 id）。设置 → 词典里添加、启用、排序过滤。词典 id 由名称和文件大小算出。
+- **导入**（`core/src/dict_import.rs`、`core/src/dict_build.rs`）：设置 → 词典的「导入词典…」/「导入文件夹…」选择文件；支持的来源转换成 `.words` 放在 `<数据目录>/dicts/`（自动加入 `paths`），同名再导入时覆盖。源文件不动，转换结果可以删除后重新生成。
+  - **TXT**：按旧 Java `DictFileTxt` 的规则，一行 `【词条】词义`，`\\n`（两个反斜杠加 n）表示换行；没有 `】` 的行忽略。文件按 BOM 判断 UTF-8 / UTF-16；无 BOM 且不是合法 UTF-8 时按 GB18030 读。文件名是词典名。
+  - **StarDict**：同名 `.ifo` + `.idx`（或 `.idx.gz`）+ `.dict`（或 `.dict.dz`，dictzip 是 gzip 兼容的，整个解压）；`bookname` 作词典名，`sametypesequence` 有则按类型序列读，没有则按 `type + 数据` 逐段读；默认 32 位偏移，`idxoffsetbits=64` 时用 64 位。文本类型（`m l h x t y k w n r`）转正文，`x` 去标签，`g`/`P` 图片写入 `.words_extra` 并在正文里写 `<PIC>名</PIC>`。
+  - **MDict**：`.mdx`（可选同名 `.mdd` 资源）。支持引擎版本 1 和 2、zlib 压缩、UTF-8/GBK/GB18030/UTF-16；`Encrypted="2"`（键块信息加密）用旧 Java 的 RIPEMD-128 + `_fast_decrypt`（先按 `key = ripemd128(块[4..8] + 0x3695)` 派生，再逐字节交换半字节、异或前一个密文字节、序号和密钥）解开；`@@@LINK=词条` 重定向在导入时解析（最多 8 跳）。`Encrypted="1"`（词条块加密）和 LZO 压缩暂不支持，会给出原因。
+  - **MDD**：键块信息的编码可能和头部 `Encoding` 不一致（常见是头部留空但内容为 UTF-16LE），解析时按“能否正好消费完整块”在 1/2 字节宽度之间切换；正文里 `<img src="…">` 能对上 MDD 资源时改成 `<PIC>归一化路径</PIC>`，只把被引用的资源写进 `<词典名>.words_extra`（ZIP；已经是压缩格式的图片用 stored，不再压）。读词条时 `<PIC>` 以 data URI 放进详情 HTML；后端和前端的消毒都只放行 png / jpeg / gif / bmp 的 data URI（不放 SVG），并允许 `img` 的 `alt`、`width`、`height`。
+  - **变体与去重**：每条词条额外生成小写、简体、繁体三种写法，已经存在的写法不重复添加（小写比较用折叠形式，避免大小写只差一个的重复条目）。简体用 `data/t2s.txt` 和 `data/variants.txt`（`analyzer::to_simplified`）；繁体用同一张表的反查（`analyzer::to_traditional`），优先标准字形（说 → 說，不是 説），后/干/台/只/系/余/谷/斗/松/胡/云/里/面/佛 这类一字多形的字保持原样，不做猜测。词义按 128 位指纹去重，多个词条共享同一份压缩词义；标题顺序沿用来源顺序，变体追加在最后。
+  - 已知限制：繁体是逐字近似，不是旧 Java 的词语级转换；MDD 只带 `<img>` 引用的资源；不支持 LZO 和加密词条块；TXT 只认 `【】` 格式。
+- 命令行（先跑通再进界面）：`smart-library dict import <文件或目录…> [--out DIR]`（默认 `app_data/dicts`）、`dict list`、`dict search <词> <词典…>`、`dict lookup <词> <词典…>`。样例在 `samples/dict/`（TXT、StarDict、带加密键块信息和 MDD 的 MDX），由 `tools/make_dict_samples.py` 生成。
+
 **阅读器选中文字菜单、打开过标记、收藏与标签（2026-11）**
 
 - 阅读器右键菜单（选中文字时）：复制文字；复制文字（&引用出处）（CBETA 用 `(CBETA 2025.Q1, T15, no. 614, p. 269c29)`，其他库用 `—— 《标题》 · 知识库 · ¶n`，后端 `cite_text`）；全文检索、精确检索、快捷检索（标题快搜带入文字）、页内查找（命令 `find_in_page` 用 SendInput 按下 Ctrl+F，打开浏览器自带的查找栏，选中的文字自动填入；先用 `window.find` 保证选区就是这段文字；非 Windows 退回 `window.find`）、检索本书（`within` 限定本书或本篇）；查拼音（弹窗逐字显示，拼音用 `<ruby>` 排在字的上方；底部按钮分别复制纯拼音和「汉字(拼音)」组合，后端 `pinyin::convert` 一次给出逐字对和两种文本）、词条、词义先占位（需要额外的库）；添加书签、添加收藏。没有选中文字时只有「添加书签」。独立弹出窗口里菜单相同，窗口之间用 Tauri 事件通信（`popout-action`、`popout-shortcut`），搜索、书签、标签由主窗口执行并取得焦点。

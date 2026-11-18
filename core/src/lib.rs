@@ -15,6 +15,8 @@ pub mod bookinfo;
 pub mod catalog;
 pub mod cite;
 pub mod dict;
+pub mod dict_build;
+pub mod dict_import;
 pub mod doctext;
 pub mod dynasty;
 pub mod exchange;

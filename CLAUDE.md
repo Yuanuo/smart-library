@@ -19,7 +19,7 @@
 
 ## 当前状态
 
-- 已完成：M0a–M0c（读取、抽取、索引与搜索）、M1 界面、结构化阅读、多标签阅读、知识库绑定与 `a/` HTML 文章、知识库类型重构第 1–3 步（添加向导、外部文件夹 `folder.rs`、内部库 `notes.rs` + `markdown.rs`）、M2 标题快搜（`core/src/titles.rs`；`#` 命令与粘贴 CBETA 引用转到经文 `cite.rs`）；101 个测试通过。详见 session-notes 第 6 节。
+- 已完成：M0a–M0c（读取、抽取、索引与搜索）、M1 界面、结构化阅读、多标签阅读、知识库绑定与 `a/` HTML 文章、知识库类型重构第 1–3 步（添加向导、外部文件夹 `folder.rs`、内部库 `notes.rs` + `markdown.rs`）、M2 标题快搜（`core/src/titles.rs`；`#` 命令与粘贴 CBETA 引用转到经文 `cite.rs`）；167 个测试通过。详见 session-notes 第 6 节。
 - 待用户手动验证：拖动停靠、解除绑定、快搜弹窗、目录宽度拖动、在目录树中定位、切换标签保留位置、编注的六种显示方式与悬停浮层。
 - 待用户手动验证（新）：添加向导与「＋」菜单、链接文件夹并建索引、文件夹树按需展开、在目录树中定位文件夹里的文件。
 - 待用户手动验证（内部库）：新建内部库、新建/重命名/删除/上移下移笔记、编辑保存、建索引后搜索、删除知识库。
@@ -42,6 +42,7 @@
 - 已完成（待点验）：阅读器「底本读法」（正文换成大正藏读法）。
 - 已完成（待点验）：阅读器「字重」三档（标准 / 稍粗 / 加粗）。正文与强调分用 `--reader-weight` / `--reader-strong-weight`，不用 `bolder`；稍粗、加粗两档在字体没有对应字面时靠描边（`--reader-stroke`）保证档位有效。见 design-spec 设置一节、session-notes 5o。
 - 已完成（待点验）：标签右键菜单与标签栏下拉列表改成阅读器右键菜单的样式（`app.css`）；标签提示里的目录树路径去掉「目录：」前缀；目录树工具栏去掉「知识库」标题、图标按钮靠左，右端新增视图导航 ←/→（同 Ctrl+Shift+←/→，没有可导航记录时不可用）；右键箭头打开「视图历史」对话框（检索、直接跳转、清除记录，不做新窗口）。见 session-notes 5p。
+- 已完成（待点验）：词典导入。设置 → 词典里可导入 TXT（`【词条】词义`，`\\n` 换行）、StarDict（`.ifo`/`.idx`/`.dict`，含 `.gz`/`.dict.dz`，文本、HTML、XDXF、图片类型）、MDict（`.mdx`/`.mdd`，引擎 1/2、zlib、`Encrypted="2"` 键块解密、`@@@LINK=` 重定向；LZO 和 `Encrypted="1"` 暂不支持）。转换成 `.words` 放在 `<数据目录>/dicts/` 并自动加入词典路径；词条自动补小写/简体/繁体变体，词义按指纹去重，MDD 图片进 `.words_extra`。生成器 `core/src/dict_build.rs`，导入器 `core/src/dict_import.rs`，命令行 `dict import/list/search/lookup`，样例和生成脚本在 `samples/dict/`、`tools/make_dict_samples.py`。见 design-spec「查词典与词典导入」。
 - 下一步待定：媒体标签、ZIM 适配器。
 
 ## 代码约定
@@ -73,6 +74,7 @@ cargo run -p smart-library-cli --release -- <命令> <bookcase.zip> ...
   #       volumes [XML/ --render] / libraries / index [--tree longzang --index <目录>]
   #       titles 法华 序品 [--tree bulei|longzang --limit 20]；也可以是 #T0001_001 等命令或 CBETA 引用文字
   #       search 如是我聞 [--phrase --scope bulei/阿含部類 --facet ... --page 2]
+  #       dict import <文件或目录…> [--out DIR] / dict list / dict search 词 <词典…> / dict lookup 词 <词典…>
 
 # 桌面程序（app/ 目录，第一次先 npm install）
 npm run tauri dev        # 开发模式

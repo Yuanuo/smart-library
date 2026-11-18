@@ -7,6 +7,32 @@ pub struct DictStateDto {
     pub dicts: Vec<DictInfo>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DictImportOutcomeDto {
+    pub source: String,
+    pub name: String,
+    pub path: String,
+    pub format: String,
+    pub entries: usize,
+    pub variants: usize,
+    pub skipped: usize,
+    pub has_extra: bool,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DictImportFailureDto {
+    pub source: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DictImportResultDto {
+    pub imported: Vec<DictImportOutcomeDto>,
+    pub failed: Vec<DictImportFailureDto>,
+    pub state: DictStateDto,
+}
+
 impl AppState {
     fn dict_config_path(&self) -> PathBuf {
         self.config_dir.join("dicts.json")
@@ -124,4 +150,75 @@ pub async fn dict_lookup(
     let guard = state.dicts.read().unwrap();
     let mgr = guard.as_ref().unwrap();
     Ok(mgr.lookup_exact(&word, scope_ids.as_deref(), limit.unwrap_or(50)))
+}
+
+/// Import TXT / StarDict / MDX dictionaries into `<data>/dicts` and add that
+/// directory to the dictionary paths. The manager is dropped first so the
+/// Windows file mappings of old `.words` files do not block replacing them.
+#[tauri::command]
+pub async fn dict_import(
+    paths: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<DictImportResultDto, String> {
+    if paths.is_empty() {
+        state.ensure_dicts();
+        return Ok(DictImportResultDto {
+            imported: Vec::new(),
+            failed: Vec::new(),
+            state: state.dict_state_dto(),
+        });
+    }
+    let out_dir = state.data_dir.join("dicts");
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("创建词典目录失败 {}: {e}", out_dir.display()))?;
+    {
+        let mut guard = state.dicts.write().unwrap();
+        *guard = None;
+    }
+    let sources = paths.clone();
+    let out = out_dir.clone();
+    let (imported, failed) = tauri::async_runtime::spawn_blocking(move || {
+        let mut imported = Vec::new();
+        let mut failed = Vec::new();
+        for source in sources {
+            match smart_library_core::dict_import::import_path(std::path::Path::new(&source), &out) {
+                Ok(outcomes) => imported.extend(outcomes),
+                Err(error) => failed.push(DictImportFailureDto { source, error }),
+            }
+        }
+        (imported, failed)
+    })
+    .await
+    .map_err(|e| format!("导入任务失败: {e}"))?;
+
+    if !imported.is_empty() {
+        let mut config = std::fs::read_to_string(state.dict_config_path())
+            .ok()
+            .and_then(|s| serde_json::from_str::<DictConfig>(&s).ok())
+            .unwrap_or_default();
+        let dir = out_dir.to_string_lossy().into_owned();
+        if !config.paths.iter().any(|p| p == &dir) {
+            config.paths.push(dir);
+        }
+        state.save_dict_config(&config)?;
+    }
+    state.ensure_dicts();
+    Ok(DictImportResultDto {
+        imported: imported
+            .into_iter()
+            .map(|o| DictImportOutcomeDto {
+                source: o.source,
+                name: o.name,
+                path: o.output,
+                format: o.format.to_string(),
+                entries: o.entries,
+                variants: o.variants,
+                skipped: o.skipped,
+                has_extra: o.has_extra,
+                warnings: o.warnings,
+            })
+            .collect(),
+        failed,
+        state: state.dict_state_dto(),
+    })
 }

@@ -102,6 +102,7 @@
   let dictFilter = $state("");
   let dictLoading = $state(false);
   let dictMsg = $state("");
+  let dictError = $state(false);
 
   const filteredDicts = $derived.by(() => {
     const q = dictFilter.trim().toLowerCase();
@@ -114,6 +115,7 @@
   async function loadDictConfig() {
     dictLoading = true;
     dictMsg = "";
+    dictError = false;
     try {
       const st = await api.dictConfigGet();
       dictPaths = st.paths || [];
@@ -121,6 +123,7 @@
       dictList = st.dicts || [];
     } catch (e) {
       dictMsg = String(e);
+      dictError = true;
     } finally {
       dictLoading = false;
     }
@@ -129,6 +132,7 @@
   async function saveDictConfig(nextPaths, nextDisabled) {
     dictLoading = true;
     dictMsg = "";
+    dictError = false;
     try {
       const st = await api.dictConfigSet(nextPaths, nextDisabled);
       dictPaths = st.paths || [];
@@ -136,6 +140,7 @@
       dictList = st.dicts || [];
     } catch (e) {
       dictMsg = String(e);
+      dictError = true;
     } finally {
       dictLoading = false;
     }
@@ -170,6 +175,7 @@
   async function reloadDicts() {
     dictLoading = true;
     dictMsg = "";
+    dictError = false;
     try {
       const st = await api.dictReload();
       dictPaths = st.paths || [];
@@ -177,6 +183,70 @@
       dictList = st.dicts || [];
     } catch (e) {
       dictMsg = String(e);
+      dictError = true;
+    } finally {
+      dictLoading = false;
+    }
+  }
+
+  function shortName(path) {
+    return String(path).split(/[\\/]/).pop() || String(path);
+  }
+
+  async function importDicts() {
+    const picked = await openDialog({
+      multiple: true,
+      title: "导入词典（TXT / StarDict / MDX，可多选）",
+      filters: [
+        { name: "词典文件", extensions: ["txt", "ifo", "idx", "dict", "mdx", "mdd", "gz", "dz"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+    });
+    if (!picked) return;
+    await runDictImport(Array.isArray(picked) ? picked : [picked]);
+  }
+
+  async function importDictDir() {
+    const picked = await openDialog({
+      directory: true,
+      multiple: false,
+      title: "导入词典文件夹（会递归查找 TXT / StarDict / MDX）",
+    });
+    if (!picked || typeof picked !== "string") return;
+    await runDictImport([picked]);
+  }
+
+  async function runDictImport(files) {
+    dictLoading = true;
+    dictMsg = "";
+    dictError = false;
+    try {
+      const res = await api.dictImport(files);
+      const st = res.state || {};
+      dictPaths = st.paths || [];
+      dictDisabled = st.disabled || [];
+      dictList = st.dicts || [];
+      const imported = res.imported || [];
+      const failed = res.failed || [];
+      const total = imported.reduce((n, d) => n + (d.entries || 0), 0);
+      const parts = [];
+      if (imported.length) {
+        parts.push(`已导入 ${imported.length} 个词典，共 ${total.toLocaleString()} 条`);
+        const named = imported
+          .map((d) => `${d.name}（${(d.entries || 0).toLocaleString()} 条${d.skipped ? `，跳过 ${d.skipped}` : ""}）`)
+          .join("、");
+        parts.push(named);
+      }
+      if (failed.length) {
+        parts.push(`${failed.length} 个文件失败：` + failed.map((f) => `${shortName(f.source)}：${f.error}`).join("；"));
+        dictError = true;
+      }
+      const warnings = imported.flatMap((d) => d.warnings || []);
+      if (warnings.length) parts.push("注意：" + warnings.join("；"));
+      dictMsg = parts.join("。");
+    } catch (e) {
+      dictMsg = String(e);
+      dictError = true;
     } finally {
       dictLoading = false;
     }
@@ -622,7 +692,17 @@
         {:else if activeTab === "dict"}
           <div class="sec-head">
             <h3>词典配置</h3>
-            <p class="muted">添加 .words 词典文件或目录（自动扫描子目录），并选择默认启用的词典。</p>
+            <p class="muted">可直接添加 .words 词典，也可以导入常见的词典格式（TXT、StarDict 的 .ifo/.idx/.dict、MDict 的 .mdx/.mdd），导入后会转换成 .words 并放在数据目录的 dicts 下。</p>
+          </div>
+          <div class="card">
+            <div class="card-block">
+              <div class="block-title">导入词典</div>
+              <div class="row-plain">
+                <button type="button" onclick={importDicts} disabled={dictLoading}>{dictLoading ? "导入中…" : "导入词典…"}</button>
+                <button type="button" onclick={importDictDir} disabled={dictLoading}>{dictLoading ? "导入中…" : "导入文件夹…"}</button>
+              </div>
+              <p class="muted hint">TXT 每行一条：【词条】词义；StarDict 选 .ifo 或 .idx 任一即可，会自己找同名的 .dict（.gz/.dz 也行）；MDX 旁边的 .mdd 图片会自动带上。导入到数据目录的 dicts 下，同名会覆盖。</p>
+            </div>
           </div>
           <div class="card">
             <div class="card-block">
@@ -644,6 +724,7 @@
                   {/each}
                 </div>
               {/if}
+              {#if dictMsg}<p class="hint" class:err-text={dictError}>{dictMsg}</p>{/if}
             </div>
           </div>
           <div class="card">
@@ -677,7 +758,6 @@
                   {/each}
                 </div>
               {/if}
-              {#if dictMsg}<p class="hint err-text">{dictMsg}</p>{/if}
             </div>
           </div>
 

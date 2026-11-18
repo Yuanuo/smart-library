@@ -191,6 +191,7 @@ export const dictSearch = (query, scopeIds = null, offset = 0, limit = 50) =>
 export const dictEntry = (dictId, entryId) => invoke("dict_entry", { dictId, entryId });
 export const dictLookup = (word, scopeIds = null, limit = 50) =>
   invoke("dict_lookup", { word, scopeIds, limit });
+export const dictImport = (paths) => invoke("dict_import", { paths });
 
 // ------------------------------------------------------------ snapshots
 export const listSnapshots = (lib, docId) => invoke("list_snapshots", { lib, docId });
@@ -201,4 +202,4 @@ export const restoreSnapshot = (id) => invoke("restore_snapshot", { id });
 export const deleteSnapshot = (id) => invoke("delete_snapshot", { id });
 export const getSnapshotPolicy = () => invoke("get_snapshot_policy");
 export const setSnapshotPolicy = (aiMaxPerDoc, aiTtlDays) =>
-  invoke("set_snapshot_policy", { aiMaxPerDoc, aiTtlDays });
+  invoke("set_snapshot_policy", { aiMaxPerDoc, aiTtlDays });

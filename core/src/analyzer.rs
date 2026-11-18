@@ -23,6 +23,7 @@
 //! and a phrase is a sequence of consecutive bigrams.
 
 use crate::volume::is_punct;
+use std::collections::HashSet;
 use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization;
 
@@ -79,6 +80,69 @@ pub fn to_simplified(c: char) -> char {
     let u = c as u32;
     if (T2S_FIRST..=T2S_LAST).contains(&u) {
         t2s_table()[(u - T2S_FIRST) as usize]
+    } else {
+        c
+    }
+}
+
+/// The reverse of [`to_simplified`] for one char (identity for anything else).
+///
+/// The table is many-to-one, so one simplified form can stand for several
+/// traditional ones. Prefer the standard form (a target in `variants.txt`)
+/// over a variant: 说 -> 說, not 説. Otherwise the first pair in `t2s.txt`
+/// wins, which keeps the result stable.
+fn s2t_table() -> &'static Vec<char> {
+    static TABLE: OnceLock<Vec<char>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t: Vec<char> = (T2S_FIRST..=T2S_LAST).map(|u| char::from_u32(u).unwrap_or(' ')).collect();
+        let variant_forms: HashSet<char> = VARIANTS
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| l.chars().next())
+            .collect();
+        // standard forms first, then variant forms that nothing else provides
+        for allow_variants in [false, true] {
+            for line in T2S.lines() {
+                let mut it = line.chars();
+                if let (Some(trad), Some(' '), Some(simp)) = (it.next(), it.next(), it.next()) {
+                    let u = simp as u32;
+                    if trad == simp || !(T2S_FIRST..=T2S_LAST).contains(&u) {
+                        continue;
+                    }
+                    if !allow_variants && variant_forms.contains(&trad) {
+                        continue;
+                    }
+                    let slot = &mut t[(u - T2S_FIRST) as usize];
+                    if *slot == simp {
+                        *slot = trad;
+                    }
+                }
+            }
+        }
+        t
+    })
+}
+
+/// Characters that are already valid in traditional text; `t2s.txt` also
+/// contains rare variant folds for them (彿/髴 -> 佛), which must not be
+/// reversed when making traditional titles.
+const S2T_KEEP: &[char] = &[
+    '佛', '后', '干', '台', '只', '系', '余', '谷', '斗', '松', '胡', '云', '里', '面',
+];
+
+/// Simplified -> traditional for one char (identity for anything else).
+///
+/// This is a character-level approximation: the old Java build used a phrase
+/// converter, while `data/t2s.txt` only has character pairs. Ambiguous
+/// characters (后/後, 干/乾/幹 …) stay as they are.
+#[inline]
+pub fn to_traditional(c: char) -> char {
+    if S2T_KEEP.contains(&c) {
+        return c;
+    }
+    let u = c as u32;
+    if (T2S_FIRST..=T2S_LAST).contains(&u) {
+        s2t_table()[(u - T2S_FIRST) as usize]
     } else {
         c
     }
@@ -372,6 +436,14 @@ mod tests {
         assert_eq!(to_simplified('攝'), '摄');
         assert_eq!(to_simplified('摄'), '摄');
         assert_eq!(to_simplified('佛'), '佛');
+    }
+
+    #[test]
+    fn converts_back_to_the_standard_traditional_form() {
+        assert_eq!(to_traditional('说'), '說');
+        assert_eq!(to_traditional('摄'), '攝');
+        assert_eq!(to_traditional('汉'), '漢');
+        assert_eq!(to_traditional('佛'), '佛');
     }
 
     #[test]

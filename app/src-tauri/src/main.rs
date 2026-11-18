@@ -246,6 +246,7 @@ fn main() {
             commands::dict_search,
             commands::dict_entry,
             commands::dict_lookup,
+            commands::dict_import,
             commands::list_snapshots,
             commands::create_snapshot,
             commands::get_snapshot,

@@ -31,6 +31,13 @@ fn usage() {
   smart-library zim-link <file.zim> <article path> <relative link>
   smart-library zim-catalog <file.zim>
 
+  smart-library dict import <file or directory...> [--out DIR]
+  smart-library dict list   <file.words or directory...>
+  smart-library dict search <query> <file.words or directory...>
+  smart-library dict lookup <word>  <file.words or directory...>
+      import: TXT (【词条】词义), StarDict (.ifo/.idx/.dict), MDict (.mdx/.mdd)
+      the default output directory is app_data/dicts
+
   The index directory defaults to app_data/repos/cbeta/index (it can be deleted and rebuilt).
   search: loose match by default (every bigram in the same volume; a space separates
   keywords); --phrase for an exact phrase (punctuation ignored)."
@@ -96,6 +103,13 @@ fn main() {
             Ok(())
         })();
         if let Err(e) = result { eprintln!("error: {e}"); std::process::exit(1); }
+        return;
+    }
+    if cmd == "dict" {
+        if let Err(e) = run_dict(&args[2..]) {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
         return;
     }
     let bc = match open(&args[2]) {
@@ -215,6 +229,124 @@ const DEFAULT_INDEX: &str = "app_data/repos/cbeta/index";
 
 fn flag_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     args.iter().position(|a| a == name).and_then(|p| args.get(p + 1)).map(|s| s.as_str())
+}
+
+fn run_dict(args: &[String]) -> Result<(), String> {
+    match args.first().map(|s| s.as_str()) {
+        Some("import") => dict_cmd_import(&args[1..]),
+        Some("list") => {
+            let mgr = dict_manager(&args[1..])?;
+            for d in mgr.list() {
+                println!("{}\t{} 条\t{}", d.name, d.size, d.path);
+            }
+            Ok(())
+        }
+        Some("search") => {
+            let query = args.get(1).ok_or("usage: dict search <query> <dictionary...>")?;
+            let mgr = dict_manager(&args[2..])?;
+            let result = mgr.search(query, None, 0, 20);
+            println!(
+                "{} matches in {} ms ({} entries, {})",
+                result.total_found,
+                result.elapsed_ms,
+                result.total_entries,
+                match result.match_type {
+                    smart_library_core::dict::MatchType::TitleEquals => "exact",
+                    smart_library_core::dict::MatchType::TitleContains => "contains",
+                    smart_library_core::dict::MatchType::TitleStartsWith => "starts with",
+                    smart_library_core::dict::MatchType::TitleEndsWith => "ends with",
+                }
+            );
+            for hit in result.items {
+                println!("{}  [{}]", hit.title, hit.dict_name);
+                if let Ok(detail) = mgr.get_entry(&hit.dict_id, hit.entry_id) {
+                    let text: String = detail.text.lines().take(3).collect::<Vec<_>>().join(" / ");
+                    println!("    {}", text.chars().take(160).collect::<String>());
+                }
+            }
+            Ok(())
+        }
+        Some("lookup") => {
+            let word = args.get(1).ok_or("usage: dict lookup <word> <dictionary...>")?;
+            let mgr = dict_manager(&args[2..])?;
+            let details = mgr.lookup_exact(word, None, 20);
+            if details.is_empty() {
+                println!("没有找到「{word}」");
+            }
+            for detail in details {
+                println!("===== {} =====", detail.dict_name);
+                println!("{}", detail.text);
+            }
+            Ok(())
+        }
+        _ => Err("usage: dict import|list|search|lookup ...".to_string()),
+    }
+}
+
+fn dict_manager(sources: &[String]) -> Result<smart_library_core::dict::DictManager, String> {
+    if sources.is_empty() {
+        return Err("缺少词典文件或目录".to_string());
+    }
+    let config = smart_library_core::dict::DictConfig {
+        paths: sources.to_vec(),
+        disabled: Vec::new(),
+    };
+    let mgr = smart_library_core::dict::DictManager::from_config(config);
+    if mgr.list().is_empty() {
+        return Err("没有找到可读取的 .words 词典".to_string());
+    }
+    Ok(mgr)
+}
+
+fn dict_cmd_import(args: &[String]) -> Result<(), String> {
+    let mut sources = Vec::new();
+    let mut out_dir = "app_data/dicts".to_string();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--out" {
+            out_dir = args
+                .get(i + 1)
+                .ok_or("--out 后面需要目录")?
+                .clone();
+            i += 2;
+        } else {
+            sources.push(args[i].clone());
+            i += 1;
+        }
+    }
+    if sources.is_empty() {
+        return Err("usage: dict import <file or directory...> [--out DIR]".to_string());
+    }
+    let out = Path::new(&out_dir);
+    let mut failed = 0usize;
+    for source in sources {
+        match smart_library_core::dict_import::import_path(Path::new(&source), out) {
+            Ok(outcomes) => {
+                for o in outcomes {
+                    println!(
+                        "导入「{}」→ {}（{} 条，{} 个变体，跳过 {}{}）",
+                        o.name,
+                        o.output,
+                        o.entries,
+                        o.variants,
+                        o.skipped,
+                        if o.has_extra { "，含图片" } else { "" }
+                    );
+                    for w in o.warnings {
+                        println!("  注意：{w}");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{source}: {e}");
+                failed += 1;
+            }
+        }
+    }
+    if failed > 0 {
+        return Err(format!("{failed} 个来源没有导入"));
+    }
+    Ok(())
 }
 
 fn cmd_libraries(bc: &Bookcase) {
