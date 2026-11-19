@@ -12,6 +12,14 @@ Smart Library 是一款面向个人的跨平台本地知识库桌面软件，将
 
 [下载安装](https://github.com/Yuanuo/smart-library/releases) · [快速上手](#快速上手) · [反馈问题与建议](https://github.com/Yuanuo/smart-library/issues)
 
+## 界面
+
+| 阅读：经文、校注与多标签工作区（浅色） | 开始：还没有知识库时（深色） |
+| :---: | :---: |
+| <img src="docs/images/app-light.png" alt="阅读界面（浅色）" width="480"> | <img src="docs/images/app-dark.png" alt="起始界面（深色）" width="480"> |
+
+左侧目录树按知识库分组，中间是多标签阅读区，右侧可以展开 AI 助手。主题跟随系统，也可以固定为浅色或深色。
+
 ## 为什么做 Smart Library
 
 很多知识库工具擅长写笔记、连接想法，但当资料增长到整套文集或大量离线文章时，导入、浏览和全文搜索的体验未必跟得上。另一方面，离线资料包虽然内容丰富，阅读、检索和笔记却常常分散在不同工具中。
