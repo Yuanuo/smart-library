@@ -4,7 +4,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import * as api from "./api.js";
   import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import { settings, update, reset, FONTS, WEIGHT_LEVELS, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
+  import { settings, update, reset, FONTS, WEIGHT_LEVELS, SELECT_LOOKUP_MODES, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
   import { SHORTCUT_DEFS, getShortcut, comboParts, eventToCombo, setShortcutRecording } from "./shortcuts.js";
   import DialogHeader from "./DialogHeader.svelte";
 
@@ -634,6 +634,17 @@
                 <option value="browser">在系统浏览器中打开</option>
               </select>
             </div>
+          </div>
+          <div class="card">
+            <div class="row">
+              <span>选字查词</span>
+              <div class="seg" role="group" aria-label="选字查词">
+                {#each SELECT_LOOKUP_MODES as [v, label]}
+                  <button class:on={settings.selectLookup === v} onclick={() => update({ selectLookup: v })}>{label}</button>
+                {/each}
+              </div>
+            </div>
+            <p class="muted hint card-note">只在只读阅读器中生效，笔记、脑图和白板里选中文字不会查词。「按住 Ctrl / Cmd 选字」时，普通选字与复制不受影响；「选中即查」时按住 Ctrl / Cmd 不查。选中超过 10 个字或带标点时也不查。查词结果显示在同一个词典窗口里。</p>
           </div>
 
         {:else if activeTab === "search"}

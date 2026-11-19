@@ -24,6 +24,17 @@ export const WEIGHT_LEVELS = [
   ["bold", "加粗"],
 ];
 
+// Select-to-look-up in the read-only reader. `ctrl` needs Ctrl/Cmd held while
+// selecting (so ordinary selection and copy stay quiet); `auto` looks up every
+// selection, and Ctrl/Cmd suppresses it (selecting under Ctrl usually means
+// copying). `off` turns the feature off. Editors never use it: selecting text
+// there is a constant part of editing.
+export const SELECT_LOOKUP_MODES = [
+  ["ctrl", "按住 Ctrl / Cmd 选字"],
+  ["auto", "选中即查"],
+  ["off", "关闭"],
+];
+
 const WEIGHTS = {
   std: { body: 400, strong: 700, stroke: 0, strongStroke: 0 },
   mid: { body: 500, strong: 800, stroke: 0.012, strongStroke: 0.012 },
@@ -58,6 +69,7 @@ const DEFAULTS = {
   readerFullWidth: false, // stretch the reading column to the visible area
   readerWeight: "std", // std | mid | bold
   readerScript: "orig", // orig: as the text is | simp: shown in simplified characters
+  selectLookup: "ctrl", // reader selection opens the dictionary: ctrl | auto | off
   externalLink: "window", // window | ask | browser
   quickLimit: 200, // title quick search: results per batch
   quickPinyin: false, // title quick search: allow matching by pinyin (full or initials)
@@ -86,6 +98,9 @@ function load() {
     }
     if (!WEIGHTS[raw.readerWeight]) {
       raw.readerWeight = "std";
+    }
+    if (!SELECT_LOOKUP_MODES.some(([v]) => v === raw.selectLookup)) {
+      raw.selectLookup = "ctrl";
     }
     if (!Array.isArray(raw.aiPresets) || !raw.aiPresets.length) {
       raw.aiPresets = [{ ...DEFAULT_AI_PRESET }];

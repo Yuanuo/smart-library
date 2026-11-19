@@ -39,6 +39,7 @@
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
   import { parseSource, sourceUrl } from "./clip.js";
+  import { openDictWindow } from "./dictWindow.js";
   import { settings, update } from "./settings.svelte.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
 
@@ -344,6 +345,44 @@
     }
   }
 
+  // ---- 选字查词 (select-to-look-up). Only this read-only reader takes part:
+  // in the editors (notes, mind maps, whiteboards) selecting text is part of
+  // editing. A dictionary term is short and has no punctuation, so a long
+  // selection or one with punctuation is not looked up.
+  const SELECT_LOOKUP_MAX = 10;
+  const SELECT_LOOKUP_BAD = /[\p{P}\p{S}]/u;
+  let downSelection = null; // the selection when the left button went down
+  let downCtrl = false; // Ctrl/Cmd was held at that moment
+
+  /** Look the selected text up, if the mode and the text allow it. */
+  function selectLookup(e) {
+    const mode = settings.selectLookup;
+    if (mode !== "ctrl" && mode !== "auto") return;
+    const s = window.getSelection();
+    if (!s || s.isCollapsed || !s.rangeCount) return;
+    if (!scroller?.contains(s.anchorNode) || !scroller?.contains(s.focusNode)) return;
+    const held = downCtrl || e.ctrlKey || e.metaKey;
+    if (mode === "ctrl" ? !held : held) return;
+    const text = s.toString().replace(/\s+/g, " ").trim();
+    if (!text || [...text].length > SELECT_LOOKUP_MAX || SELECT_LOOKUP_BAD.test(text)) return;
+    openDictWindow(text, { reuse: true }).catch(() => {});
+  }
+
+  function selectionDown(e) {
+    downCtrl = e.ctrlKey || e.metaKey;
+    downSelection = e.button === 0 ? (window.getSelection()?.toString() ?? "") : null;
+  }
+
+  function selectionUp(e) {
+    if (e.button !== 0 || downSelection == null) return;
+    // a plain click (or one that collapses the old selection) is not a lookup
+    const now = window.getSelection()?.toString() ?? "";
+    const changed = now !== downSelection && now.trim() !== "";
+    if (changed) selectLookup(e);
+    downSelection = null;
+    downCtrl = false;
+  }
+
   function readerMenu(e) {
     if (e.target.closest?.(".tip")) return;
     const s = window.getSelection();
@@ -517,6 +556,7 @@
     </header>
     <!-- svelte-ignore a11y_mouse_events_have_key_events, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))} oncontextmenu={readerMenu} onclick={docClick}
+      onmousedown={selectionDown} onmouseup={selectionUp}
       onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para" || canWrap}
         <article class="doc notes-{noteMode}" class:show-lb={showLb && mode === "para"} class:base-text={baseText}

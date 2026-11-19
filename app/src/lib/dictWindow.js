@@ -1,9 +1,32 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { emitTo } from "@tauri-apps/api/event";
 
 let dictSeq = 0;
+const SELECT_LABEL = "dict-select";
 
-export async function openDictWindow(query = "") {
-  const label = `dict-win-${Date.now()}-${++dictSeq}`;
+/**
+ * Open the dictionary window. `reuse` sends the term to one shared window
+ * (select-to-look-up): selecting word after word updates it in place instead
+ * of piling up a window for every word. Its `dict-query` listener does the
+ * search.
+ */
+export async function openDictWindow(query = "", { reuse = false } = {}) {
+  if (reuse) {
+    // A window that is already closing cannot take the query; then a new one
+    // is opened below.
+    try {
+      const existing = await WebviewWindow.getByLabel(SELECT_LABEL);
+      if (existing) {
+        await emitTo(SELECT_LABEL, "dict-query", { query });
+        const title = query ? `查词典：${query} — Smart Library` : "查词典 — Smart Library";
+        await existing.setTitle(title).catch(() => {});
+        await existing.unminimize().catch(() => {});
+        await existing.setFocus().catch(() => {});
+        return existing;
+      }
+    } catch {}
+  }
+  const label = reuse ? SELECT_LABEL : `dict-win-${Date.now()}-${++dictSeq}`;
   new WebviewWindow(label, {
     url: "/?dict=" + encodeURIComponent(JSON.stringify({ query })),
     title: query ? `查词典：${query} — Smart Library` : "查词典 — Smart Library",
