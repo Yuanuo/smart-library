@@ -21,7 +21,7 @@
   import { isAiReady, toBackendAiConfig } from "./settings.svelte.js";
   import { matchesShortcut } from "./shortcuts.js";
 
-  let { libraries, progress, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
+  let { libraries, progress, titles = {}, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -1152,6 +1152,10 @@
     if (l.error) return { text: "数据不可用", warn: true };
     const p = progress[l.id];
     if (l.building || p) return { text: p ? `建索引 ${Math.floor((100 * p.done) / Math.max(1, p.total))}%` : "建索引…" };
+    // the title list is being built (a big ZIM is read entry by entry);
+    // quick search waits for it, so say so instead of looking stuck
+    const t = titles[l.id];
+    if (t) return { text: t.total ? `加载标题 ${Math.floor((100 * t.done) / t.total)}%` : "加载标题…" };
     if (!l.index_ready) return { text: "未建索引", warn: true, index: true };
     if (l.index_data_version && l.data_version && l.index_data_version !== l.data_version)
       return { text: "索引过期", warn: true, index: true };

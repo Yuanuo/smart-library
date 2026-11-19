@@ -103,6 +103,10 @@ pub struct AppState {
     indexes: RwLock<HashMap<String, Arc<SearchIndex>>>,
     /// title quick search, per library (built on first use)
     titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
+    /// libraries whose title list is being built right now (the window shows
+    /// progress on the library node; a second `prepare_titles` does not start
+    /// the same work again)
+    titles_building: Mutex<HashSet<String>>,
     building: Mutex<HashSet<String>>,
     /// set by `cancel_bind` while the window waits for a long bind (opening a
     /// huge ZIM archive); the operation checks it and gives up
@@ -170,6 +174,7 @@ impl AppState {
             sidecar_seen: Mutex::new(HashMap::new()),
             indexes: RwLock::new(HashMap::new()),
             titles: RwLock::new(HashMap::new()),
+            titles_building: Mutex::new(HashSet::new()),
             building: Mutex::new(HashSet::new()),
             bind_cancel: AtomicBool::new(false),
             db_degraded,
@@ -267,15 +272,58 @@ impl AppState {
     }
 
     fn zim(&self, lib: &Library) -> Result<Arc<Mutex<smart_library_core::zim::Zim>>, String> {
+        self.zim_with(lib, None)
+    }
+
+    /// Open (or reuse) a ZIM. Parsing a big archive takes a while; `progress`
+    /// gets `(done, total)` entries while it happens, and what was parsed is
+    /// kept on disk so the next open does not parse the archive again.
+    fn zim_with(
+        &self,
+        lib: &Library,
+        progress: Option<&dyn Fn(usize, usize)>,
+    ) -> Result<Arc<Mutex<smart_library_core::zim::Zim>>, String> {
         let stamp = zim_version(&lib.source)?;
         if let Some((old, z)) = self.zims.read().unwrap().get(&lib.id) {
             if *old == stamp { return Ok(z.clone()); }
         }
-        let z = Arc::new(Mutex::new(smart_library_core::zim::Zim::open(Path::new(&lib.source))?));
+        let path = Path::new(&lib.source);
+        let cache = std::fs::read(self.zim_cache_path(&lib.id)).ok();
+        let z = match cache.as_deref().and_then(|b| smart_library_core::zim::Zim::restore_cached(path, b, &stamp)) {
+            Some(z) => z,
+            None => {
+                let z = match progress {
+                    Some(cb) => smart_library_core::zim::Zim::open_with(path, |done, total| {
+                        cb(done, total);
+                        true
+                    })?,
+                    None => smart_library_core::zim::Zim::open(path)?,
+                };
+                self.write_zim_cache(&lib.id, &z, &stamp);
+                z
+            }
+        };
+        let z = Arc::new(Mutex::new(z));
         self.zims.write().unwrap().insert(lib.id.clone(), (stamp, z.clone()));
         self.titles.write().unwrap().remove(&lib.id);
         self.indexes.write().unwrap().remove(&lib.id);
         Ok(z)
+    }
+
+    /// Where the parsed entry table of a ZIM is kept (see `Zim::store_entries`).
+    fn zim_cache_path(&self, id: &str) -> PathBuf {
+        self.data_dir.join("repos").join(id).join("zim.bin")
+    }
+
+    fn write_zim_cache(&self, id: &str, z: &smart_library_core::zim::Zim, source: &str) {
+        let path = self.zim_cache_path(id);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+            let tmp = path.with_extension("bin.tmp");
+            if std::fs::write(&tmp, z.store_entries(source)).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+        }
     }
 
     /// The notes of an internal library (kind `notes`).
@@ -318,12 +366,38 @@ impl AppState {
     }
 
     fn titles(&self, lib: &Library) -> Result<Arc<TitleIndex>, String> {
-        if lib.kind == "zim" { self.zim(lib)?; }
+        self.titles_with(lib, None)
+    }
+
+    /// Build (or reuse) the title list; `progress` is passed to the ZIM open,
+    /// which is the slow part of a large archive.
+    fn titles_with(&self, lib: &Library, progress: Option<&dyn Fn(usize, usize)>) -> Result<Arc<TitleIndex>, String> {
         if let Some(t) = self.titles.read().unwrap().get(&lib.id) {
             return Ok(t.clone());
         }
+        // A bookcase tree or a big ZIM takes a while to turn into titles;
+        // both are read again only when the source itself changed.
+        let stamp = match lib.kind.as_str() {
+            "zim" => zim_version(&lib.source).ok().map(|v| format!("zim:{v}")),
+            "cbeta" | "html" => self
+                .bookcase_of(lib)
+                .ok()
+                .map(|bc| format!("{}:{}:{}", lib.kind, bc.data_version(), lib.tree)),
+            _ => None,
+        };
+        if let Some(stamp) = &stamp {
+            if let Some(mut t) = std::fs::read(self.titles_cache_path(&lib.id))
+                .ok()
+                .and_then(|b| TitleIndex::restore(&b, stamp))
+            {
+                t.add_aliases(&self.props.all_aliases(&lib.id).unwrap_or_default());
+                let t = Arc::new(t);
+                self.titles.write().unwrap().insert(lib.id.clone(), t.clone());
+                return Ok(t);
+            }
+        }
         let mut built = if lib.kind == "zim" {
-            TitleIndex::zim(&self.zim(lib)?.lock().unwrap(), &lib.title)
+            TitleIndex::zim(&self.zim_with(lib, progress)?.lock().unwrap(), &lib.title)
         } else if lib.kind == "notes" {
             TitleIndex::notes(&self.notes(lib)?.rows()?, &lib.title)
         } else if lib.kind == "folder" {
@@ -335,10 +409,25 @@ impl AppState {
         } else {
             TitleIndex::cbeta(&*self.bookcase_of(lib)?, &lib.tree)?
         };
+        if let Some(stamp) = &stamp {
+            let path = self.titles_cache_path(&lib.id);
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+                let tmp = path.with_extension("bin.tmp");
+                if std::fs::write(&tmp, built.store(stamp)).is_ok() {
+                    let _ = std::fs::rename(&tmp, &path);
+                }
+            }
+        }
         built.add_aliases(&self.props.all_aliases(&lib.id).unwrap_or_default());
         let t = Arc::new(built);
         self.titles.write().unwrap().insert(lib.id.clone(), t.clone());
         Ok(t)
+    }
+
+    /// The cached title list of a library (see `TitleIndex::store`).
+    fn titles_cache_path(&self, id: &str) -> PathBuf {
+        self.data_dir.join("repos").join(id).join("titles.bin")
     }
 
     /// Where the pictures pasted into the notes of a library are kept.
@@ -592,6 +681,12 @@ fn zim_version(path: &str) -> Result<String, String> {
     Ok(format!("{}-{}-{}-content3", m.len(), modified.as_secs(), modified.subsec_nanos()))
 }
 
+/// Is this ZIM still there and readable? Header only (see `Zim::probe`), so
+/// the window's status call stays fast however large the archive is.
+fn zim_probe_error(path: &str) -> Option<String> {
+    smart_library_core::zim::Zim::probe(Path::new(path)).err()
+}
+
 /// `lz`, then `lz-2` … if taken.
 fn new_id(base: &str, libs: &[Library]) -> String {
     let base: String = base.to_ascii_lowercase().bytes().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'_').map(char::from).take(50).collect();
@@ -701,7 +796,9 @@ fn status_of(state: &AppState) -> StatusDto {
         .into_iter()
         .map(|l| {
             let (error, data_version) = if l.kind == "zim" {
-                (state.zim(&l).err(), zim_version(&l.source).ok())
+                // header and MIME table only: opening a huge archive parses
+                // every entry and would keep the tree blank for seconds
+                (zim_probe_error(&l.source), zim_version(&l.source).ok())
             } else if l.kind == "notes" {
                 match state.notes(&l) {
                     Ok(n) => (None, Some(n.fingerprint())),
@@ -816,6 +913,7 @@ pub async fn add_zim(
     };
     // Keep what was just read: a big archive takes minutes to open, and
     // indexing would open it again from the start otherwise.
+    state.write_zim_cache(&id, &z, &stamp);
     state.zims.write().unwrap().insert(id, (stamp, Arc::new(Mutex::new(z))));
     state.save_registry()?;
     bind_progress(&app, "完成", 1, 1);
@@ -3751,14 +3849,47 @@ pub async fn set_pinyin_text(text: String, state: State<'_, AppState>) -> Result
     Ok(n)
 }
 
+#[derive(Serialize, Clone)]
+struct TitlesProgressDto {
+    lib: String,
+    done: usize,
+    total: usize,
+}
+
+#[derive(Serialize, Clone)]
+struct TitlesDoneDto {
+    lib: String,
+}
+
 /// Build the title lists in the background, so that the first quick search
-/// does not wait.
+/// does not wait. A big ZIM takes a while to open; the library's node in the
+/// tree shows `titles-progress` until `titles-done` arrives.
 #[tauri::command]
 pub async fn prepare_titles(app: AppHandle) -> Result<(), String> {
     std::thread::spawn(move || {
         let state = app.state::<AppState>();
         let libs = state.libraries.read().unwrap().clone();
-        titles_of(&state, &libs);
+        let st: &AppState = &state;
+        std::thread::scope(|s| {
+            for l in &libs {
+                let app = app.clone();
+                s.spawn(move || {
+                    if st.titles.read().unwrap().contains_key(&l.id) {
+                        return;
+                    }
+                    if !st.titles_building.lock().unwrap().insert(l.id.clone()) {
+                        return; // another prepare_titles is building this one
+                    }
+                    let emit = |done: usize, total: usize| {
+                        let _ = app.emit("titles-progress", TitlesProgressDto { lib: l.id.clone(), done, total });
+                    };
+                    emit(0, 0);
+                    let _ = st.titles_with(l, Some(&emit));
+                    st.titles_building.lock().unwrap().remove(&l.id);
+                    let _ = app.emit("titles-done", TitlesDoneDto { lib: l.id.clone() });
+                });
+            }
+        });
     });
     Ok(())
 }

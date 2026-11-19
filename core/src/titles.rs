@@ -599,9 +599,187 @@ impl TitleIndex {
     }
 }
 
+// ------------------------------------------------------------ on-disk cache
+
+/// A built title list is kept on disk, so that a restart does not read the
+/// whole source again: the CBETA 部類 tree has 320 000 entries and takes
+/// ~0.6 s to build, and a large ZIM has to be parsed whole (over a second)
+/// before its titles exist. The image is a compact binary — as JSON the same
+/// list is 40 MB, which would take as long to read as to build.
+///
+/// `source` is whatever identifies the current data (a ZIM's size and
+/// modification time, a bookcase's data version and tree); an image built for
+/// another `source` is ignored.
+const CACHE_MAGIC: &[u8; 4] = b"SLT1";
+
+fn put_str(out: &mut Vec<u8>, s: &str) {
+    out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+    out.extend_from_slice(s.as_bytes());
+}
+
+struct Reader<'a> {
+    b: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn u8(&mut self) -> Option<u8> {
+        let v = *self.b.get(self.at)?;
+        self.at += 1;
+        Some(v)
+    }
+    fn u32(&mut self) -> Option<u32> {
+        let s = self.b.get(self.at..self.at + 4)?;
+        self.at += 4;
+        Some(u32::from_le_bytes(s.try_into().ok()?))
+    }
+    fn string(&mut self) -> Option<String> {
+        let n = self.u32()? as usize;
+        let s = self.b.get(self.at..self.at.checked_add(n)?)?;
+        self.at += n;
+        String::from_utf8(s.to_vec()).ok()
+    }
+    fn opt_string(&mut self) -> Option<Option<String>> {
+        match self.u8()? {
+            0 => Some(None),
+            1 => Some(Some(self.string()?)),
+            _ => None,
+        }
+    }
+}
+
+impl TitleKind {
+    fn code(self) -> u8 {
+        match self {
+            TitleKind::Book => 0,
+            TitleKind::Article => 1,
+            TitleKind::Folder => 2,
+            TitleKind::Chapter => 3,
+            TitleKind::Juan => 4,
+        }
+    }
+    fn from_code(c: u8) -> Option<TitleKind> {
+        Some(match c {
+            0 => TitleKind::Book,
+            1 => TitleKind::Article,
+            2 => TitleKind::Folder,
+            3 => TitleKind::Chapter,
+            4 => TitleKind::Juan,
+            _ => return None,
+        })
+    }
+}
+
+/// A list larger than this is certainly not one of ours (a damaged file).
+const MAX_CACHED_ENTRIES: usize = 20_000_000;
+
+impl TitleIndex {
+    /// The bytes a cache file holds for this list, built from `source`.
+    pub fn store(&self, source: &str) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.entries.len() * 64 + 1024);
+        out.extend_from_slice(CACHE_MAGIC);
+        put_str(&mut out, source);
+        out.extend_from_slice(&(self.groups.len() as u32).to_le_bytes());
+        for g in &self.groups {
+            put_str(&mut out, &g.line);
+            put_str(&mut out, &g.author);
+            match &g.book_id {
+                Some(id) => {
+                    out.push(1);
+                    put_str(&mut out, id);
+                }
+                None => out.push(0),
+            }
+            put_str(&mut out, &g.key);
+        }
+        out.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
+        for e in &self.entries {
+            out.push(e.kind.code());
+            out.extend_from_slice(&e.group.to_le_bytes());
+            put_str(&mut out, &e.title);
+            match &e.path {
+                Some(p) => {
+                    out.push(1);
+                    put_str(&mut out, p);
+                }
+                None => out.push(0),
+            }
+            match &e.lb {
+                Some(lb) => {
+                    out.push(1);
+                    put_str(&mut out, lb);
+                }
+                None => out.push(0),
+            }
+        }
+        for name in &self.names {
+            put_str(&mut out, name);
+        }
+        for extra in &self.extras {
+            put_str(&mut out, extra);
+        }
+        out
+    }
+
+    /// Read back what [`TitleIndex::store`] wrote. `None` when the bytes are
+    /// damaged or were built for another `source` (then the list is rebuilt).
+    pub fn restore(data: &[u8], source: &str) -> Option<TitleIndex> {
+        if data.get(..4)? != CACHE_MAGIC {
+            return None;
+        }
+        let mut r = Reader { b: data, at: 4 };
+        if r.string()? != source {
+            return None;
+        }
+        let group_count = r.u32()? as usize;
+        if group_count > MAX_CACHED_ENTRIES {
+            return None;
+        }
+        let mut groups = Vec::with_capacity(group_count);
+        for _ in 0..group_count {
+            groups.push(TitleGroup {
+                line: r.string()?,
+                author: r.string()?,
+                book_id: r.opt_string()?,
+                key: r.string()?,
+            });
+        }
+        let entry_count = r.u32()? as usize;
+        if entry_count > MAX_CACHED_ENTRIES {
+            return None;
+        }
+        let mut entries = Vec::with_capacity(entry_count);
+        for _ in 0..entry_count {
+            let kind = TitleKind::from_code(r.u8()?)?;
+            let group = r.u32()?;
+            if group as usize >= groups.len() {
+                return None;
+            }
+            entries.push(TitleEntry { kind, group, title: r.string()?, path: r.opt_string()?, lb: r.opt_string()? });
+        }
+        let mut names = Vec::with_capacity(entry_count);
+        for _ in 0..entry_count {
+            names.push(r.string()?);
+        }
+        let mut extras = Vec::with_capacity(entry_count);
+        for _ in 0..entry_count {
+            extras.push(r.string()?);
+        }
+        Some(TitleIndex {
+            entries,
+            groups,
+            names,
+            extras,
+            aliases: HashMap::new(),
+            pinyin: RwLock::new(None),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::source::MemSource;
     use crate::text::encode_utf16le_bom;
 
@@ -731,6 +909,25 @@ mod tests {
         let (n, top) = t.top("乙", 5);
         assert_eq!(n, 2); // the folder, and the file inside it (its folder is context)
         assert_eq!((top[0].kind, top[0].path.as_deref(), t.context(top[0])), (TitleKind::Folder, Some("甲/乙"), "甲"));
+    }
+
+    #[test]
+    fn caches_and_restores_a_title_list() {
+        let bc = fixture();
+        let t = TitleIndex::cbeta(&bc, "bulei").unwrap();
+        let data = t.store("bookcase-1:bulei");
+        let back = TitleIndex::restore(&data, "bookcase-1:bulei").unwrap();
+        assert_eq!(back.len(), t.len());
+        assert_eq!(back.groups.len(), t.groups.len());
+        assert_eq!((back.entries[0].kind, back.entries[0].title.as_str()), (t.entries[0].kind, t.entries[0].title.as_str()));
+        let (n1, top1) = t.top("法華", 5);
+        let (n2, top2) = back.top("法華", 5);
+        assert_eq!(n1, n2);
+        assert_eq!(top1.iter().map(|e| &e.title).collect::<Vec<_>>(), top2.iter().map(|e| &e.title).collect::<Vec<_>>());
+        // another source, or a damaged file: rebuild instead of trusting it
+        assert!(TitleIndex::restore(&data, "bookcase-2:bulei").is_none());
+        assert!(TitleIndex::restore(&data[..data.len() / 2], "bookcase-1:bulei").is_none());
+        assert!(TitleIndex::restore(b"nope", "bookcase-1:bulei").is_none());
     }
 
     #[test]

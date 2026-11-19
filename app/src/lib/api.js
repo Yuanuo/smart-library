@@ -113,6 +113,9 @@ export const onIndexDone = (fn) => listen("index-done", (e) => fn(e.payload));
 /** Reading and binding a library: { label, done, total } (total 0 = unknown). */
 export const onBindProgress = (fn) => listen("bind-progress", (e) => fn(e.payload));
 export const cancelBind = () => invoke("cancel_bind");
+/** A library's title list being built: { lib, done, total } (total 0 = starting). */
+export const onTitlesProgress = (fn) => listen("titles-progress", (e) => fn(e.payload));
+export const onTitlesDone = (fn) => listen("titles-done", (e) => fn(e.payload));
 export const loadWorkspace = () => invoke("load_workspace");
 export const saveWorkspace = (workspace) => invoke("save_workspace", { workspace });
 export const aiStream = (reqId, config, system, messages, reasoningEffort = null, tools = null) =>

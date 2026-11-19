@@ -87,6 +87,7 @@
   });
 
   let progress = $state({}); // lib id -> { done, total }
+  let titlesProgress = $state({}); // lib id -> { done, total }: title list being built
   let binding = $state(null); // null, or { path } for the bind dialog
   let quick = $state(false); // title quick search popup
 
@@ -679,6 +680,8 @@
         api.prepareTitles().catch(() => {});
       }),
     ];
+    const un0a = api.onTitlesProgress((p) => (titlesProgress[p.lib] = p));
+    const un0b = api.onTitlesDone((d) => delete titlesProgress[d.lib]);
     const un1 = api.onIndexProgress((p) => (progress[p.lib] = p));
     const un2 = api.onIndexDone((d) => {
       delete progress[d.lib];
@@ -690,6 +693,8 @@
     const flush = () => workspace.flush();
     window.addEventListener("beforeunload", flush);
     return () => {
+      un0a.then((f) => f());
+      un0b.then((f) => f());
       un1.then((f) => f());
       un2.then((f) => f());
       window.removeEventListener("beforeunload", flush);
@@ -832,6 +837,7 @@
             bind:this={libPanel}
             {libraries}
             {progress}
+            titles={titlesProgress}
             onopen={openNode}
             onbind={() => (binding = { path: "" })}
             onrebind={(l) => (binding = { path: l.source })}

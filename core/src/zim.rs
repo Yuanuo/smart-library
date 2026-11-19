@@ -84,6 +84,48 @@ fn cstring(file: &mut File) -> Result<String, String> {
         }
     }
 }
+// ------------------------------------------------------- entry table cache
+
+/// Image of the parsed entry table (see [`Zim::store_entries`]).
+const ENTRY_CACHE_MAGIC: &[u8; 4] = b"SLZ1";
+
+/// A count beyond this means the cache file is damaged, not a real archive.
+const MAX_CACHED_ENTRIES: usize = 50_000_000;
+
+fn cache_put_str(out: &mut Vec<u8>, s: &str) {
+    out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+    out.extend_from_slice(s.as_bytes());
+}
+
+struct CacheReader<'a> {
+    b: &'a [u8],
+    at: usize,
+}
+
+impl<'a> CacheReader<'a> {
+    fn u8(&mut self) -> Option<u8> {
+        let v = *self.b.get(self.at)?;
+        self.at += 1;
+        Some(v)
+    }
+    fn u32(&mut self) -> Option<u32> {
+        let s = self.b.get(self.at..self.at + 4)?;
+        self.at += 4;
+        Some(u32::from_le_bytes(s.try_into().ok()?))
+    }
+    fn u64(&mut self) -> Option<u64> {
+        let s = self.b.get(self.at..self.at + 8)?;
+        self.at += 8;
+        Some(u64::from_le_bytes(s.try_into().ok()?))
+    }
+    fn string(&mut self) -> Option<String> {
+        let n = self.u32()? as usize;
+        let s = self.b.get(self.at..self.at.checked_add(n)?)?;
+        self.at += n;
+        String::from_utf8(s.to_vec()).ok()
+    }
+}
+
 /// The fixed 80-byte ZIM header, as far as this reader needs it.
 struct Header {
     major: u16,
@@ -177,6 +219,115 @@ impl Zim {
             clusters: head.cluster_count,
             bytes: file_len,
         })
+    }
+
+    /// Open, using a previously stored entry table when it was made for the
+    /// same `source`: a large archive takes a second or more to parse and is
+    /// then read from disk as a compact table (`store_entries`) instead.
+    pub fn open_with_cache(
+        path: &Path,
+        cache: Option<&[u8]>,
+        source: &str,
+        progress: impl FnMut(usize, usize) -> bool,
+    ) -> Result<Self, String> {
+        if let Some(data) = cache {
+            if let Some(z) = Self::restore_cached(path, data, source) {
+                return Ok(z);
+            }
+        }
+        Self::open_with(path, progress)
+    }
+
+    /// The parsed entry table (plus the cluster offsets), for `store_entries`
+    /// to keep on disk. `source` identifies the file (size and modification
+    /// time); a cached table built for another source is ignored.
+    pub fn store_entries(&self, source: &str) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.entries.len() * 48 + 4096);
+        out.extend_from_slice(ENTRY_CACHE_MAGIC);
+        cache_put_str(&mut out, source);
+        out.extend_from_slice(&self.file_len.to_le_bytes());
+        out.extend_from_slice(&(self.clusters.len() as u32).to_le_bytes());
+        for c in &self.clusters {
+            out.extend_from_slice(&c.to_le_bytes());
+        }
+        out.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
+        for e in &self.entries {
+            out.push(e.namespace);
+            match &e.mime {
+                Some(m) => {
+                    out.push(1);
+                    cache_put_str(&mut out, m);
+                }
+                None => out.push(0),
+            }
+            out.extend_from_slice(&e.cluster.to_le_bytes());
+            out.extend_from_slice(&e.blob.to_le_bytes());
+            match e.redirect {
+                Some(r) => {
+                    out.push(1);
+                    out.extend_from_slice(&r.to_le_bytes());
+                }
+                None => out.push(0),
+            }
+            cache_put_str(&mut out, &e.path);
+            cache_put_str(&mut out, &e.title);
+        }
+        out
+    }
+
+    /// Rebuild a `Zim` from `store_entries` bytes, keeping only the file open
+    /// for reading clusters. `None` when the bytes are damaged, belong to
+    /// another `source`, or the file changed size meanwhile.
+    pub fn restore_cached(path: &Path, data: &[u8], source: &str) -> Option<Zim> {
+        if data.get(..4)? != ENTRY_CACHE_MAGIC {
+            return None;
+        }
+        let mut r = CacheReader { b: data, at: 4 };
+        if r.string()? != source {
+            return None;
+        }
+        let file_len = r.u64()?;
+        let file = File::open(path).ok()?;
+        if file.metadata().ok()?.len() != file_len {
+            return None;
+        }
+        let cluster_count = r.u32()? as usize;
+        if cluster_count > MAX_CACHED_ENTRIES {
+            return None;
+        }
+        let mut clusters = Vec::with_capacity(cluster_count.min(1 << 20));
+        for _ in 0..cluster_count {
+            clusters.push(r.u64()?);
+        }
+        if clusters.iter().any(|&p| p >= file_len) {
+            return None;
+        }
+        let count = r.u32()? as usize;
+        if count > MAX_CACHED_ENTRIES {
+            return None;
+        }
+        let mut entries = Vec::with_capacity(count.min(1 << 20));
+        let mut paths = HashMap::with_capacity(count.min(1 << 20));
+        for i in 0..count {
+            let namespace = r.u8()?;
+            let mime = match r.u8()? {
+                0 => None,
+                1 => Some(r.string()?),
+                _ => return None,
+            };
+            let cluster = r.u32()?;
+            let blob = r.u32()?;
+            let redirect = match r.u8()? {
+                0 => None,
+                1 => Some(r.u32()?),
+                _ => return None,
+            };
+            let path = r.string()?;
+            let title = r.string()?;
+            paths.insert(format!("{}/{}", namespace as char, path), i);
+            entries.push(Entry { namespace, path, title, mime, redirect, cluster, blob });
+        }
+        Some(Zim { file, entries, clusters, file_len, cached: None, paths })
     }
 
     /// Open like [`Zim::open`], calling `progress(done, total)` every few
@@ -641,6 +792,23 @@ mod tests {
             assert_eq!(z.resolve_wiki_url("https://zh.wikipedia.org/wiki/正文").unwrap().0, "C/正文");
             // relative links stay in the article's namespace
             assert_eq!(z.resolve_link("C/正文", "redirect").unwrap().0, "C/正文");
+        });
+    }
+
+    #[test]
+    fn caches_and_restores_the_entry_table() {
+        with_file(&fixture(), |p| {
+            let z = Zim::open(p).unwrap();
+            let data = z.store_entries("v1");
+            let mut back = Zim::restore_cached(p, &data, "v1").unwrap();
+            assert_eq!(back.entries.len(), z.entries.len());
+            assert_eq!(back.entries[0].title, z.entries[0].title);
+            assert_eq!(back.entry_index("A/正文"), Some(0));
+            assert!(back.article(0, None).unwrap().text.plain.contains("中文内容"));
+            // another source or a damaged file: read the archive instead
+            assert!(Zim::restore_cached(p, &data, "v2").is_none());
+            assert!(Zim::restore_cached(p, &data[..data.len() / 2], "v1").is_none());
+            assert_eq!(Zim::open_with_cache(p, Some(&data), "v1", |_, _| true).unwrap().entries.len(), 2);
         });
     }
 
