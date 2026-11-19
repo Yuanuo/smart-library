@@ -431,7 +431,7 @@
         return `${idx + 1}. 《${h.title}》${h.book_id ? ` (${h.book_id} ${h.subtitle || ""})` : h.subtitle ? ` (${h.subtitle})` : ""}\n${snips}`;
       });
       blocks.push(
-        `【当前全文检索结果（关键词：「${searchContext.query || "全部"}」，共 ${searchContext.totalVolumes || 0} 卷 / ${searchContext.totalBooks || 0} 部，以下为当前页命中摘录）】\n${lines.join("\n")}`,
+        `【当前全文检索结果（关键词：「${searchContext.query || "全部"}」，共 ${searchContext.totalVolumes || 0} 篇 / ${searchContext.totalBooks || 0} 部，以下为当前页命中摘录）】\n${lines.join("\n")}`,
       );
     }
 

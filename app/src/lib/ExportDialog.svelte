@@ -37,7 +37,7 @@
       out = await save({
         title: "导出到",
         defaultPath: `${safe(name || lib.title)}-${stamp()}.smartlib`,
-        filters: [{ name: "知识库导出包（*.smartlib）", extensions: ["smartlib"] }],
+        filters: [{ name: "知识库数据包（*.smartlib）", extensions: ["smartlib"] }],
       });
     } catch (e) {
       error = String(e);
@@ -64,7 +64,7 @@
     <div class="dialog-content">
 
     <p class="muted small">
-      导出包（<code>.smartlib</code>，内部是 ZIP）：<code>manifest.json</code>（目录树、标题、来源）加上每篇一个 Markdown 文件。
+      数据包（<code>.smartlib</code>，内部是 ZIP）：<code>manifest.json</code>（目录树、标题、来源）加上每篇一个 Markdown 文件。
       {#if lib.kind === "cbeta" || lib.kind === "html"}CBETA 的编注、异读和梵汉对照转成脚注，导入后仍可悬停查看；图片不导出。{/if}
       导入时成为一个可编辑的自建知识库。
     </p>

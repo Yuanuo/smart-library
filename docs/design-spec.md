@@ -247,7 +247,7 @@ M0c 的分面根：`/bulei/部類/子類`（层级）、`/canon/藏经名`、`/k
 - **存放**：单独的 `props.db`（与 `marks.db` 同目录），键是节点 `(知识库, 经号, 路径)`：CBETA 一部经是 `(库, T0262, "")`，HTML 文章和文件是路径，文件夹是相对路径，笔记是编号。**不写进数据源**。每项是「维度 → 值列表」，空列表表示「设为无」。CBETA 目录树里没有经号的文件夹节点（部类等）没有属性。
 - **语义**：设了的维度**替换**数据本身给出的值（窗口里显示「默认」值，可「恢复默认」）；没设的维度保持数据的值；与默认值相同时不保存。**下传**：文件夹、笔记的属性适用于它下面的所有文件和子笔记，下层另有设置时以下层为准。部类、典类用 `/` 分两层（也接受 `：`、`>`）。窗口里输入时提示本库已有的值；时域和典类另有常用值（朝代名、经律论等）可以一点就加。
 - **进索引**：建索引时把属性合并进每个文档的分面（`Overlay::apply`，`IndexDoc.keys` 是节点和它的上级）；保存属性后只对受影响的文档做**增量更新**（`search::update_docs`：按 `path` 删掉旧文档再写入新的，后台进行，完成后 `index-done` 提示）。没有索引时只保存，建立索引时生效。更新中重建索引或失败时可以重建索引。
-- **导出导入**：导出包的每个节点带 `props`（该节点自己设的值），导入成为自建知识库时按新笔记编号恢复，所以属性不会丢。数据本身给出的默认值（如 CBETA 的作译者）不随包导出。删除自建知识库或笔记时，属性一起删除；解除外部知识库的绑定时属性保留，重新绑定后仍在。
+- **导出导入**：数据包的每个节点带 `props`（该节点自己设的值），导入成为自建知识库时按新笔记编号恢复，所以属性不会丢。数据本身给出的默认值（如 CBETA 的作译者）不随包导出。删除自建知识库或笔记时，属性一起删除；解除外部知识库的绑定时属性保留，重新绑定后仍在。
 - 命令行：`search <查询> --scope bulei/阿含部類`（可重复，同维度取「或」）；空查询列出全部。
 
 分面按多个维度并列显示（部类、时域、人物、藏经、典类，见 8.4a），每个维度可以是层级的，父级计数等于各子级之和（旧界面中阿含部类 43 = 36 + 1 + 6）。每条结果显示标题、路径、贡献者，以及若干条带高亮的上下文片段，每条片段附「转到」入口。参考截图见 `docs/reference/`。
@@ -340,7 +340,7 @@ M2 的实现（`core/src/titles.rs`，命令行 `titles`，界面 `app/src/lib/Q
 
 **知识库绑定**
 
-- 程序启动后，在左侧目录树上右键「绑定知识库…」，选择数据源（如 CBETA 的 bookcase.zip）；可以绑定多个，每个绑定成为目录树的一个根节点。
+- 程序启动后，在左侧目录树上右键「新建知识库…」（还没有知识库时，面板中间也有「添加知识库…」按钮），选择数据源（如 CBETA 的 bookcase.zip）；可以绑定多个，每个绑定成为目录树的一个根节点。
 - 绑定 bookcase 时解析 `menu_nav.xhtml`，列出其中的目录树让用户选择：
   - CBETA 自带的三棵树（簡易、進階、部類）**数据是同一份**，只能选一棵，默认 `bulei_nav.xhtml`。**绑定后不能更换**（2026-11 决定）：试用发现换树后，从搜索结果打开经文，目录树会变回原来的树；要换就先解除绑定再重新绑定。
   - 用户自加的树（如 `zhibei` 索达吉堪布全集、`longzang` 乾隆大藏经）数据各不相同，可以同时绑定，各自一个独立索引（规范第 7 节：每个仓库一个索引）。
@@ -640,8 +640,8 @@ app_data/
 **目录树多选（2026-11）**：Ctrl/Cmd + 单击切换选中，Shift + 单击选一段（按屏幕上的显示顺序），普通单击清除多选并打开。多选限于一个知识库；正在阅读的节点（高亮）算作第一个。选中的节点上点右键：从所选节点搜索标题 / 全文（范围是各节点子树的并集，`within.rels` 可以有多个文件夹路径或笔记编号）、复制目录树路径（每行一个）、取消选择。导出所选见导入导出一节。
 
 **知识库的导出与导入（2026-11）**
-- 目的：备份、恢复、分享。所有知识库都能导出，范围是整个知识库、一个节点或多个节点（目录树多选）。入口：知识库右键「导出知识库…」、节点右键「导出此节点…」、多选后「导出所选…」；导入在「＋」菜单「导入知识库（导出包）…」。
-- 导出包是一个 ZIP（`core/src/exchange.rs`）：`manifest.json`（`format: smart-library-export`、`version: 1`、`library {title, kind, source}`、`scope: library|nodes`、`nodes` 树，每个节点 `title`、`file`、`original`、`children`）、`docs/000001.md` 一篇一个 Markdown 文件（文件名是序号，标题里的特殊字符只写在 manifest 里）、`files/<路径>` 外部文件夹的非文本原文件（可选）。文件第一行是 `# 标题`，最后一行是 `来源：…`；导入时把开头的 `# 标题` 去掉。
+- 目的：备份、恢复、分享。所有知识库都能导出，范围是整个知识库、一个节点或多个节点（目录树多选）。入口：知识库右键「导出知识库…」、节点右键「导出此节点…」、多选后「导出所选…」；导入在「＋」菜单「导入知识库…」。
+- 数据包是一个 ZIP（`core/src/exchange.rs`）：`manifest.json`（`format: smart-library-export`、`version: 1`、`library {title, kind, source}`、`scope: library|nodes`、`nodes` 树，每个节点 `title`、`file`、`original`、`children`）、`docs/000001.md` 一篇一个 Markdown 文件（文件名是序号，标题里的特殊字符只写在 manifest 里）、`files/<路径>` 外部文件夹的非文本原文件（可选）。文件第一行是 `# 标题`，最后一行是 `来源：…`；导入时把开头的 `# 标题` 去掉。
 - 各类库的内容：CBETA 按卷，多卷的经是一个有「卷」子节点的节点，大部头的分部（`start`）按卷范围分开；HTML 文章、外部文件夹的文件先渲染成 HTML 再转 Markdown（`html_to_md`），非文本文件用媒体信息文字；自建笔记原样导出。目录树的层级和标题保留。
 - 编注怎样保留（Markdown 没有对应物）：CBETA 编注、版本异读（`app`）、梵汉对照（`tt`）、HTML 文章的脚注都变成 Markdown 脚注 `[^n]` + `[^n]: 文字`；笔记阅读器认得脚注（`markdown.rs`），渲染成悬停的「（注）」。图片没有导出（写作 `[图]`），着色等显示信息丢失。
 - **旧版数据包（Java 版智悲研藏，2026-11）**：没有 `manifest.json` 的 `.smartlib` 当作旧包导入（`Package::open` 里 `legacy_manifest` 由目录层级合成 manifest，`legacy: true`、`scope: library`）。库名取文件名（去掉「数据包-」前缀和 `-YYYYMMDD_HHMMSS` 后缀；若 ZIP 顶层只有一个文件夹，用文件夹名并以它为根）。目录 = 有子节点的笔记，节点顺序是 ZIP 里的出现顺序。`.html` → Markdown 笔记（`convert(html, legacy=true)`）：`<img src="data:…;base64,…">` 解码存为附件并写作 `![](attach:名)`（同内容只存一份）；`<a data-note="…">`（或 `note="…"`）→ 脚注 `[^n]`，旧包里只有 `@1` 这样的编号而没有正文，写作「标注 @1」；`<a href="http…">` → 链接；元信息（html 的 `<meta>`、kmind 顶层的 `metadata`）→ 节点属性：`library`→藏经，`catalog`（有 `album` 时写成 `catalog/album`）→部类，`period`→时域，`author`→人物，其余（`id`、`searchable`、`priority` 等）丢弃；文件里的 `<h1>` 与文件名相同时并入标题。`.kmind`（KityMinder）→ 脑图笔记（`kmind_to_mindmap`）：`text`→`topic`，`resource`→`tags`，`hyperlink`→`hyperLink`，`priority/progress`→标签，`note`→第一个子节点「注：…」，base64 图片→附件，`template: right` → 一级分支全放右侧；读不了的文件变成带原因的空笔记。`.md` / `.txt` 原样成笔记；其他文件跳过。整个导入放在一个 SQLite 事务里（9000 多个脑图约 1 秒）。测试数据：`数据包-慧灯文集`（347 篇，40 张图）、`数据包-经目信息`（9203 个节点）。
@@ -649,7 +649,7 @@ app_data/
 - 进度事件 `export-progress` {lib, done, total}；导出在后台任务里同步进行，整个 CBETA 很大（几万卷），建议只导出需要的部分。
 
 **修订（2026-11，导出导入）**
-- 导出包的后缀是 `.smartlib`（内容仍是 ZIP，可以改名为 .zip 用解压软件打开）；导入时也接受 `.zip`，是否是本程序的包看 `manifest.json` 的 `format`。默认文件名：`名称-yyyyMMddHH`，名称是导出的单个节点、多个节点的共同上级节点（上级不同则用知识库名），或整个知识库的名称，日期时间作为版本。
+- 数据包的后缀是 `.smartlib`（内容仍是 ZIP，可以改名为 .zip 用解压软件打开）；导入时也接受 `.zip`，是否是本程序的包看 `manifest.json` 的 `format`。默认文件名：`名称-yyyyMMddHH`，名称是导出的单个节点、多个节点的共同上级节点（上级不同则用知识库名），或整个知识库的名称，日期时间作为版本。
 - 右键菜单里导入、导出放在同一组（上下有分隔线）。自建知识库和它的笔记节点上有「导入到这里」：包里的内容成为该位置的子节点（整库的包先包一层以库名命名的笔记，导出的几个节点则原样放入）；「＋」菜单的导入仍是新建一个知识库。
 - 窗口标题和「只看当前文档」跟随激活的标签：dockview 的 `onDidActivePanelChange` 给的是 `{ panel, origin }`，之前把它当成了面板。
 
@@ -673,7 +673,7 @@ app_data/
 
 **脑图插件（2026-11）**
 - `@mind-elixir/node-menu`（5.x，与 mind-elixir 6 兼容）：选中节点右侧的样式面板（字号、粗体、文字和背景颜色、标签、图标、链接、备注）；`mind.locale = "zh_CN"` 后是中文（「Memo」仍是英文）。
-- `@mind-elixir/node-menu-neo` 没有装：它是按 mind-elixir 3.x 写的（监听旧事件 `selectNode`），在 6.x 里点节点没有任何面板。「插入图片」自己做：右键菜单「插入图片…」或在脑图里粘贴图片，图片存成笔记附件，节点的 `image.url` 是 `attach:<名>`，由 `imageProxy` 换成附件地址；导出包按 `attach:` 带上图片（`attach::refs` 在任何文本里找）。
+- `@mind-elixir/node-menu-neo` 没有装：它是按 mind-elixir 3.x 写的（监听旧事件 `selectNode`），在 6.x 里点节点没有任何面板。「插入图片」自己做：右键菜单「插入图片…」或在脑图里粘贴图片，图片存成笔记附件，节点的 `image.url` 是 `attach:<名>`，由 `imageProxy` 换成附件地址；数据包按 `attach:` 带上图片（`attach::refs` 在任何文本里找）。
 - `@mind-elixir/export-html`、`@mind-elixir/export-xmind`：用它们的 `data2Html`、`data2Xmind`（peer 依赖写的是 2.x/3.x，实测对 6.x 的数据可用）。脑图工具栏「导出 ▾」：网页（HTML，图片转成内嵌数据；生成的网页还要从 CDN 载入 MindElixirLite，所以打开它需要网络）、XMind、Markdown 大纲。文件由后端 `save_bytes` 写到保存对话框选的路径（WebView 自带的下载不可靠）。
 
 **笔记不再分阅读和编辑（2026-11）**
@@ -686,7 +686,7 @@ app_data/
 - 新建：去掉「新建笔记」对话框（`NoteDialog` 已删）。「＋」菜单、知识库右键、笔记节点右键都直接列出「新建笔记 / 新建脑图 / 新建白板」，点一下就建好并打开，名字自动取「笔记 n」「脑图 n」「白板 n」（n 取同级里没用过的最小数字，`NotesStore::free_title`），之后随时重命名。右键节点时建在该节点下面（菜单上不再写「子」，因为没有「同级」入口）；从「＋」建时放在目录树里选中的笔记下面，没有选中则放进第一个非日记的自建知识库；一个自建知识库都没有时自动建「我的笔记」。后端 `create_note_at(default_lib, position, title?, kind)`，`kind` 是 `md` / `mindmap` / `whiteboard`，`title` 可省。
 - 日记：自建知识库「我的日记」（`diary::LIBRARY`），第一次用到时自动建。日记就是普通 Markdown 笔记，位置按日期：`2026年` › `11月` › `2026-11-08`（`diary::path_of`）。日期由界面取本机本地日期传给后端（`diary_today(date)`），后端没有时钟。三种方式用到今天的日记：「＋」菜单「今日日记」或 Ctrl+J（`shortcuts.js` 的 `diary`；是窗口内快捷键，不是系统级全局快捷键）；展开目录树里当前月的节点时先确保今天这篇存在；阅读器和笔记编辑器选中文字的右键菜单「发送到今日记」，内容前加一行加粗的时间 `**HH:MM**`，再接摘录（和「加入笔记」同一种带来源链接的引文），今天的日记正在编辑时追加到编辑框里。
 - 白板：`content_type = whiteboard`，内容是 Excalidraw 的场景 JSON（`serializeAsJSON` 生成，图片作为 `files` 内嵌）。`WhiteboardView.svelte` 把 React 组件挂到普通元素里（`react`、`react-dom`、`@excalidraw/excalidraw` 0.18，第一次打开白板时才载入），只在图形真的变了时（元素 `id:version` 或图片集合变化；平移、选中不算）约 1 秒后自动保存，Ctrl+S 立即保存，关闭标签补存。字体不走 CDN：`vite.config.js` 的插件把包里的 `fonts` 目录开发时放在 `/excalidraw-assets/fonts/`，构建时复制到 `dist/`，`EXCALIDRAW_ASSET_PATH` 指向那里（离线可用，安装包大约增加 14 MB，需要时可以只留常用字体）。
-- 检索与导出：建索引时白板里所有文字元素按从上到下、从左到右连成文字（`whiteboard::text`）；导出包里和脑图一样两个文件，`docs/N.md` 是文字列表，`docs/N.wb.json` 是场景，manifest 节点用 `whiteboard` 字段指向它。白板不能追加 Markdown，也不出现在「加入笔记」的追加目标里。
+- 检索与导出：建索引时白板里所有文字元素按从上到下、从左到右连成文字（`whiteboard::text`）；数据包里和脑图一样两个文件，`docs/N.md` 是文字列表，`docs/N.wb.json` 是场景，manifest 节点用 `whiteboard` 字段指向它。白板不能追加 Markdown，也不出现在「加入笔记」的追加目标里。
 - 安装依赖时 `npm install` 会因为 `@mind-elixir/export-html` 的 peer 依赖写的是 mind-elixir 3.x 而报冲突（原有问题），要加 `--legacy-peer-deps`。
 
 

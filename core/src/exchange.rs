@@ -419,7 +419,7 @@ pub struct PackageWriter {
 }
 
 fn zerr(e: impl std::fmt::Display) -> String {
-    format!("导出包出错：{}", e)
+    format!("数据包出错：{}", e)
 }
 
 impl PackageWriter {
@@ -587,7 +587,7 @@ pub struct Package {
 impl Package {
     pub fn open(path: &Path) -> Result<Package, String> {
         let f = std::fs::File::open(path).map_err(|e| format!("{}: {}", path.display(), e))?;
-        let mut archive = zip::ZipArchive::new(f).map_err(|_| "这不是知识库导出包（不是 ZIP 文件）".to_string())?;
+        let mut archive = zip::ZipArchive::new(f).map_err(|_| "这不是知识库数据包（不是 ZIP 文件）".to_string())?;
         let text = match archive.by_name("manifest.json") {
             Ok(mut m) => {
                 let mut s = String::new();
@@ -601,14 +601,14 @@ impl Package {
             // the old (Java) program: no manifest, only folders and files
             None => {
                 let names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
-                legacy_manifest(&names, &package_title(path)).ok_or("这不是知识库导出包（没有 manifest.json，也没有旧版的 html / kmind 文件）")?
+                legacy_manifest(&names, &package_title(path)).ok_or("这不是知识库数据包（没有 manifest.json，也没有旧版的 html / kmind 文件）")?
             }
         };
         if manifest["format"] != FORMAT {
-            return Err("这不是知识库导出包".into());
+            return Err("这不是知识库数据包".into());
         }
         if manifest["version"].as_u64().unwrap_or(0) > 1 {
-            return Err("导出包的版本比这个程序新，请升级程序".into());
+            return Err("数据包的版本比这个程序新，请升级程序".into());
         }
         Ok(Package { archive, manifest })
     }
@@ -623,14 +623,14 @@ impl Package {
     }
 
     pub fn read_bytes(&mut self, name: &str) -> Result<Vec<u8>, String> {
-        let mut f = self.archive.by_name(name).map_err(|_| format!("导出包里缺少 {}", name))?;
+        let mut f = self.archive.by_name(name).map_err(|_| format!("数据包里缺少 {}", name))?;
         let mut v = Vec::new();
         f.read_to_end(&mut v).map_err(zerr)?;
         Ok(v)
     }
 
     pub fn read_text(&mut self, name: &str) -> Result<String, String> {
-        let mut f = self.archive.by_name(name).map_err(|_| format!("导出包里缺少 {}", name))?;
+        let mut f = self.archive.by_name(name).map_err(|_| format!("数据包里缺少 {}", name))?;
         let mut s = String::new();
         f.read_to_string(&mut s).map_err(zerr)?;
         Ok(s)

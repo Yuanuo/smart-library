@@ -518,12 +518,12 @@
           </select>
         {/if}
         {#if onaction}
-          <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title="为本卷（本篇）加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>
+          <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title="为当前文档加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>
           <button type="button" class="tool-btn" onclick={() => onaction({ type: "props", vol })} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>
         {/if}
         {@render extra?.()}
         <span class="grow"></span>
-        {#if vol.hits}<span class="muted">本卷命中 {vol.hits} 处</span>{/if}
+        {#if vol.hits}<span class="muted">命中 {vol.hits} 处</span>{/if}
         <div class="seg" role="group" aria-label="版式">
           <button class:on={mode === "para"} onclick={() => (mode = "para")}>段落</button>
           <button class:on={mode === "lines"} onclick={() => (mode = "lines")}>折行</button>

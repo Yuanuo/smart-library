@@ -236,7 +236,7 @@
       placeholder="全文搜索（空格分隔关键词；不输入直接搜索，可浏览全部）" aria-label="全文搜索" />
     <span class="seg" role="radiogroup" aria-label="匹配方式">
       <button type="button" class:on={!s.phrase} onclick={() => setMode(false)} role="radio" aria-checked={!s.phrase}
-        title="每个二字组都出现在同一卷即可，不要求连在一起">模糊</button>
+        title="每个二字组都出现在同一篇文档即可，不要求连在一起">模糊</button>
       <button type="button" class:on={s.phrase} onclick={() => setMode(true)} role="radio" aria-checked={s.phrase}
         title="整句连续出现（忽略标点）">精确</button>
     </span>
@@ -326,7 +326,7 @@
           </p>
         {:else}
           <div class="summary muted">
-            {browsing ? "全部 " : ""}共 {result.total_volumes} 卷，{result.total_books} 部 ·{result.millis.toFixed(0)} ms
+            {browsing ? "全部 " : ""}共 {result.total_volumes} 篇，{result.total_books} 部 ·{result.millis.toFixed(0)} ms
             {#if result.pages > 1}· 第 {result.page} / {result.pages} 页{/if}
           </div>
           {#each result.hits as h}
@@ -343,7 +343,7 @@
               {/each}
             </article>
           {:else}
-            <p class="muted">没有找到。模糊匹配要求每个二字组都出现在同一卷；可以用空格分开关键词，或去掉一些过滤。</p>
+            <p class="muted">没有找到。模糊匹配要求每个二字组都出现在同一篇文档；可以用空格分开关键词，或去掉一些过滤。</p>
           {/each}
           {#if result.pages > 1}
             <nav class="pager">

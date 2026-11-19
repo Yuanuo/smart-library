@@ -185,11 +185,11 @@
           {#if result}<span class="count">{t.id === null ? allCount : (counts[t.id] ?? 0)}</span>{/if}
         </button>
       {/each}
-      <span class="help" title={"输入经名、经号、品名、作译者；空格分隔多个关键词，简繁通用。\n输入 # 转到 CBETA 的经、卷或行（如 #T0001_001、#T01n0001_p0001a01），也可以直接粘贴 CBETA 的引用文字。\n↑↓ 选择，Enter 打开，Tab 切换知识库，Esc 关闭。"}>?</span>
+      <span class="help" title={"输入标题、编号、作者或译者；空格分隔多个关键词，简繁通用。\n输入 # 转到 CBETA 的经、卷或行（如 #T0001_001、#T01n0001_p0001a01），也可以直接粘贴 CBETA 的引用文字。\n↑↓ 选择，Enter 打开，Tab 切换知识库，Esc 关闭。"}>?</span>
     </div>
     <div class="field">
       <input bind:this={input} bind:value={query} oninput={() => run()} onpaste={paste} onkeydown={keydown}
-        placeholder="经名、经号、品名、作译者（空格分隔关键词）" aria-label="快搜" spellcheck="false" />
+        placeholder="标题、编号、作者或译者（空格分隔关键词）" aria-label="快搜" spellcheck="false" />
       <span class="stat">
         {#if loading && !result}准备标题…
         {:else if result}{result.total > result.items.length ? `显示 ${result.items.length} / ${result.total} 项` : `${result.total} 项`}，{result.millis.toFixed(0)} ms

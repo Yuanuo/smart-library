@@ -203,8 +203,8 @@
     try {
       const path = await openFile({
         multiple: false,
-        title: "选择导出包",
-        filters: [{ name: "知识库导出包（*.smartlib）", extensions: ["smartlib"] }, { name: "ZIP", extensions: ["zip"] }],
+        title: "选择数据包",
+        filters: [{ name: "知识库数据包（*.smartlib）", extensions: ["smartlib"] }, { name: "ZIP", extensions: ["zip"] }],
       });
       if (!path) return;
       notice = "正在导入…";

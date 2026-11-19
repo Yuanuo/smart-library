@@ -377,7 +377,7 @@ function watermark() {
   const element = document.createElement("div");
   element.className = "dock-watermark";
   element.innerHTML =
-    "<p>从左侧目录打开一部经或一篇文章，或在上方搜索。</p>" +
+    "<p>从左侧目录打开一篇文章，或按 Ctrl+H 全文搜索、双击 Shift 标题快搜。</p>" +
     "<p class='muted'>标签可拖到边缘分栏停靠；右键标签可分栏、浮动或在新窗口打开。</p>";
   return { element, init() {} };
 }

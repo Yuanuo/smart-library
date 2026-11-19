@@ -87,7 +87,7 @@
 <div class="popout">
   <div class="bar">
     <span class="title" title={tip}>{title}</span>
-    <button onclick={dock} title="把这一卷放回主窗口的标签页">停靠回主窗口</button>
+    <button onclick={dock} title="把当前文档放回主窗口的标签页">停靠回主窗口</button>
   </div>
   <div class="body">
     <ReaderPanel

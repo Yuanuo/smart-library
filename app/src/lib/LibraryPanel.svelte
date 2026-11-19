@@ -941,7 +941,7 @@
       { label: "今日日记（Ctrl+J）", action: openDiary },
       "separator",
       { label: "新建知识库…", action: onbind },
-      { label: "导入知识库（导出包）…", action: () => onimport(null) },
+      { label: "导入知识库…", action: () => onimport(null) },
     ];
   }
 
@@ -1294,9 +1294,9 @@
     </div>
   {:else}
     <div class="empty">
-      <p>还没有绑定知识库。</p>
-      <button class="primary" onclick={onbind}>绑定知识库…</button>
-      <p class="muted small">也可以在这里点右键绑定。</p>
+      <p>还没有知识库。</p>
+      <button class="primary" onclick={onbind}>添加知识库…</button>
+      <p class="muted small">也可以在这里点右键添加。</p>
     </div>
   {/each}
 </div>
