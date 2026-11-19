@@ -27,6 +27,21 @@ use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+// What the format readers hand back. Spelled out as aliases: the tuples are
+// long enough that clippy's `type_complexity` (denied in CI) flags them.
+
+/// `(dictionary name, entries as `(词条, 词义)`, skipped lines)` of a TXT file.
+type TxtDict = (String, Vec<(String, String)>, usize);
+
+/// `(name, entries, resource files, skipped entries)` of a StarDict dictionary.
+type StarDictDict = (String, Vec<(String, String)>, Vec<(String, Vec<u8>)>, usize);
+
+/// `(name, entries, resource files, warnings, skipped entries)` of an MDict dictionary.
+type MdxDict = (String, Vec<(String, String)>, Vec<(String, Vec<u8>)>, Vec<String>, usize);
+
+/// One decoded dictionary entry: its text and the files (pictures) it refers to.
+type DecodedEntry = (String, Vec<(String, Vec<u8>)>);
+
 /// Result of importing one dictionary.
 #[derive(Debug, Clone)]
 pub struct ImportOutcome {
@@ -435,7 +450,7 @@ fn read_text_file(path: &Path) -> Result<String, String> {
     }
 }
 
-fn read_txt(path: &Path) -> Result<(String, Vec<(String, String)>, usize), String> {
+fn read_txt(path: &Path) -> Result<TxtDict, String> {
     let text = read_text_file(path)?;
     let name = file_stem(path).unwrap_or_else(|| "未命名词典".to_string());
     let mut entries = Vec::new();
@@ -482,10 +497,7 @@ fn clean_title(raw: &str) -> String {
 
 // ---------------------------------------------------------------- StarDict
 
-fn read_stardict(
-    path: &Path,
-    warnings: &mut Vec<String>,
-) -> Result<(String, Vec<(String, String)>, Vec<(String, Vec<u8>)>, usize), String> {
+fn read_stardict(path: &Path, warnings: &mut Vec<String>) -> Result<StarDictDict, String> {
     let base = star_dict_base(path)?;
     let (ifo, idx, dict) = locate_stardict(&base).ok_or_else(|| {
         format!(
@@ -638,11 +650,7 @@ fn read_maybe_gz(path: &Path) -> Result<Vec<u8>, String> {
     }
 }
 
-fn decode_stardict_data(
-    data: &[u8],
-    sametype: Option<&[u8]>,
-    entry_no: usize,
-) -> Result<(String, Vec<(String, Vec<u8>)>), String> {
+fn decode_stardict_data(data: &[u8], sametype: Option<&[u8]>, entry_no: usize) -> Result<DecodedEntry, String> {
     let mut text = String::new();
     let mut resources = Vec::new();
     if let Some(types) = sametype {
@@ -882,8 +890,10 @@ impl MdxFile {
         let header_bytes = &mmap[4..4 + header_size];
         let header = String::from_utf16_lossy(
             &header_bytes
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes(*c))
                 .collect::<Vec<_>>(),
         );
         let attrs = parse_header_attrs(&header);
@@ -1188,18 +1198,7 @@ impl MdxFile {
     }
 }
 
-fn read_mdx(
-    path: &Path,
-) -> Result<
-    (
-        String,
-        Vec<(String, String)>,
-        Vec<(String, Vec<u8>)>,
-        Vec<String>,
-        usize,
-    ),
-    String,
-> {
+fn read_mdx(path: &Path) -> Result<MdxDict, String> {
     let mut reader = MdxFile::open(path)?;
     let entries = reader.entries()?;
     let mut index_map: HashMap<String, usize> = HashMap::with_capacity(entries.len() * 2);
@@ -1262,7 +1261,7 @@ fn read_mdx(
 
 fn clean_mdx_title(raw: &str) -> String {
     let mut title = raw.trim().to_string();
-    title = title.replace('\u{FEFF}', "").replace('\u{0090}', "");
+    title = title.replace(['\u{FEFF}', '\u{0090}'], "");
     for ch in ['[', ']', '【', '】', '“', '”', '"', '\'', '‘', '’'] {
         title = title.replace(ch, "");
     }
@@ -1591,21 +1590,18 @@ fn markup_to_text(input: &str) -> String {
         out.push_str(&decode_entities(&rest[..lt]));
         let after = &rest[lt..];
         let Some(gt) = after.find('>') else {
-            out.push_str(&after);
+            out.push_str(after);
             return out;
         };
         let tag = &after[1..gt].trim().to_ascii_lowercase();
-        if tag.starts_with('/')
-            && matches!(
-                tag.trim_start_matches('/')
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or(""),
-                "br" | "p" | "div" | "tr" | "li" | "def" | "ex" | "k"
-            )
-        {
-            out.push('\n');
-        } else if tag == "br" {
+        let closing = tag.starts_with('/');
+        let name = tag.trim_start_matches('/').split_whitespace().next().unwrap_or("");
+        let line_break = if closing {
+            matches!(name, "br" | "p" | "div" | "tr" | "li" | "def" | "ex" | "k")
+        } else {
+            name == "br"
+        };
+        if line_break {
             out.push('\n');
         }
         rest = &after[gt + 1..];
@@ -1722,7 +1718,7 @@ fn ripemd128(message: &[u8]) -> [u8; 16] {
     }
     msg.extend_from_slice(&bit_len.to_le_bytes());
     let mut h = [0x6745_2301u32, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476];
-    for chunk in msg.chunks_exact(64) {
+    for chunk in msg.as_chunks::<64>().0 {
         let mut x = [0u32; 16];
         for (i, w) in x.iter_mut().enumerate() {
             *w = u32::from_le_bytes(chunk[i * 4..i * 4 + 4].try_into().unwrap());
@@ -2034,8 +2030,10 @@ mod tests {
         let hs = be_u32(&data, 0).unwrap() as usize;
         let header = String::from_utf16_lossy(
             &data[4..4 + hs]
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes(*c))
                 .collect::<Vec<_>>(),
         );
         let attrs = parse_header_attrs(&header);

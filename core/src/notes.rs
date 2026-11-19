@@ -115,7 +115,17 @@ impl DeletedTree {
         }
         count(&self.root)
     }
+
+    /// A deleted tree always holds its root, so this is never true; it exists
+    /// because clippy asks for it next to `len`.
+    pub fn is_empty(&self) -> bool {
+        false
+    }
 }
+
+/// What restoring a deleted tree gives back: the new root id, the `(old, new)`
+/// id of every note it made, and the parent titles it had to create.
+type Restored = (i64, Vec<(i64, i64)>, Vec<String>);
 
 /// A note with the titles of the folders above it.
 #[derive(Debug, Clone)]
@@ -526,7 +536,7 @@ impl NotesStore {
     /// diary day and the marks of that note find it; a taken id gets a new one.
     /// Returns the new root id, `(old id, new id)` for every note made, and the
     /// parent titles newly made.
-    pub fn restore_deleted(&self, tree: &DeletedTree) -> Result<(i64, Vec<(i64, i64)>, Vec<String>), String> {
+    pub fn restore_deleted(&self, tree: &DeletedTree) -> Result<Restored, String> {
         // all notes or none: a half-made subtree would be hard to tell apart
         self.begin()?;
         match self.restore_deleted_inner(tree) {
@@ -544,7 +554,7 @@ impl NotesStore {
         }
     }
 
-    fn restore_deleted_inner(&self, tree: &DeletedTree) -> Result<(i64, Vec<(i64, i64)>, Vec<String>), String> {
+    fn restore_deleted_inner(&self, tree: &DeletedTree) -> Result<Restored, String> {
         let (parent, created) = if tree.path.is_empty() {
             // an entry of the first version: only ids, so the nearest one still there
             (self.deleted_parent(tree)?, Vec::new())
