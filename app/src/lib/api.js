@@ -24,6 +24,10 @@ export const moveFolderNode = (lib, rel, parent) => invoke("move_folder_node", {
 export const folderDirs = (lib) => invoke("folder_dirs", { lib });
 /** Delete a folder with everything in it (to the trash inside .smart-library); resolves to the number of documents in it. */
 export const deleteFolderDir = (lib, rel) => invoke("delete_folder_dir", { lib, rel });
+/** Deleted files and folders of a read-write folder library: `{ entry, rel, kind, time }`, newest first. */
+export const trashList = (lib) => invoke("trash_list", { lib });
+/** Put a trashed file or folder back at its old place; resolves to `{ rel, pictures }`. */
+export const trashRestore = (lib, entry) => invoke("trash_restore", { lib, entry });
 /** Rejects with the reason when a path of folders (`a/b`) has a bad name in it. */
 export const checkFilePath = (path) => invoke("check_file_path", { path });
 /** Read again the file that travels with a read-write folder when it was changed outside; resolves to true when it was. */
@@ -200,6 +204,12 @@ export const createSnapshot = (lib, docId, kind = "manual", label = null, conten
 export const getSnapshot = (id) => invoke("get_snapshot", { id });
 export const restoreSnapshot = (id) => invoke("restore_snapshot", { id });
 export const deleteSnapshot = (id) => invoke("delete_snapshot", { id });
+/** Deleted notes of an internal library (its trash): `{ id, title, count, created_at, size_bytes }`. */
+export const listDeletedNotes = (lib) => invoke("list_deleted_notes", { lib });
+/** Put a deleted note and its subtree back; resolves to `{ lib, id, chain, title, count }`. */
+export const restoreDeletedNote = (lib, id) => invoke("restore_deleted_note", { lib, id });
+/** Throw away every deleted note of a library for good. */
+export const purgeDeletedNotes = (lib) => invoke("purge_deleted_notes", { lib });
 export const getSnapshotPolicy = () => invoke("get_snapshot_policy");
 export const setSnapshotPolicy = (aiMaxPerDoc, aiTtlDays) =>
   invoke("set_snapshot_policy", { aiMaxPerDoc, aiTtlDays });

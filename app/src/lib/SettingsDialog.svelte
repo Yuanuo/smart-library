@@ -997,7 +997,7 @@
               <div class="row-plain">
                 <button onclick={clean} disabled={cleaning}>{cleaning ? "清理中…" : "清理缓存"}</button>
               </div>
-              <p class="muted hint">清空本地文件夹（读写模式）里的回收站 .smart-library/trash，并删除没有笔记引用的图片（内部知识库也一样）。</p>
+              <p class="muted hint">清空本地文件夹（读写模式）里的回收站 .smart-library/trash，并删除没有笔记引用的图片（内部知识库也一样；被笔记回收站里的笔记引用的图片会保留）。要找回删除的文件或笔记，先在目录树右键知识库 →「回收站…」恢复。</p>
               {#if cleanMsg}<p class="hint" style="white-space: pre-line">{cleanMsg}</p>{/if}
             </div>
           </div>

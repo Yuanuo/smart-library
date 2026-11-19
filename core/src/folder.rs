@@ -224,6 +224,33 @@ pub struct FolderLibrary {
 /// What the program keeps inside a library folder itself (hidden from the tree and the index).
 pub const SIDECAR_DIR: &str = ".smart-library";
 
+/// The file next to `trash/` that remembers where each trashed entry came from,
+/// so it can be put back. It is only an index: a missing or damaged file loses
+/// the original folders, not the trashed data, which is still on disk.
+const TRASH_FILE: &str = "trash.json";
+
+/// One entry of a folder library's trash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrashItem {
+    /// the file or folder name inside `.smart-library/trash`
+    pub entry: String,
+    /// where it was before it was deleted (relative to the library root)
+    pub rel: String,
+    /// `file`, `dir` or `picture` (pictures are restored with the notes that use them)
+    pub kind: String,
+    /// when it was deleted (UNIX seconds; 0: an entry of an earlier version)
+    pub time: i64,
+}
+
+/// What [`FolderLibrary::restore`] put back.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RestoreReport {
+    /// the path it was restored to (the original one, or a free name next to it)
+    pub rel: String,
+    /// pictures that came back with it
+    pub pictures: usize,
+}
+
 impl FolderLibrary {
     pub fn open(root: &Path, filter: FolderFilter) -> Result<FolderLibrary, String> {
         if !root.is_dir() {
@@ -613,7 +640,7 @@ impl FolderLibrary {
     pub fn delete(&self, rel: &str) -> Result<(), String> {
         let (path, _) = self.editable(rel)?;
         let names = self.referenced_pictures(rel);
-        self.to_trash(&path)?;
+        self.to_trash(&path, rel, "file")?;
         self.forget_pictures(&names);
         Ok(())
     }
@@ -629,13 +656,64 @@ impl FolderLibrary {
             return Err(format!("文件夹不存在：{}", rel));
         }
         let names = self.referenced_pictures(rel);
-        self.to_trash(&path)?;
+        self.to_trash(&path, rel, "dir")?;
         self.forget_pictures(&names);
         Ok(())
     }
 
-    fn to_trash(&self, path: &Path) -> Result<(), String> {
-        let trash = self.root.join(SIDECAR_DIR).join("trash");
+    fn trash_dir(&self) -> PathBuf {
+        self.root.join(SIDECAR_DIR).join("trash")
+    }
+
+    fn trash_file(&self) -> PathBuf {
+        self.root.join(SIDECAR_DIR).join(TRASH_FILE)
+    }
+
+    /// The entries of the trash index (empty when there is none or it cannot be read;
+    /// the files themselves are still listed from the folder).
+    fn read_trash(&self) -> Vec<TrashItem> {
+        let Ok(text) = std::fs::read_to_string(self.trash_file()) else { return Vec::new() };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return Vec::new() };
+        v["items"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|i| {
+                        Some(TrashItem {
+                            entry: i["entry"].as_str()?.to_string(),
+                            rel: i["rel"].as_str().unwrap_or("").to_string(),
+                            kind: i["kind"].as_str().unwrap_or("file").to_string(),
+                            time: i["time"].as_i64().unwrap_or(0),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn write_trash(&self, items: &[TrashItem]) -> Result<(), String> {
+        let dir = self.root.join(SIDECAR_DIR);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
+        let out = serde_json::json!({
+            "format": "smart-library-trash",
+            "version": 1,
+            "items": items.iter().map(|t| serde_json::json!({
+                "entry": t.entry, "rel": t.rel, "kind": t.kind, "time": t.time,
+            })).collect::<Vec<_>>(),
+        });
+        let text = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
+        let path = self.trash_file();
+        let tmp = dir.join(format!(".{}.tmp", TRASH_FILE));
+        std::fs::write(&tmp, text.as_bytes()).map_err(|e| format!("{}: {}", tmp.display(), e))?;
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("{}: {}", path.display(), e)
+        })
+    }
+
+    /// Move something into the trash and remember where it came from.
+    fn to_trash(&self, path: &Path, rel: &str, kind: &str) -> Result<(), String> {
+        let trash = self.trash_dir();
         std::fs::create_dir_all(&trash).map_err(|e| format!("{}: {}", trash.display(), e))?;
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -645,7 +723,22 @@ impl FolderLibrary {
             n += 1;
             target = trash.join(format!("{}-{}-{}", secs, n, name));
         }
-        std::fs::rename(path, &target).map_err(|e| format!("{}: {}", path.display(), e))
+        std::fs::rename(path, &target).map_err(|e| format!("{}: {}", path.display(), e))?;
+        // the index is only a help for restoring: a failure must not undo the move
+        let entry = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut items = self.read_trash();
+        items.push(TrashItem { entry, rel: rel.to_string(), kind: kind.to_string(), time: secs as i64 });
+        let _ = self.write_trash(&items);
+        Ok(())
+    }
+
+    /// A picture (by its canonical name) into the trash, remembering its path.
+    fn trash_picture(&self, path: &Path, name: &str) -> Result<(), String> {
+        let rel = path
+            .strip_prefix(&self.root)
+            .map(|r| r.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| format!("{}/attachments/{}", SIDECAR_DIR, name));
+        self.to_trash(path, &rel, "picture")
     }
 
     // ------------------------------------------------------------ pictures
@@ -740,7 +833,7 @@ impl FolderLibrary {
             for n in crate::attach::refs(&to_editor(&decode_auto(&old))) {
                 if !names.contains(&n) {
                     if let Some(p) = self.picture_path(&n).filter(|p| p.is_file()) {
-                        self.to_trash(&p)?;
+                        self.trash_picture(&p, &n)?;
                     }
                 }
             }
@@ -797,7 +890,7 @@ impl FolderLibrary {
         let still = self.referenced_pictures("");
         for n in names.iter().filter(|n| !still.contains(*n)) {
             if let Some(p) = self.picture_path(n).filter(|p| p.is_file()) {
-                let _ = self.to_trash(&p);
+                let _ = self.trash_picture(&p, n);
             }
         }
     }
@@ -844,7 +937,201 @@ impl FolderLibrary {
         if trash.exists() {
             std::fs::remove_dir_all(&trash).map_err(|e| format!("{}: {}", trash.display(), e))?;
         }
+        // the index goes with the trash it describes (a failure leaves an empty one at worst)
+        let _ = std::fs::remove_file(self.trash_file());
         Ok(r)
+    }
+
+    /// The deleted documents and folders, newest first. Pictures are left out:
+    /// they come back with the notes that use them. Entries of an earlier version
+    /// (a flat `<time>-<name>`, no index) are listed too, with the top as their place.
+    pub fn trash(&self) -> Result<Vec<TrashItem>, String> {
+        let dir = self.trash_dir();
+        let Ok(rd) = std::fs::read_dir(&dir) else { return Ok(Vec::new()) };
+        let mut index = self.read_trash();
+        let mut out = Vec::new();
+        let mut present = std::collections::HashSet::new();
+        for e in rd.flatten() {
+            let entry = e.file_name().to_string_lossy().into_owned();
+            present.insert(entry.clone());
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let rec = index.iter().find(|t| t.entry == entry);
+            let (rel, kind, time) = match rec {
+                Some(t) => (t.rel.clone(), t.kind.clone(), t.time),
+                None => {
+                    let name = original_name(&entry).to_string();
+                    if is_dir {
+                        (name, "dir".to_string(), entry_time(&entry))
+                    } else if crate::attach::is_name(&name) {
+                        (String::new(), "picture".to_string(), entry_time(&entry))
+                    } else {
+                        (name, "file".to_string(), entry_time(&entry))
+                    }
+                }
+            };
+            if kind == "picture" {
+                continue;
+            }
+            out.push(TrashItem { entry, rel, kind, time });
+        }
+        let before = index.len();
+        index.retain(|t| present.contains(&t.entry));
+        if index.len() != before {
+            let _ = self.write_trash(&index);
+        }
+        out.sort_by(|a, b| b.time.cmp(&a.time).then_with(|| a.rel.cmp(&b.rel)));
+        Ok(out)
+    }
+
+    /// Put a trashed file or folder back where it came from (a free name next to
+    /// the original when that place is taken). Pictures the restored notes use
+    /// come back too. Returns where it went and how many pictures returned.
+    pub fn restore(&self, entry: &str) -> Result<RestoreReport, String> {
+        self.need_writable()?;
+        if entry.is_empty() || entry.contains('/') || entry.contains('\\') || entry.contains(':') || entry == "." || entry == ".." {
+            return Err("回收站条目不对".into());
+        }
+        let src = self.trash_dir().join(entry);
+        if !src.exists() {
+            return Err("回收站里没有这一项".into());
+        }
+        let mut index = self.read_trash();
+        let rec = index.iter().find(|t| t.entry == entry).cloned();
+        let kind = rec
+            .as_ref()
+            .map(|r| r.kind.clone())
+            .unwrap_or_else(|| if src.is_dir() { "dir".into() } else { "file".into() });
+        if kind == "picture" {
+            return Err("图片不单独恢复，它会随使用它的笔记一起回来".into());
+        }
+        // the indexed place, else the name the old scheme kept; never something
+        // that would land outside the library (an empty rel above all)
+        let rel = match rec.as_ref().map(|r| r.rel.clone()).filter(|r| safe_trash_rel(r)) {
+            Some(r) => r,
+            None => original_name(entry).to_string(),
+        };
+        if !safe_trash_rel(&rel) {
+            return Err("这一项没有可以恢复的名称".into());
+        }
+        let want = self.abs(&rel)?;
+        let dst = if src.is_dir() && want.is_dir() {
+            // the folder is there again (restoring the note inside it recreated it,
+            // or a new one was made): put its contents back into it instead of
+            // making `b 2`; only names that already exist get a number
+            self.merge_dir(&src, &want)?;
+            let _ = std::fs::remove_dir(&src);
+            want
+        } else {
+            let dst = self.free_path(want, src.is_dir())?;
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("{}: {}", parent.display(), e))?;
+            }
+            std::fs::rename(&src, &dst).map_err(|e| format!("{}: {}", src.display(), e))?;
+            dst
+        };
+        let rel = dst.strip_prefix(&self.root).unwrap_or(&dst).to_string_lossy().replace('\\', "/");
+        index.retain(|t| t.entry != entry);
+        let mut pictures = 0;
+        for name in self.refs_at(&dst) {
+            let Some(target) = self.picture_path(&name) else { continue };
+            if target.is_file() {
+                continue; // still there, or shared with a note that was not deleted
+            }
+            let (pos, from) = match index.iter().position(|t| t.kind == "picture" && rel_name(&t.rel) == name) {
+                Some(i) => (Some(i), self.trash_dir().join(&index[i].entry)),
+                None => match legacy_picture(&self.trash_dir(), &name) {
+                    Some(p) => (None, p),
+                    None => continue,
+                },
+            };
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("{}: {}", parent.display(), e))?;
+            }
+            if std::fs::rename(&from, &target).is_ok() {
+                pictures += 1;
+                if let Some(i) = pos {
+                    index.remove(i);
+                }
+            }
+        }
+        // the files are back; a failed index write only loses the help for the
+        // next restore (the trash folder is still scanned, the entry is gone)
+        let _ = self.write_trash(&index);
+        Ok(RestoreReport { rel, pictures })
+    }
+
+    /// `dst` itself, or the first free `name 2`, `name 3` … next to it when its
+    /// name is taken (a folder is not numbered unless a *file* has its name).
+    fn free_path(&self, dst: PathBuf, is_dir: bool) -> Result<PathBuf, String> {
+        let parent = dst.parent().map(Path::to_path_buf).unwrap_or_else(|| self.root.clone());
+        let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if !Self::taken(&parent, &name) {
+            return Ok(dst);
+        }
+        let (stem, ext) = if is_dir {
+            (name.as_str(), "")
+        } else {
+            match name.rfind('.') {
+                Some(i) if i > 0 => (&name[..i], &name[i..]),
+                _ => (name.as_str(), ""),
+            }
+        };
+        for n in 2..10000 {
+            let cand = format!("{} {}{}", stem, n, ext);
+            if !Self::taken(&parent, &cand) {
+                return Ok(parent.join(cand));
+            }
+        }
+        Err("没有可用的名称".into())
+    }
+
+    /// Move the contents of `src` into the folder `dst` that is there already,
+    /// folder by folder; a name taken in `dst` gets a number (no file is replaced).
+    fn merge_dir(&self, src: &Path, dst: &Path) -> Result<(), String> {
+        let rd = std::fs::read_dir(src).map_err(|e| format!("{}: {}", src.display(), e))?;
+        for e in rd {
+            let e = e.map_err(|err| format!("{}: {}", src.display(), err))?;
+            let from = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            let to = dst.join(&name);
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir && to.is_dir() {
+                self.merge_dir(&from, &to)?;
+                let _ = std::fs::remove_dir(&from); // empty now
+            } else {
+                let target = self.free_path(to, is_dir)?;
+                std::fs::rename(&from, &target).map_err(|e| format!("{}: {}", from.display(), e))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The pictures the notes at `path` (a file or a folder) refer to.
+    fn refs_at(&self, path: &Path) -> Vec<String> {
+        fn walk(p: &Path, out: &mut Vec<String>) {
+            let Ok(meta) = std::fs::metadata(p) else { return };
+            if meta.is_dir() {
+                if let Ok(rd) = std::fs::read_dir(p) {
+                    for e in rd.flatten() {
+                        walk(&e.path(), out);
+                    }
+                }
+            } else if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                if EditKind::of(name).is_none() {
+                    return;
+                }
+                if let Ok(bytes) = std::fs::read(p) {
+                    for n in crate::attach::refs(&to_editor(&decode_auto(&bytes))) {
+                        if !out.contains(&n) {
+                            out.push(n);
+                        }
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(path, &mut out);
+        out
     }
 
     /// Index documents for every file.
@@ -1091,6 +1378,47 @@ pub fn conflict(existing: &[&str], new: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The name a trashed entry had: the old scheme put `<time>-` (and maybe a
+/// counter `-<n>`) in front of it.
+fn original_name(entry: &str) -> &str {
+    fn once(s: &str) -> &str {
+        match s.split_once('-') {
+            Some((a, b)) if !a.is_empty() && a.bytes().all(|c| c.is_ascii_digit()) => b,
+            _ => s,
+        }
+    }
+    once(once(entry))
+}
+
+/// The time an entry of the old scheme was trashed (0 when unknown).
+fn entry_time(entry: &str) -> i64 {
+    entry.split('-').next().and_then(|s| s.parse().ok()).unwrap_or(0)
+}
+
+fn rel_name(rel: &str) -> &str {
+    rel.rsplit('/').next().unwrap_or(rel)
+}
+
+/// Whether an indexed path can be put back under the root: no hidden part (the
+/// program's own folder above all), no `..`, no characters Windows refuses.
+fn safe_trash_rel(rel: &str) -> bool {
+    !rel.is_empty()
+        && !rel.starts_with('/')
+        && !rel
+            .split('/')
+            .any(|p| p.is_empty() || p == "." || p == ".." || p.starts_with('.') || p.contains(':') || p.contains('\\'))
+}
+
+/// A picture an earlier version trashed under `<time>-<name>` (no index).
+fn legacy_picture(trash: &Path, name: &str) -> Option<PathBuf> {
+    let tail = format!("-{}", name);
+    std::fs::read_dir(trash)
+        .ok()?
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().ends_with(&tail) && e.path().is_file())
+        .map(|e| e.path())
 }
 
 #[cfg(test)]
@@ -1414,6 +1742,78 @@ mod tests {
         let t = lib.prepare_save(&e, &format!("![](attach:{})", PIC)).unwrap();
         assert!(t.contains("attachments/5c/99/"));
         assert!(d.join(format!(".smart-library/attachments/5c/99/{}", PIC)).is_file());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn trash_remembers_the_place_and_restores_with_pictures() {
+        let d = tmp("restore");
+        let lib = FolderLibrary::open(&d, FolderFilter::default()).unwrap().with_writable(true);
+        lib.create_dir("", "资料/子").unwrap();
+        let a = lib.create("资料/子", Some("笔记"), EditKind::Markdown).unwrap();
+        let pic = lib.store_picture(&a, &[7, 8, 9], "image/png").unwrap();
+        let saved = lib.prepare_save(&a, &format!("# 题\n\n![](attach:{})", pic)).unwrap();
+        lib.write_edit(&a, &saved, None).unwrap();
+
+        // a deleted note remembers its folder, and its picture goes along
+        lib.delete(&a).unwrap();
+        assert!(!d.join(&a).exists());
+        assert!(!lib.picture_path(&pic).unwrap().exists());
+        let list = lib.trash().unwrap();
+        assert_eq!(list.len(), 1, "pictures are not listed on their own");
+        assert_eq!((list[0].rel.as_str(), list[0].kind.as_str()), ("资料/子/笔记.md", "file"));
+        assert!(list[0].time > 0);
+
+        let r = lib.restore(&list[0].entry).unwrap();
+        assert_eq!((r.rel.as_str(), r.pictures), ("资料/子/笔记.md", 1));
+        assert_eq!(std::fs::read_to_string(d.join(&a)).unwrap(), saved);
+        assert!(lib.picture_path(&pic).unwrap().is_file());
+        assert!(lib.trash().unwrap().is_empty());
+
+        // a folder comes back with everything in it, and brings its note's picture;
+        // a folder that is there again is reused (no `资料 2`), only a file name
+        // that already exists gets a number
+        let mind = lib.create("资料/子", Some("脑图"), EditKind::MindMap).unwrap();
+        lib.delete_dir("资料").unwrap();
+        std::fs::create_dir_all(d.join("资料/子")).unwrap();
+        std::fs::write(d.join("资料/子/笔记.md"), "后来写的").unwrap();
+        let list = lib.trash().unwrap();
+        assert_eq!((list.len(), list[0].kind.as_str()), (1, "dir"));
+        let r = lib.restore(&list[0].entry).unwrap();
+        assert_eq!((r.rel.as_str(), r.pictures), ("资料", 1));
+        assert_eq!(std::fs::read_to_string(d.join("资料/子/笔记.md")).unwrap(), "后来写的");
+        assert_eq!(std::fs::read_to_string(d.join("资料/子/笔记 2.md")).unwrap(), saved);
+        assert!(d.join(&mind).is_file());
+        assert!(lib.picture_path(&pic).unwrap().is_file());
+
+        // the same name made again: the restored one gets a free name
+        let c = lib.create("", Some("冲突"), EditKind::Markdown).unwrap();
+        lib.write_edit(&c, "第一次", None).unwrap();
+        lib.delete(&c).unwrap();
+        assert_eq!(lib.create("", Some("冲突"), EditKind::Markdown).unwrap(), c);
+        let item = lib.trash().unwrap().into_iter().find(|t| t.rel == c).unwrap();
+        let r = lib.restore(&item.entry).unwrap();
+        assert_ne!(r.rel, c);
+        assert_eq!(std::fs::read_to_string(d.join(&c)).unwrap(), "");
+        assert_eq!(std::fs::read_to_string(d.join(&r.rel)).unwrap(), "第一次");
+
+        // an entry of an earlier version (no index) comes back at the top
+        let trash = d.join(SIDECAR_DIR).join("trash");
+        std::fs::write(trash.join("1700000000-旧.md"), "旧的").unwrap();
+        let item = lib.trash().unwrap().into_iter().find(|t| t.rel == "旧.md").unwrap();
+        assert_eq!(item.time, 1700000000);
+        let r = lib.restore(&item.entry).unwrap();
+        assert_eq!(r.rel, "旧.md");
+        assert_eq!(std::fs::read_to_string(d.join("旧.md")).unwrap(), "旧的");
+
+        // a read-only link cannot restore (and empty the trash index with a clean)
+        let ro = FolderLibrary::open(&d, FolderFilter::default()).unwrap();
+        assert!(ro.restore("x").is_err());
+        lib.delete(&c).unwrap();
+        lib.clean().unwrap();
+        assert!(!d.join(SIDECAR_DIR).join("trash").exists());
+        assert!(!d.join(SIDECAR_DIR).join(TRASH_FILE).exists());
+        assert!(lib.trash().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&d);
     }
 

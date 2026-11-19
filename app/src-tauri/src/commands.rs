@@ -932,6 +932,8 @@ pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<St
     if own_lib {
         let _ = state.props.remove_lib(&id);
         let _ = state.ai_chat.remove_lib(&id);
+        // the notes database goes for good, and with it its deleted snapshots
+        let _ = state.snapshots.remove_lib(&id);
     }
     state.titles.write().unwrap().remove(&id);
     state.save_registry()?;
@@ -1319,6 +1321,43 @@ pub async fn delete_folder_dir(lib: String, rel: String, state: State<'_, AppSta
     Ok(before.len())
 }
 
+#[derive(Serialize)]
+pub struct TrashItemDto {
+    pub entry: String,
+    pub rel: String,
+    pub kind: String,
+    pub time: i64,
+}
+
+/// What is in the trash of a read-write local folder: deleted files and folders
+/// (with the place they came from), newest first.
+#[tauri::command]
+pub async fn trash_list(lib: String, state: State<'_, AppState>) -> Result<Vec<TrashItemDto>, String> {
+    let f = rw_folder(&state, &lib)?.ok_or("只有读写模式的外部文件夹有回收站")?;
+    Ok(f.trash()?
+        .into_iter()
+        .map(|t| TrashItemDto { entry: t.entry, rel: t.rel, kind: t.kind, time: t.time })
+        .collect())
+}
+
+#[derive(Serialize)]
+pub struct RestoreDto {
+    pub rel: String,
+    pub pictures: usize,
+}
+
+/// Put a trashed file or folder back where it was; the pictures its notes use
+/// come back too. Returns the new path and how many pictures returned.
+#[tauri::command]
+pub async fn trash_restore(lib: String, entry: String, state: State<'_, AppState>) -> Result<RestoreDto, String> {
+    let f = rw_folder(&state, &lib)?.ok_or("只有读写模式的外部文件夹有回收站")?;
+    let r = f.restore(&entry)?;
+    // what came back must be indexed when the full-text search next runs
+    let files = files_under(&f, &r.rel);
+    state.mark_dirty(&lib, files.iter().cloned());
+    Ok(RestoreDto { rel: r.rel, pictures: r.pictures })
+}
+
 /// Clean up what the program leaves behind: in every read-write local folder the trash
 /// (`.smart-library/trash`) and the pictures no note refers to; in every internal library the
 /// pictures no note refers to (those from the last minute are spared). Returns a sentence about what was removed.
@@ -1647,11 +1686,178 @@ pub async fn delete_note(lib: String, id: String, state: State<'_, AppState>) ->
     }
     let store = notes_of(&state, &lib)?;
     let nid = note_id(&id)?;
+    let note = store.get(nid)?.ok_or("笔记不存在")?;
+    // keep the subtree as a `deleted` snapshot before it leaves the database;
+    // refusing when that fails is better than losing the notes for good
+    let root = store.subtree(nid)?;
+    // properties, tags and other names go with the notes (they are removed below)
+    let mut meta = Vec::new();
+    collect_deleted_meta(&state, &lib, &root, &mut meta)?;
+    let tree = notes::DeletedTree {
+        format: notes::DELETED_FORMAT.to_string(),
+        // where it stood, by titles: restoring rebuilds this path
+        path: store.folders_of(nid)?,
+        parent: None,
+        ancestors: Vec::new(),
+        meta,
+        root,
+    };
+    let meta = state.snapshots.create_deleted(&lib, &id, &note.title, &tree.encode()?)?;
+    // its pictures keep their files while it waits in the trash
+    let _ = store.hold_deleted_pictures(meta.id, &tree);
     let gone: Vec<String> = store.descendants(nid).unwrap_or_default().iter().map(|i| i.to_string()).collect();
-    let n = store.delete(nid)?;
+    let n = match store.delete(nid) {
+        Ok(n) => n,
+        Err(e) => {
+            // the notes stayed: the snapshot would only be a copy of them
+            let _ = store.release_deleted_pictures(meta.id);
+            let _ = state.snapshots.delete(meta.id);
+            return Err(e);
+        }
+    };
     state.mark_dirty(&lib, gone.iter().cloned());
+    // the node tags are in the snapshot too: drop the old records, so a restore
+    // under a new id does not leave a second (dangling) tag behind
+    for id in &gone {
+        let _ = state.marks.set_node_tags(&lib, None, id, "", "", &[]);
+    }
     let _ = state.props.remove_nodes(&lib, &gone);
     Ok(n)
+}
+
+/// The properties, tags and other names of every note in a deleted subtree.
+fn collect_deleted_meta(
+    state: &AppState,
+    lib: &str,
+    node: &notes::DeletedNode,
+    out: &mut Vec<notes::DeletedMeta>,
+) -> Result<(), String> {
+    let path = node.id.to_string();
+    let props = state.props.get(lib, None, &path)?;
+    let aliases = state.props.aliases(lib, None, &path)?;
+    let tags = state.marks.node_tags(lib, None, &path)?;
+    if !props.is_empty() || !aliases.is_empty() || !tags.is_empty() {
+        out.push(notes::DeletedMeta { id: node.id, props, aliases, tags });
+    }
+    for c in &node.children {
+        collect_deleted_meta(state, lib, c, out)?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct DeletedNoteDto {
+    /// the snapshot id
+    pub id: i64,
+    pub title: String,
+    /// how many notes the subtree holds (the root included)
+    pub count: usize,
+    pub created_at: i64,
+    pub size_bytes: usize,
+}
+
+#[derive(Serialize)]
+pub struct RestoredNoteDto {
+    pub lib: String,
+    pub id: String,
+    /// from the top of the library down to the restored note
+    pub chain: Vec<String>,
+    pub title: String,
+    pub count: usize,
+    /// parent titles that had to be made to rebuild the path
+    pub created: Vec<String>,
+    /// an entry of the first version whose parent was gone: it fell back (not used by new entries)
+    pub relocated: bool,
+}
+
+/// Deleted notes of an internal library (its trash), newest first.
+#[tauri::command]
+pub async fn list_deleted_notes(lib: String, state: State<'_, AppState>) -> Result<Vec<DeletedNoteDto>, String> {
+    let l = state.library(&lib)?;
+    if l.kind != "notes" {
+        return Err("只有内部知识库有笔记回收站".into());
+    }
+    let mut out = Vec::new();
+    for m in state.snapshots.list_deleted(&lib)? {
+        let count = state
+            .snapshots
+            .get(m.id)?
+            .and_then(|r| notes::DeletedTree::decode(&r.content).ok())
+            .map(|t| t.len())
+            .unwrap_or(0);
+        out.push(DeletedNoteDto { id: m.id, title: m.label, count, created_at: m.created_at, size_bytes: m.size_bytes });
+    }
+    Ok(out)
+}
+
+/// Put a deleted note (and everything below it) back where it was.
+#[tauri::command]
+pub async fn restore_deleted_note(lib: String, id: i64, state: State<'_, AppState>) -> Result<RestoredNoteDto, String> {
+    let l = state.library(&lib)?;
+    if l.kind != "notes" {
+        return Err("只有内部知识库有笔记回收站".into());
+    }
+    let rec = state.snapshots.get(id)?.ok_or("回收站里没有这一项")?;
+    if rec.kind != "deleted" || rec.lib != lib {
+        return Err("这不是这个知识库的已删除笔记".into());
+    }
+    let tree = notes::DeletedTree::decode(&rec.content)?;
+    let store = notes_of(&state, &lib)?;
+    // only entries of the first version can fall back; a title path always rebuilds
+    let relocated = if tree.path.is_empty() {
+        let actual = store.deleted_parent(&tree)?;
+        tree.parent.is_some() && actual != tree.parent
+    } else {
+        false
+    };
+    let (root, made, created) = store.restore_deleted(&tree)?;
+    // properties, tags and other names go back onto the notes (under their new ids)
+    if !tree.meta.is_empty() {
+        let ids: std::collections::HashMap<i64, i64> = made.iter().copied().collect();
+        let lib_title = state.library(&lib)?.title;
+        for m in &tree.meta {
+            let Some(&nid) = ids.get(&m.id) else { continue };
+            let path = nid.to_string();
+            if !m.props.is_empty() {
+                state.props.set(&lib, None, &path, &m.props)?;
+            }
+            if !m.aliases.is_empty() {
+                state.props.set_aliases(&lib, None, &path, &m.aliases)?;
+            }
+            if !m.tags.is_empty() {
+                let title = store.get(nid)?.map(|n| n.title).unwrap_or_default();
+                state.marks.set_node_tags(&lib, None, &path, &title, &lib_title, &m.tags)?;
+            }
+        }
+    }
+    let _ = store.release_deleted_pictures(id);
+    state.mark_dirty(&lib, made.iter().map(|(_, id)| id.to_string()));
+    state.titles.write().unwrap().remove(&lib);
+    state.snapshots.delete(id)?;
+    let note = store.get(root)?.ok_or("恢复后找不到笔记")?;
+    Ok(RestoredNoteDto {
+        lib,
+        id: root.to_string(),
+        chain: store.chain(root)?.iter().map(|i| i.to_string()).collect(),
+        title: note.title,
+        count: made.len(),
+        created,
+        relocated,
+    })
+}
+
+/// Throw away every deleted note of an internal library; returns how many.
+#[tauri::command]
+pub async fn purge_deleted_notes(lib: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let l = state.library(&lib)?;
+    if l.kind != "notes" {
+        return Err("只有内部知识库有笔记回收站".into());
+    }
+    let store = state.notes(&l)?;
+    for m in state.snapshots.list_deleted(&lib)? {
+        let _ = store.release_deleted_pictures(m.id);
+    }
+    state.snapshots.purge_deleted(&lib)
 }
 
 #[derive(Serialize)]
@@ -4240,12 +4446,27 @@ pub async fn restore_snapshot(id: i64, state: State<'_, AppState>) -> Result<Sna
         .snapshots
         .get(id)?
         .ok_or_else(|| "快照不存在或已被删除".to_string())?;
+    if rec.kind == "deleted" {
+        return Err("已删除的笔记请在知识库的「回收站…」里恢复".into());
+    }
     save_note(rec.lib.clone(), rec.doc_id.clone(), rec.content.clone(), state).await?;
     Ok(rec)
 }
 
 #[tauri::command]
 pub async fn delete_snapshot(id: i64, state: State<'_, AppState>) -> Result<bool, String> {
+    // throwing away a deleted note for good: its pictures are no longer held
+    if let Some(rec) = state.snapshots.get(id)? {
+        if rec.kind == "deleted" {
+            if let Ok(l) = state.library(&rec.lib) {
+                if l.kind == "notes" {
+                    if let Ok(store) = state.notes(&l) {
+                        let _ = store.release_deleted_pictures(id);
+                    }
+                }
+            }
+        }
+    }
     state.snapshots.delete(id)
 }
 

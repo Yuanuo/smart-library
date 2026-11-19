@@ -8,6 +8,8 @@
   import ContextMenu from "./ContextMenu.svelte";
   import NameDialog from "./NameDialog.svelte";
   import MoveDialog from "./MoveDialog.svelte";
+  import TrashDialog from "./TrashDialog.svelte";
+  import NotesTrashDialog from "./NotesTrashDialog.svelte";
   import Icon from "./Icon.svelte";
   import * as workspace from "./workspace.svelte.js";
   import { ask } from "@tauri-apps/plugin-dialog";
@@ -115,6 +117,8 @@
 
   let nameDlg = $state(null); // { title, label, value, okLabel, onok }
   let moveDlg = $state(null); // { from, dirs, onok }
+  let trashDlg = $state(null); // { lib, title }: the trash of a read-write local folder
+  let notesTrashDlg = $state(null); // { lib, title }: deleted notes of an internal library
   let selected = $state(null); // { lib, key }: the last note opened from the tree
 
   const isNotes = (id) => libraries.find((l) => l.id === id)?.kind === "notes";
@@ -280,11 +284,18 @@
       list = nodeAt(r.lib, key).children;
     }
     const idx = list.findIndex((n) => n.rel === r.id);
-    if (select && idx >= 0) {
-      current = { lib: r.lib, key: `${key}/${idx}` };
-      selected = current;
-      await tick();
-      panel?.querySelector(`[data-lib="${r.lib}"] [data-key="${current?.key}"]`)?.scrollIntoView({ block: "center" });
+    if (idx >= 0) {
+      // a restored note can take the place of an older node at the same index:
+      // start folded, so its children are read only when the user opens it
+      const nodeKey = `${key}/${idx}`;
+      const ex = expansionOf(r.lib);
+      for (const k of Object.keys(ex)) if (k === nodeKey || k.startsWith(`${nodeKey}/`)) delete ex[k];
+      if (select) {
+        current = { lib: r.lib, key: nodeKey };
+        selected = current;
+        await tick();
+        panel?.querySelector(`[data-lib="${r.lib}"] [data-key="${current?.key}"]`)?.scrollIntoView({ block: "center" });
+      }
     }
   }
 
@@ -413,13 +424,13 @@
   async function deleteNote(lib, node, key) {
     const file = isRwFolder(lib);
     const dir = file && node.path == null;
-    const more = file ? "" : node.lazy || node.children.length ? "\n它下面的笔记会一起删除。" : "";
+    const more = file ? "" : node.lazy || node.children.length ? "\n它下面的子笔记会一起移到回收站。" : "";
     const ok = await ask(
       dir
-        ? `删除文件夹「${node.rel}」？\n里面的所有文件和子文件夹会一起被移到文件夹里的 .smart-library/trash，不会彻底删除。`
+        ? `删除文件夹「${node.rel}」？\n里面的所有文件和子文件夹会一起移到回收站（.smart-library/trash），不会彻底删除。\n可以在知识库右键菜单的「回收站…」里恢复。`
         : file
-        ? `删除文件「${node.rel}」？\n它会被移到文件夹里的 .smart-library/trash，不会彻底删除。`
-        : `删除笔记「${node.title}」？${more}\n删除后不能恢复。`,
+        ? `删除文件「${node.rel}」？\n它会移到回收站（.smart-library/trash），不会彻底删除。\n可以在知识库右键菜单的「回收站…」里恢复。`
+        : `删除笔记「${node.title}」？${more}\n内容和属性（含标签、别名）会一起保存，可以在知识库右键菜单的「回收站…」里恢复。`,
       {
         title: dir ? "删除文件夹" : file ? "删除文件" : "删除笔记",
         kind: "warning",
@@ -1181,6 +1192,8 @@
         [
           ...(notes ? [{ label: "导入到此知识库…", action: () => onimport({ lib: l.id, parent: null, key: null }) }] : []),
           { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title, l.title, l.title) },
+          ...(l.kind === "folder" && l.writable ? [{ label: "回收站…", action: () => (trashDlg = { lib: l.id, title: l.title }) }] : []),
+          ...(notes ? [{ label: "回收站…", action: () => (notesTrashDlg = { lib: l.id, title: l.title }) }] : []),
           ...(l.kind === "folder"
             ? [l.writable ? { label: "锁定知识库（改为只读）", action: () => setWritable(l, false), disabled: building } : { label: "解锁知识库（可读写）…", action: () => setWritable(l, true), disabled: building }]
             : []),
@@ -1294,6 +1307,20 @@
 
 {#if moveDlg}
   <MoveDialog {...moveDlg} onclose={() => (moveDlg = null)} />
+{/if}
+
+{#if trashDlg}
+  <TrashDialog lib={trashDlg.lib} libTitle={trashDlg.title} onclose={() => (trashDlg = null)}
+    onrestored={() => trashDlg && reconcile(trashDlg.lib, null)} />
+{/if}
+
+{#if notesTrashDlg}
+  <NotesTrashDialog lib={notesTrashDlg.lib} libTitle={notesTrashDlg.title} onclose={() => (notesTrashDlg = null)}
+    onrestored={(r, quiet = false) => {
+      const lib = notesTrashDlg?.lib;
+      if (r) return showNew(r, !quiet).catch((e) => onerror?.(String(e)));
+      if (lib) return reconcile(lib, null);
+    }} />
 {/if}
 
 {#if menu}

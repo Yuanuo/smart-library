@@ -151,6 +151,24 @@ impl SnapshotStore {
         content: &str,
     ) -> Result<SnapshotMeta, String> {
         let kind = if kind == "ai" { "ai" } else { "manual" };
+        self.insert(lib, doc_id, kind, label, content_type, content)
+    }
+
+    /// A deleted note and its subtree, kept for the library's trash (`kind =
+    /// deleted`). It is not shown among a document's snapshots and never expires.
+    pub fn create_deleted(&self, lib: &str, doc_id: &str, label: &str, content: &str) -> Result<SnapshotMeta, String> {
+        self.insert(lib, doc_id, "deleted", label, "tree", content)
+    }
+
+    fn insert(
+        &self,
+        lib: &str,
+        doc_id: &str,
+        kind: &str,
+        label: &str,
+        content_type: &str,
+        content: &str,
+    ) -> Result<SnapshotMeta, String> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.savepoint().map_err(err)?;
 
@@ -158,7 +176,7 @@ impl SnapshotStore {
             let latest: Option<(i64, String, String, String, String, String, i64)> = tx
                 .query_row(
                     "SELECT id, lib, doc_id, kind, label, content_type, content, created_at
-                     FROM snapshots WHERE lib = ?1 AND doc_id = ?2
+                     FROM snapshots WHERE lib = ?1 AND doc_id = ?2 AND kind != 'deleted'
                      ORDER BY created_at DESC, id DESC LIMIT 1",
                     params![lib, doc_id],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(6)?, r.get(7)?)),
@@ -225,7 +243,7 @@ impl SnapshotStore {
         let mut stmt = c
             .prepare(
                 "SELECT id, lib, doc_id, kind, label, content_type, LENGTH(CAST(content AS BLOB)), created_at
-                 FROM snapshots WHERE lib = ?1 AND doc_id = ?2
+                 FROM snapshots WHERE lib = ?1 AND doc_id = ?2 AND kind != 'deleted'
                  ORDER BY created_at DESC, id DESC",
             )
             .map_err(err)?;
@@ -248,6 +266,53 @@ impl SnapshotStore {
             out.push(row.map_err(err)?);
         }
         Ok(out)
+    }
+
+    /// The deleted subtrees of a library (its trash), newest first.
+    pub fn list_deleted(&self, lib: &str) -> Result<Vec<SnapshotMeta>, String> {
+        let c = self.conn.lock().unwrap();
+        let mut stmt = c
+            .prepare(
+                "SELECT id, lib, doc_id, kind, label, content_type, LENGTH(CAST(content AS BLOB)), created_at
+                 FROM snapshots WHERE lib = ?1 AND kind = 'deleted'
+                 ORDER BY created_at DESC, id DESC",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![lib], |r| {
+                Ok(SnapshotMeta {
+                    id: r.get(0)?,
+                    lib: r.get(1)?,
+                    doc_id: r.get(2)?,
+                    kind: r.get(3)?,
+                    label: r.get(4)?,
+                    content_type: r.get(5)?,
+                    size_bytes: r.get::<_, i64>(6)?.max(0) as usize,
+                    created_at: r.get(7)?,
+                })
+            })
+            .map_err(err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(err)?);
+        }
+        Ok(out)
+    }
+
+    /// Throw away every deleted subtree of a library for good; returns how many.
+    pub fn purge_deleted(&self, lib: &str) -> Result<usize, String> {
+        let c = self.conn.lock().unwrap();
+        let n = c
+            .execute("DELETE FROM snapshots WHERE lib = ?1 AND kind = 'deleted'", params![lib])
+            .map_err(err)?;
+        Ok(n)
+    }
+
+    /// A library was removed: so are the snapshots that belonged to its documents.
+    pub fn remove_lib(&self, lib: &str) -> Result<usize, String> {
+        let c = self.conn.lock().unwrap();
+        let n = c.execute("DELETE FROM snapshots WHERE lib = ?1", params![lib]).map_err(err)?;
+        Ok(n)
     }
 
     pub fn get(&self, id: i64) -> Result<Option<SnapshotRecord>, String> {
@@ -341,5 +406,32 @@ mod tests {
         let list = store.list("f", "a.md").unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, m_manual.id);
+    }
+
+    #[test]
+    fn deleted_snapshots_are_the_trash_not_document_snapshots() {
+        let store = SnapshotStore::memory().unwrap();
+        let doc = store.create("notes", "1", "manual", "手动", "md", "a").unwrap();
+        let gone = store.create_deleted("notes", "1", "笔记 1", "{\"root\":{}}").unwrap();
+        assert_eq!(gone.kind, "deleted");
+        // the document dialog does not show it, the trash does
+        assert_eq!(store.list("notes", "1").unwrap().len(), 1);
+        assert_eq!(store.list_deleted("notes").unwrap().len(), 1);
+        assert_eq!(store.list_deleted("other").unwrap().len(), 0);
+        // it never expires
+        {
+            let c = store.conn.lock().unwrap();
+            c.execute("UPDATE snapshots SET created_at = ?1 WHERE id = ?2", params![now() - 400 * 86400, gone.id]).unwrap();
+        }
+        assert_eq!(store.cleanup_expired_ai().unwrap(), 0);
+        assert_eq!(store.list_deleted("notes").unwrap().len(), 1);
+        // thrown away for good, or with the whole library
+        store.create_deleted("notes", "2", "笔记 2", "{\"root\":{}}").unwrap();
+        assert_eq!(store.purge_deleted("notes").unwrap(), 2);
+        assert_eq!(store.list_deleted("notes").unwrap().len(), 0);
+        assert_eq!(store.list("notes", "1").unwrap().len(), 1);
+        store.create_deleted("notes", "2", "笔记 2", "{\"root\":{}}").unwrap();
+        assert_eq!(store.remove_lib("notes").unwrap(), 2);
+        assert!(store.get(doc.id).unwrap().is_none());
     }
 }

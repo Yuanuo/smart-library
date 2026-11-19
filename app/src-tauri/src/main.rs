@@ -162,6 +162,8 @@ fn main() {
             commands::dynasty_text,
             commands::set_dynasty_text,
             commands::delete_folder_dir,
+            commands::trash_list,
+            commands::trash_restore,
             commands::check_file_path,
             commands::file_name_rules,
             commands::check_file_name,
@@ -252,6 +254,9 @@ fn main() {
             commands::get_snapshot,
             commands::restore_snapshot,
             commands::delete_snapshot,
+            commands::list_deleted_notes,
+            commands::restore_deleted_note,
+            commands::purge_deleted_notes,
             commands::get_snapshot_policy,
             commands::set_snapshot_policy,
         ])
