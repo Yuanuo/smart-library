@@ -69,18 +69,42 @@ impl Article {
     }
 }
 
+/// What a data source needs on top of plain HTML. There is one HTML reader
+/// for every source (CBETA's `a/` pages, folder files, ZIM articles); the
+/// differences are listed here instead of being spread through the walker as
+/// `if source == …`, so a quirk added for one source cannot silently change
+/// how another one is read. A new source starts from `PLAIN_RULES` and adds
+/// only the fields it really needs.
+#[derive(Clone, Copy)]
+pub struct Rules {
+    /// element ids become anchors the reader can jump to
+    ids_as_anchors: bool,
+    /// links are handed to the window, which resolves them in the source
+    resolved_links: bool,
+    /// drop wiki-style generic headings (语录 / 参考文献 / 参见) from search
+    skip_generic_headings: bool,
+}
+
+/// Plain HTML: no anchors, no link resolution, no heading heuristics.
+pub const PLAIN_RULES: Rules = Rules { ids_as_anchors: false, resolved_links: false, skip_generic_headings: false };
+
+/// ZIM: the window resolves internal links in the archive, `id`s are the
+/// article's chapters, and Wikipedia-style dumps carry headings that are not
+/// part of the text.
+pub const ZIM_RULES: Rules = Rules { ids_as_anchors: true, resolved_links: true, skip_generic_headings: true };
+
 /// Read an article. `path` is its path in the bookcase (for relative images);
 /// `render` asks for the structured HTML too.
 pub fn read_article(html: &str, path: &str, render: Option<&RenderOptions>) -> Article {
-    read_article_inner(html, path, render, false)
+    read_article_inner(html, path, render, PLAIN_RULES)
 }
 
 /// ZIM articles retain safe, inert internal-link data for the reader to resolve.
 pub fn read_zim_html(html: &str, path: &str, render: Option<&RenderOptions>) -> Article {
-    read_article_inner(html, path, render, true)
+    read_article_inner(html, path, render, ZIM_RULES)
 }
 
-fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, zim: bool) -> Article {
+fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, rules: Rules) -> Article {
     let root = markup::parse(html);
     let meta = read_meta(&root);
     let body = root.find_descendant("body").unwrap_or(&root);
@@ -92,7 +116,7 @@ fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, zi
         html: render.map(HtmlOut::new),
         dir,
         headings: Vec::new(),
-        zim,
+        rules,
         anchors: std::collections::HashMap::new(),
         pending_anchors: Vec::new(),
         plain_len: 0,
@@ -189,7 +213,24 @@ const SKIP: [&str; 12] = [
 const BLOCKS: [&str; 10] = ["p", "li", "blockquote", "pre", "dt", "dd", "figcaption", "td", "th", "caption"];
 const CONTAINERS: [&str; 9] = ["div", "section", "article", "main", "body", "header", "footer", "aside", "nav"];
 
-fn generic_zim_heading(text: &str) -> bool {
+/// Content the page hides with inline CSS or the `hidden` attribute. It is
+/// not rendered by a browser, so it must not become text here either: the
+/// reader drops `style` attributes, and Wikihow (among others) keeps image
+/// metadata such as `{"smallUrl":…,"licensing":…}` in a `display:none` span.
+fn hidden(el: &Element) -> bool {
+    if el.attr("hidden").is_some() {
+        return true;
+    }
+    let Some(style) = el.attr("style") else { return false };
+    let s: String = style
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect();
+    s.contains("display:none") || s.contains("visibility:hidden")
+}
+
+fn generic_heading(text: &str) -> bool {
     matches!(crate::analyzer::match_key(text).into_iter().collect::<String>().as_str(), "语录" | "参考文献" | "参见")
 }
 
@@ -200,7 +241,7 @@ struct Walker {
     html: Option<HtmlOut>,
     dir: String,
     headings: Vec<Heading>,
-    zim: bool,
+    rules: Rules,
     anchors: std::collections::HashMap<String, String>,
     pending_anchors: Vec<String>,
     plain_len: usize,
@@ -278,10 +319,10 @@ impl Walker {
 
     fn walk(&mut self, el: &Element) {
         let name = el.name.as_str();
-        if SKIP.contains(&name) || el.attr("data-trilium-h1").is_some() {
+        if SKIP.contains(&name) || el.attr("data-trilium-h1").is_some() || hidden(el) {
             return;
         }
-        if self.zim {
+        if self.rules.ids_as_anchors {
             if let Some(id) = el.attr("id").filter(|id| !id.is_empty()) {
                 if let Some(i) = self.cur_lb {
                     self.anchors.entry(id.to_string()).or_insert_with(|| self.lbs[i].clone());
@@ -294,7 +335,7 @@ impl Walker {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 let level = name[1..].parse::<u8>().unwrap_or(2);
                 let text = el.text().trim().to_string();
-                let exclude = self.zim && level >= 2 && generic_zim_heading(&text);
+                let exclude = self.rules.skip_generic_headings && level >= 2 && generic_heading(&text);
                 self.open("div", &format!("head h{}", level));
                 let lb = self.start_block();
                 if !text.is_empty() {
@@ -397,7 +438,14 @@ impl Walker {
                 self.walk_children(el);
                 self.close("a");
             }
-            "a" if self.zim && el.attr("href").is_some_and(|href| crate::zim::is_internal_href(href) || crate::zim::external_url(href).is_some()) => {
+            "a" if self.rules.resolved_links && el.attr("href").is_some_and(|href| crate::zim::is_internal_href(href) || crate::zim::external_url(href).is_some()) => {
+                // `#/File:…` is a ZIM path to a file (the link around an
+                // image), not an anchor in this article: keep the image, but
+                // no link — clicking it would look for a chapter by that name
+                if el.attr("href").is_some_and(|href| href.trim_start().starts_with("#/")) {
+                    self.walk_children(el);
+                    return;
+                }
                 if let Some(h) = self.html.as_mut() {
                     let href = el.attr("href").unwrap();
                     let kind = if crate::zim::external_url(href).is_some() { "external" } else { "internal" };
@@ -479,6 +527,32 @@ mod tests {
         let occ = locate(&a.text, "持戒", MatchMode::Phrase);
         let at: Vec<(&str, usize)> = occ.iter().map(|o| (o.lb.as_str(), o.pos)).collect();
         assert_eq!(at, vec![("¶1", 3), ("¶2", 7)]);
+    }
+
+    /// The reader drops `style` attributes, so text a page hides with CSS has
+    /// to be left out here too (Wikihow keeps image JSON in a hidden span).
+    #[test]
+    fn leaves_out_content_hidden_by_style_or_attribute() {
+        let src = r#"<body><div><p>正文</p>
+        <div class="image_details" style="display:none;"><span style="display: none;">{"smallUrl":"https:\/\/x","licensing":"&lt;div&gt;"}</span></div>
+        <span style="visibility: hidden">看不见</span><span>可见</span><p hidden>隐藏段落</p>
+        <span style="display:inline">行内</span></div></body>"#;
+        let a = read_article(src, "C/测试", Some(&RenderOptions::default()));
+        assert_eq!(a.text.plain, "正文可见行内");
+        let html = a.html.unwrap();
+        assert!(!html.contains("smallUrl") && !html.contains("看不见") && !html.contains("隐藏段落"));
+    }
+
+    /// Wikihow wraps images in `<a href="#/File:…">`; that is a ZIM file
+    /// path, not an anchor, so the image stays but the link goes away.
+    #[test]
+    fn zim_image_links_are_not_chapters() {
+        let src = r##"<body><p>正文</p><a class="image" href="#/File:A.jpg"><img src="./images/a.webp" alt="图"/></a><a href="#章节">跳到章节</a></body>"##;
+        let a = read_zim_html(src, "C/某条目", Some(&RenderOptions::default()));
+        let html = a.html.unwrap();
+        assert!(html.contains("data-zim-href=\"#章节\""), "{html}");
+        assert!(!html.contains("File:A.jpg"), "{html}");
+        assert!(html.contains("<img"), "{html}");
     }
 
     #[test]

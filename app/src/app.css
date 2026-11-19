@@ -16,7 +16,8 @@
      Small text in a hinted serif (SimSun) looks poor, so the chrome stays sans. */
   --font-ui: system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB",
     "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif;
-  /* Reading: a book serif for Latin, the platform's CJK serif behind it. */
+  /* The 宋体 / 明体 preset, and the fallback until settings.svelte.js runs:
+     a book serif for Latin, the platform's CJK serif behind it. */
   --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Songti TC", "Songti SC",
     "Noto Serif TC", "Noto Serif CJK TC", "Source Han Serif TC", "PMingLiU", "MingLiU", "SimSun", serif;
   font-family: var(--ui-font, var(--font-ui));

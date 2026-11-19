@@ -11,6 +11,8 @@ export const addFolder = (path, title, exts, maxMb, writable = false, libraryId 
 /** Read-write mode of a folder library on or off (ask the user to accept the rules first: writable.js). */
 export const setFolderWritable = (id, writable) => invoke("set_folder_writable", { id, writable });
 export const addZim = (path, libraryId = "") => invoke("add_zim", { path, libraryId });
+/** Header-only check of a ZIM file: { major, minor, entries, clusters, bytes }. */
+export const inspectZim = (path) => invoke("inspect_zim", { path });
 export const resolveZimLink = (lib, path, href) => invoke("resolve_zim_link", { lib, path, href });
 export const openExternalUrl = (url) => invoke("open_external_url", { url });
 export const openExternalWindow = (url, aiOn = false) => invoke("open_external_window", { url, aiOn });
@@ -108,6 +110,9 @@ export const setPinyinText = (text) => invoke("set_pinyin_text", { text });
 export const buildIndex = (lib) => invoke("build_index", { lib });
 export const onIndexProgress = (fn) => listen("index-progress", (e) => fn(e.payload));
 export const onIndexDone = (fn) => listen("index-done", (e) => fn(e.payload));
+/** Reading and binding a library: { label, done, total } (total 0 = unknown). */
+export const onBindProgress = (fn) => listen("bind-progress", (e) => fn(e.payload));
+export const cancelBind = () => invoke("cancel_bind");
 export const loadWorkspace = () => invoke("load_workspace");
 export const saveWorkspace = (workspace) => invoke("save_workspace", { workspace });
 export const aiStream = (reqId, config, system, messages, reasoningEffort = null, tools = null) =>

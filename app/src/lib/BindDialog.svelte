@@ -34,16 +34,86 @@
   let busy = $state(false);
   let cbetaTree = $state(null); // tree id, or "" for none
   let html = $state({}); // tree id -> checked
+  let zimInfo = $state(null); // header of the chosen ZIM, once it checks out
+  let zimError = $state("");
 
   const cbetaTrees = $derived(src ? src.trees.filter((t) => t.group === "cbeta") : []);
   const htmlTrees = $derived(src ? src.trees.filter((t) => t.group === "html") : []);
   const otherTrees = $derived(src ? src.trees.filter((t) => t.group === "other") : []);
   const cbetaBound = $derived(cbetaTrees.some((t) => t.bound_as));
 
+  // what the window is waiting for right now: { label, done, total }
+  let progress = $state(null);
+  let inspectTimer = null;
+  let zimTimer = null;
   onMount(() => {
+    const unlisten = api.onBindProgress((p) => (progress = p));
     path = initialPath;
     if (path) inspect();
+    return () => {
+      unlisten.then((f) => f());
+      clearTimeout(inspectTimer);
+      clearTimeout(zimTimer);
+    };
   });
+
+  /// Read the source once the typed path settles. Picking a file or folder in
+  /// the system dialog reads it at once; there is no 读取 button any more.
+  function laterInspect() {
+    src = null;
+    error = "";
+    clearTimeout(inspectTimer);
+    inspectTimer = setTimeout(() => {
+      if (path.trim()) inspect();
+    }, 500);
+  }
+
+  /// ZIM: check the file (header only, quick) as soon as it is picked or the
+  /// path settles; 「绑定」stays disabled until it checks out.
+  function laterInspectZim() {
+    zimInfo = null;
+    zimError = "";
+    if (!libraryId.trim()) libraryId = guessWikiId(path);
+    clearTimeout(zimTimer);
+    zimTimer = setTimeout(() => {
+      if (path.trim()) inspectZimFile();
+    }, 500);
+  }
+
+  async function inspectZimFile() {
+    if (!path.trim()) return;
+    busy = true;
+    progress = { label: "正在检查 ZIM…", done: 0, total: 0 };
+    zimInfo = null;
+    zimError = "";
+    try {
+      zimInfo = await api.inspectZim(path);
+    } catch (e) {
+      zimError = String(e);
+    } finally {
+      busy = false;
+      progress = null;
+    }
+  }
+
+  async function pickZim() {
+    const f = await open({ multiple: false, filters: [{ name: "ZIM", extensions: ["zim"] }] });
+    if (!f) return;
+    clearTimeout(zimTimer);
+    path = f;
+    libraryId = guessWikiId(f);
+    inspectZimFile();
+  }
+
+  /// The Wikimedia project a ZIM belongs to, from its file name
+  /// (`wikipedia_zh_all_2023-01.zim` → `wikipedia`); cross-wiki links use it.
+  const WIKIS = ["wikipedia", "wikiquote", "wikibooks", "wikisource", "wiktionary", "wikivoyage", "wikinews", "wikiversity"];
+  function guessWikiId(p) {
+    const name = (p || "").split(/[\\/]/).pop().toLowerCase();
+    return WIKIS.find((id) => name.startsWith(id + "_")) ?? "";
+  }
+
+  const sizeText = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1048576))} MB`);
 
   async function pickFile() {
     const f = await open({
@@ -52,6 +122,7 @@
       filters: [{ name: "CBETA bookcase", extensions: ["zip"] }],
     });
     if (f) {
+      clearTimeout(inspectTimer);
       path = f;
       inspect();
     }
@@ -60,6 +131,7 @@
   async function pickFolder() {
     const f = await open({ multiple: false, directory: true });
     if (f) {
+      clearTimeout(inspectTimer);
       path = f;
       inspect();
     }
@@ -69,6 +141,7 @@
     if (!path.trim()) return;
     busy = true;
     error = "";
+    progress = { label: "正在读取数据包…", done: 0, total: 0 };
     try {
       src = await api.inspectSource(path);
       cbetaTree = src.default_cbeta_tree ?? "";
@@ -78,6 +151,7 @@
       error = String(e);
     } finally {
       busy = false;
+      progress = null;
     }
   }
 
@@ -100,6 +174,7 @@
   async function bind() {
     busy = true;
     error = "";
+    progress = { label: kind === "zim" ? "正在读取 ZIM…" : "正在绑定…", done: 0, total: 0 };
     try {
       if (kind === "notes") {
         onbound(await api.createNotesLibrary(notesTitle, libraryId));
@@ -119,14 +194,16 @@
       const st = await api.bindLibraries(src.path, cbetaTree || null, newHtml, libraryIds);
       onbound(st);
     } catch (e) {
-      error = String(e);
+      // giving up on a huge ZIM is a choice, not a failure
+      error = String(e) === "已取消" ? "" : String(e);
     } finally {
       busy = false;
+      progress = null;
     }
   }
 </script>
 
-<div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
+<div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && !busy && onclose()}>
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-labelledby="bind-title">
     <header class="dialog-header"><h2 id="bind-title">添加知识库</h2></header>
     <div class="dialog-content">
@@ -172,21 +249,24 @@
         </fieldset>
       {/if}
     {:else if kind === "zim"}
-      <p class="muted">选择 ZIM 文件。数据包只读，绑定后可搜索标题并建立全文索引。</p>
+      <p class="muted">选择 ZIM 文件，选好先检查一次文件；可以读取时「绑定」才可用。数据包只读，绑定后可搜索标题并建立全文索引。</p>
       <div class="row">
-        <input type="text" bind:value={path} placeholder="C:\\…\\wikipedia.zim" aria-label="ZIM 文件" />
-        <button type="button" onclick={async () => { const f = await open({ multiple: false, filters: [{ name: "ZIM", extensions: ["zim"] }] }); if (f) { path = f; const name = f.split(/[\\/]/).pop().toLowerCase(); libraryId = ["wikipedia", "wikiquote", "wikibooks", "wikisource", "wiktionary", "wikivoyage", "wikinews", "wikiversity"].find((id) => name.startsWith(id + "_")) ?? ""; } }}>选择文件…</button>
+        <input type="text" bind:value={path} oninput={laterInspectZim} placeholder="C:\\…\\wikipedia.zim" aria-label="ZIM 文件" />
+        <button type="button" onclick={pickZim}>选择文件…</button>
       </div>
+      {#if zimInfo}
+        <p class="muted small">ZIM {zimInfo.major}.{zimInfo.minor} · {zimInfo.entries.toLocaleString()} 条 · {zimInfo.clusters.toLocaleString()} 个簇 · {sizeText(zimInfo.bytes)} · 可以绑定</p>
+      {/if}
+      {#if zimError}<p class="error">{zimError}</p>{/if}
       <label class="field">知识库 ID（可选）<input type="text" bind:value={libraryId} placeholder="例如 wikipedia、wikiquote" /></label>
       <p class="hint muted">跨维基站点链接按知识库 ID 查找，例如 wikipedia。</p>
       {#if error}<p class="error">{error}</p>{/if}
     {:else}
-    <p class="muted">选择 CBETA 的 bookcase.zip（或已解压的目录）。Smart Library 只读取数据，不会修改它。</p>
-    <form class="row" onsubmit={(e) => { e.preventDefault(); inspect(); }}>
-      <input type="text" bind:value={path} placeholder="C:\…\bookcase.zip" aria-label="数据路径" />
+    <p class="muted">选择 CBETA 的 bookcase.zip（或已解压的目录），选好就自动读取。Smart Library 只读取数据，不会修改它。</p>
+    <form class="row" onsubmit={(e) => { e.preventDefault(); clearTimeout(inspectTimer); inspect(); }}>
+      <input type="text" bind:value={path} oninput={laterInspect} placeholder="C:\…\bookcase.zip" aria-label="数据路径" />
       <button type="button" onclick={pickFile}>选择文件…</button>
       <button type="button" onclick={pickFolder}>选择文件夹…</button>
-      <button class="primary" disabled={busy || !path.trim()}>读取</button>
     </form>
 
     {#if error && kind === "cbeta"}<p class="error">{error}</p>{/if}
@@ -238,17 +318,29 @@
     {#if kind}<p class="hint muted">知识库 ID 只能使用小写字母、数字、连字符或下划线，创建后不可更改。</p>{/if}
 
     </div>
+    {#if busy}
+      <div class="progress-row" role="status" aria-live="polite">
+        {#if progress?.total}
+          <progress value={progress.done} max={progress.total}></progress>
+          <span class="muted">{progress.label} {Math.floor((progress.done / progress.total) * 100)}%</span>
+        {:else}
+          <progress></progress>
+          <span class="muted">{progress?.label ?? "请稍候…"}</span>
+        {/if}
+        {#if kind === "zim"}<button type="button" class="link" onclick={() => api.cancelBind()}>取消</button>{/if}
+      </div>
+    {/if}
     <div class="actions">
       {#if kind && !initialPath}<button onclick={() => { kind = ""; src = null; error = ""; }}>上一步</button>{/if}
-      <button onclick={onclose}>取消</button>
+      <button onclick={onclose} disabled={busy}>取消</button>
       {#if kind === "notes"}
-        <button class="primary" disabled={!notesTitle.trim() || busy} onclick={bind}>创建</button>
+        <button class="primary" disabled={!notesTitle.trim() || busy} onclick={bind}>{busy ? "创建中…" : "创建"}</button>
       {:else if kind === "folder"}
-        <button class="primary" disabled={!folder || !!folder.conflict || busy || !exts.trim()} onclick={bind}>绑定</button>
+        <button class="primary" disabled={!folder || !!folder.conflict || busy || !exts.trim()} onclick={bind}>{busy ? "绑定中…" : "绑定"}</button>
       {:else if kind === "zim"}
-        <button class="primary" disabled={!path.trim() || busy} onclick={bind}>绑定</button>
+        <button class="primary" disabled={!zimInfo || busy} onclick={bind}>{busy ? "绑定中…" : "绑定"}</button>
       {:else if kind}
-        <button class="primary" disabled={!src || busy} onclick={bind}>绑定</button>
+        <button class="primary" disabled={!src || busy} onclick={bind}>{busy ? (src ? "绑定中…" : "读取中…") : "绑定"}</button>
       {/if}
     </div>
   </div>
@@ -274,5 +366,7 @@
   .kind { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; margin: 6px 0; padding: 10px 14px; }
   .kind:disabled { opacity: 0.55; }
   .error { color: var(--hl); }
+  .progress-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 13px; }
+  .progress-row progress { flex: 1; height: 8px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 </style>

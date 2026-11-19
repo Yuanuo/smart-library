@@ -31,6 +31,7 @@ use smart_library_core::toc::TocItem;
 use smart_library_core::volume::VolumeText;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -103,6 +104,9 @@ pub struct AppState {
     /// title quick search, per library (built on first use)
     titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
     building: Mutex<HashSet<String>>,
+    /// set by `cancel_bind` while the window waits for a long bind (opening a
+    /// huge ZIM archive); the operation checks it and gives up
+    bind_cancel: AtomicBool,
     /// true if `marks.db` or `props.db` failed to open on disk and fell back to in-memory
     db_degraded: bool,
     history: History,
@@ -167,6 +171,7 @@ impl AppState {
             indexes: RwLock::new(HashMap::new()),
             titles: RwLock::new(HashMap::new()),
             building: Mutex::new(HashSet::new()),
+            bind_cancel: AtomicBool::new(false),
             db_degraded,
             history,
             marks,
@@ -739,19 +744,81 @@ pub async fn status(state: State<'_, AppState>) -> Result<StatusDto, String> {
 
 // ------------------------------------------------------------ binding
 
+/// What the window is waiting for while a library is read and bound. A huge
+/// ZIM can be many gigabytes with millions of entries, so the bind dialog
+/// shows `done / total` while its pointer table is parsed, and offers to give
+/// up (`cancel_bind`).
+#[derive(Serialize, Clone)]
+struct BindProgressDto {
+    label: String,
+    done: usize,
+    total: usize,
+}
+
+fn bind_progress(app: &AppHandle, label: &str, done: usize, total: usize) {
+    let _ = app.emit("bind-progress", BindProgressDto { label: label.to_string(), done, total });
+}
+
+/// Give up on the long operation the bind dialog is waiting for.
 #[tauri::command]
-pub async fn add_zim(path: String, library_id: Option<String>, state: State<'_, AppState>) -> Result<StatusDto, String> {
+pub async fn cancel_bind(state: State<'_, AppState>) -> Result<(), String> {
+    state.bind_cancel.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+/// What a ZIM file says about itself: quick enough to run as soon as the file
+/// is picked, so 「绑定」only becomes available for an archive we can read.
+#[derive(Serialize)]
+pub struct ZimInfoDto {
+    major: u16,
+    minor: u16,
+    entries: usize,
+    clusters: usize,
+    bytes: u64,
+}
+
+#[tauri::command]
+pub async fn inspect_zim(path: String) -> Result<ZimInfoDto, String> {
     let path = std::fs::canonicalize(path.trim().trim_matches('"')).map_err(|e| e.to_string())?;
-    smart_library_core::zim::Zim::open(&path)?;
+    let info = smart_library_core::zim::Zim::probe(&path)?;
+    Ok(ZimInfoDto {
+        major: info.major,
+        minor: info.minor,
+        entries: info.entries,
+        clusters: info.clusters,
+        bytes: info.bytes,
+    })
+}
+
+#[tauri::command]
+pub async fn add_zim(
+    path: String,
+    library_id: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<StatusDto, String> {
+    let path = std::fs::canonicalize(path.trim().trim_matches('"')).map_err(|e| e.to_string())?;
+    state.bind_cancel.store(false, Ordering::SeqCst);
+    bind_progress(&app, "正在读取 ZIM…", 0, 0);
+    let z = smart_library_core::zim::Zim::open_with(&path, |done, total| {
+        bind_progress(&app, "正在读取 ZIM…", done, total);
+        !state.bind_cancel.load(Ordering::SeqCst)
+    })?;
+    let stamp = zim_version(&path.to_string_lossy())?;
     let path = path.to_string_lossy().into_owned();
-    {
+    let id = {
         let mut libs = state.libraries.write().unwrap();
         if libs.iter().any(|l| l.kind == "zim" && same_path(&l.source, &path)) { return Err("这个 ZIM 数据包已经绑定".into()); }
         let title = Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "ZIM".into());
         let id = self::library_id(library_id.as_deref(), "zim", &libs)?;
-        libs.push(Library { id, kind: "zim".into(), title, source: path, tree: String::new(), exts: vec![], max_mb: 0, writable: false });
-    }
+        libs.push(Library { id: id.clone(), kind: "zim".into(), title, source: path, tree: String::new(), exts: vec![], max_mb: 0, writable: false });
+        id
+    };
+    // Keep what was just read: a big archive takes minutes to open, and
+    // indexing would open it again from the start otherwise.
+    state.zims.write().unwrap().insert(id, (stamp, Arc::new(Mutex::new(z))));
     state.save_registry()?;
+    bind_progress(&app, "完成", 1, 1);
     Ok(status_of(&state))
 }
 
@@ -780,8 +847,9 @@ pub struct SourceDto {
 
 /// Open a data source and list what can be bound from it.
 #[tauri::command]
-pub async fn inspect_source(path: String, state: State<'_, AppState>) -> Result<SourceDto, String> {
+pub async fn inspect_source(path: String, app: AppHandle, state: State<'_, AppState>) -> Result<SourceDto, String> {
     let path = path.trim().trim_matches('"').to_string();
+    bind_progress(&app, "正在读取数据包…", 0, 0);
     let bc = state.source(&path)?;
     let libs = state.libraries.read().unwrap().clone();
     let mut trees = Vec::new();
@@ -832,9 +900,11 @@ pub async fn bind_libraries(
     cbeta_tree: Option<String>,
     html_trees: Vec<String>,
     library_ids: Option<HashMap<String, String>>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<StatusDto, String> {
     let path = path.trim().trim_matches('"').to_string();
+    bind_progress(&app, "正在绑定…", 0, 0);
     let bc = state.source(&path)?;
     let choices = classify_trees(&bc);
     {
@@ -3714,12 +3784,11 @@ struct IndexDoneDto {
 #[tauri::command]
 pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let l = state.library(&lib)?;
-    let zim_source = if l.kind == "zim" {
-        let _ = state.zim(&l)?; // verify the ZIM file is valid and openable
-        Some(l.source.clone())
-    } else {
-        None
-    };
+    // the open archive (or, for a fresh start, one opened now: that validates
+    // it too); indexing reads it through the same handle instead of opening a
+    // big ZIM a second time
+    let zim = if l.kind == "zim" { Some(state.zim(&l)?) } else { None };
+    let zim_stamp = if zim.is_some() { Some(zim_version(&l.source)?) } else { None };
     let notes_store = if l.kind == "notes" { Some(state.notes(&l)?) } else { None };
     let lib_title = l.title.clone();
     state.titles.write().unwrap().remove(&lib);
@@ -3731,7 +3800,7 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
     } else {
         None
     };
-    let bc = if folder.is_some() || notes_store.is_some() || zim_source.is_some() { None } else { Some(state.bookcase_of(&l)?) };
+    let bc = if folder.is_some() || notes_store.is_some() || zim.is_some() { None } else { Some(state.bookcase_of(&l)?) };
     let html = if l.kind == "html" { Some(state.html_tree(&l)?) } else { None };
     if !state.building.lock().unwrap().insert(lib.clone()) {
         return Err("正在建立这个知识库的索引".to_string());
@@ -3752,13 +3821,12 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
                 let _ = app2.emit("index-progress", ProgressDto { lib: lib2.clone(), done, total });
             };
             let stats = match (&folder, &bc, &html) {
-                _ if zim_source.is_some() => {
-                    let src = zim_source.as_deref().unwrap();
-                    let mut z = smart_library_core::zim::Zim::open(Path::new(src))?;
+                _ if zim.is_some() => {
+                    let mut z = zim.as_ref().unwrap().lock().unwrap();
                     let jobs = z.article_jobs();
                     let total = jobs.len();
                     let docs = jobs.into_iter().map(|i| z.index_doc(i));
-                    smart_library_core::search::build_index(&dir, serde_json::json!({"kind": "zim", "data_version": zim_version(src)?}), total, docs, &overlay, progress)?
+                    smart_library_core::search::build_index(&dir, serde_json::json!({"kind": "zim", "data_version": zim_stamp.clone().unwrap_or_default()}), total, docs, &overlay, progress)?
                 }
                 _ if notes_store.is_some() => {
                     let n = notes_store.as_ref().unwrap();

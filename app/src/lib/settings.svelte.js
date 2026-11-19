@@ -4,29 +4,55 @@
 // change in one window reaches the others through the `storage` event.
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
-// Font presets. `default` means "whatever the platform calls its own": the
-// interface takes the system UI sans (Segoe UI / San Francisco / Noto Sans),
-// reading text takes the system CJK serif (宋体 / 細明體 / Songti), which is
-// what makes a page read like a book. The stacks themselves live in app.css as
-// --font-ui and --font-serif; a null stack just drops the inline variable so
-// those defaults apply. That is why the two lists have different defaults: the
-// same word "default" lands on a sans for the UI and a serif for the reader.
+// Font presets. `default` means "the face the platform itself uses", and that
+// differs by OS: Segoe UI + 微软雅黑 on Windows, San Francisco + 苹方 on macOS,
+// Cantarell + Noto Sans CJK on Linux. The interface and the reader both start
+// there; 宋体 / 明体 is a preset of its own for whoever wants a book serif.
+// `navigator.userAgent` is enough to tell the three apart inside the webview;
+// app.css carries a broad stack as the fallback for the moment before this
+// module runs.
+const PLATFORM = (() => {
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  if (/Mac|iPhone|iPad/i.test(ua)) return "mac";
+  if (/Linux|X11/i.test(ua) && !/Android/i.test(ua)) return "linux";
+  return "windows";
+})();
+
+const DEFAULT_SANS = {
+  windows: 'system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif',
+  mac: 'system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif',
+  linux: 'system-ui, "Cantarell", "Noto Sans CJK SC", "Noto Sans CJK TC", "WenQuanYi Micro Hei", sans-serif',
+}[PLATFORM];
+
+const DEFAULT_SERIF = {
+  windows:
+    '"Palatino Linotype", Georgia, "Times New Roman", "Noto Serif CJK TC", "Source Han Serif TC", "MingLiU", "SimSun", serif',
+  mac: '"Iowan Old Style", Palatino, "Songti TC", "Songti SC", "Noto Serif CJK TC", "Source Han Serif TC", serif',
+  linux:
+    '"Noto Serif CJK TC", "Noto Serif CJK SC", "Source Han Serif TC", "Source Han Serif SC", "AR PL UMing TW", "AR PL UMing CN", serif',
+}[PLATFORM];
+
+const OS_NAME = { windows: "Windows", mac: "macOS", linux: "Linux" }[PLATFORM];
+
 const SANS = '"Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif';
-const SERIF = '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Songti TC", "Songti SC", "Noto Serif TC", "Noto Serif CJK TC", "Source Han Serif TC", "PMingLiU", "MingLiU", "SimSun", serif';
+const SERIF = DEFAULT_SERIF;
 const KAI = '"KaiTi", "Kaiti TC", "STKaiti", "AR PL UKai TW", serif';
 const MONO = 'Consolas, "Courier New", "MingLiU", monospace';
 
+// Both defaults are the platform's own sans: 宋体/SimSun is hinted, bitmap-ish
+// at interface and body sizes, and the user should not have to go to the
+// settings just to make the text look right. 宋体 stays one click away.
 export const UI_FONTS = [
-  ["default", "系统默认（推荐）", null],
-  ["serif", "宋体 / 明体", SERIF],
+  ["default", `系统默认（${OS_NAME}）`, DEFAULT_SANS],
+  ["serif", "宋体 / 明体", DEFAULT_SERIF],
   ["kai", "楷体", KAI],
   ["mono", "等宽", MONO],
   ["custom", "自定义…", null],
 ];
 
 export const READER_FONTS = [
-  ["default", "宋体 / 明体（默认）", null],
-  ["sans", "黑体 / 无衬线", SANS],
+  ["default", `系统默认（${OS_NAME}）`, DEFAULT_SANS],
+  ["serif", "宋体 / 明体", DEFAULT_SERIF],
   ["kai", "楷体", KAI],
   ["mono", "等宽", MONO],
   ["custom", "自定义…", null],
@@ -119,9 +145,12 @@ function load() {
     if (!WEIGHTS[raw.readerWeight]) {
       raw.readerWeight = "std";
     }
-    // "sans" used to be a UI font preset; the UI's default is that stack now
+    // "sans" used to be a preset; the default is the platform's sans now
     if (raw.uiFont === "sans") {
       raw.uiFont = "default";
+    }
+    if (raw.readerFont === "sans") {
+      raw.readerFont = "default";
     }
     if (!SELECT_LOOKUP_MODES.some(([v]) => v === raw.selectLookup)) {
       raw.selectLookup = "ctrl";
@@ -176,7 +205,8 @@ function stack(kind, custom, fallback, list) {
   if (kind === "custom") return custom.trim() ? `"${custom.trim().replace(/"/g, "")}", ${fallback}` : null;
   // a font installed on this computer: `sys:<family>`
   if (kind.startsWith("sys:")) return `"${kind.slice(4).replace(/"/g, "")}", ${fallback}`;
-  // "default" (and any value from an older version) keeps the CSS default
+  // "default" is this platform's own stack; a value from an older version
+  // that no longer exists falls back to nothing (the CSS default in app.css)
   return list.find((f) => f[0] === kind)?.[2] ?? null;
 }
 

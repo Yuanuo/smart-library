@@ -27,6 +27,13 @@ pub struct Zim {
     paths: HashMap<String, usize>,
 }
 
+/// Content entries sit in namespace `A` in old dumps and in `C` since libzim
+/// writes ZIM 6 (the `A` namespace is deprecated). Everything the reader shows
+/// as an article comes from one of the two.
+fn is_content(namespace: u8) -> bool {
+    namespace == b'A' || namespace == b'C'
+}
+
 fn u16le(b: &[u8]) -> u16 {
     u16::from_le_bytes(b.try_into().unwrap())
 }
@@ -41,61 +48,154 @@ fn read_at(file: &mut File, pos: u64, buf: &mut [u8]) -> Result<(), String> {
         .and_then(|_| file.read_exact(buf))
         .map_err(|e| e.to_string())
 }
+/// Bytes asked for per read when scanning for a NUL. Reading a byte at a time
+/// costs one syscall per character, which is what made a large ZIM (millions
+/// of entries, each with a path and a title) take minutes to open.
+const STRING_CHUNK: usize = 512;
+
 fn cstring(file: &mut File) -> Result<String, String> {
-    let mut b = Vec::new();
-    for _ in 0..MAX_STRING {
-        let mut c = [0];
-        file.read_exact(&mut c).map_err(|e| e.to_string())?;
-        if c[0] == 0 {
-            return String::from_utf8(b).map_err(|e| e.to_string());
+    let mut out: Vec<u8> = Vec::new();
+    let mut buf = [0u8; STRING_CHUNK];
+    loop {
+        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("ZIM string is not terminated".into());
         }
-        b.push(c[0]);
-    }
-    Err("ZIM string too long".into())
-}
-impl Zim {
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let mut file = File::open(path).map_err(|e| e.to_string())?;
-        let file_len = file.metadata().map_err(|e| e.to_string())?.len();
-        let mut h = [0u8; 80];
-        read_at(&mut file, 0, &mut h)?;
-        if u32le(&h[0..4]) != 0x044d495a || u16le(&h[4..6]) != 5 || u16le(&h[6..8]) != 0 {
-            return Err("Only ZIM version 5.0 is supported".into());
-        }
-        let count = u32le(&h[24..28]) as usize;
-        let cluster_count = u32le(&h[28..32]) as usize;
-        let paths_pos = u64le(&h[32..40]);
-        let clusters_pos = u64le(&h[48..56]);
-        let mime_pos = u64le(&h[56..64]);
-        for (pos, n) in [(paths_pos, count), (clusters_pos, cluster_count)] {
-            if pos
-                .checked_add((n as u64).saturating_mul(8))
-                .filter(|&v| v <= file_len)
-                .is_none()
-            {
-                return Err("Invalid ZIM pointer table".into());
+        let used = buf[..n].iter().position(|&c| c == 0);
+        match used {
+            Some(k) => {
+                out.extend_from_slice(&buf[..k]);
+                // leave the file exactly after the NUL
+                let back = (n - k - 1) as i64;
+                if back > 0 {
+                    file.seek(SeekFrom::Current(-back)).map_err(|e| e.to_string())?;
+                }
+                if out.len() > MAX_STRING {
+                    return Err("ZIM string too long".into());
+                }
+                return String::from_utf8(out).map_err(|e| e.to_string());
+            }
+            None => {
+                out.extend_from_slice(&buf[..n]);
+                if out.len() > MAX_STRING {
+                    return Err("ZIM string too long".into());
+                }
             }
         }
-        if mime_pos >= file_len {
+    }
+}
+/// The fixed 80-byte ZIM header, as far as this reader needs it.
+struct Header {
+    major: u16,
+    minor: u16,
+    count: usize,
+    cluster_count: usize,
+    paths_pos: u64,
+    clusters_pos: u64,
+    mime_pos: u64,
+}
+
+/// What a quick check of a file found. `bytes` is the file size.
+pub struct ZimInfo {
+    pub major: u16,
+    pub minor: u16,
+    pub entries: usize,
+    pub clusters: usize,
+    pub bytes: u64,
+}
+
+fn read_header(file: &mut File, file_len: u64) -> Result<Header, String> {
+    let mut h = [0u8; 80];
+    read_at(file, 0, &mut h)?;
+    if u32le(&h[0..4]) != 0x044d495a {
+        return Err("不是 ZIM 文件（文件头不对）".into());
+    }
+    // Major 6 adds extended clusters (8-byte blob offsets, flagged in the
+    // cluster info byte), which `read` already handles. A minor version only
+    // adds backwards-compatible things, so any 5.x or 6.x can be read: the
+    // header this reader relies on is the same 80 bytes in all of them.
+    let (major, minor) = (u16le(&h[4..6]), u16le(&h[6..8]));
+    if !(5..=6).contains(&major) {
+        return Err(format!("不支持的 ZIM 版本 {major}.{minor}（只读 5.x 与 6.x）"));
+    }
+    let count = u32le(&h[24..28]) as usize;
+    let cluster_count = u32le(&h[28..32]) as usize;
+    let paths_pos = u64le(&h[32..40]);
+    let clusters_pos = u64le(&h[48..56]);
+    let mime_pos = u64le(&h[56..64]);
+    for (pos, n) in [(paths_pos, count), (clusters_pos, cluster_count)] {
+        if pos
+            .checked_add((n as u64).saturating_mul(8))
+            .filter(|&v| v <= file_len)
+            .is_none()
+        {
+            return Err("Invalid ZIM pointer table".into());
+        }
+    }
+    if mime_pos >= file_len {
+        return Err("Invalid ZIM MIME table".into());
+    }
+    Ok(Header { major, minor, count, cluster_count, paths_pos, clusters_pos, mime_pos })
+}
+
+fn read_mimes(file: &mut File, mime_pos: u64) -> Result<Vec<String>, String> {
+    file.seek(SeekFrom::Start(mime_pos)).map_err(|e| e.to_string())?;
+    let mut mimes = Vec::new();
+    loop {
+        let s = cstring(file)?;
+        if s.is_empty() {
+            break;
+        }
+        mimes.push(s);
+        if mimes.len() > 65535 {
             return Err("Invalid ZIM MIME table".into());
         }
-        file.seek(SeekFrom::Start(mime_pos))
-            .map_err(|e| e.to_string())?;
-        let mut mimes = Vec::new();
-        loop {
-            let s = cstring(&mut file)?;
-            if s.is_empty() {
-                break;
-            }
-            mimes.push(s);
-            if mimes.len() > 65535 {
-                return Err("Invalid MIME table".into());
-            }
+    }
+    Ok(mimes)
+}
+
+impl Zim {
+    pub fn open(path: &Path) -> Result<Self, String> {
+        Self::open_with(path, |_, _| true)
+    }
+
+    /// Check that a file is a ZIM archive this build can read, without parsing
+    /// its entries: header, pointer tables and MIME list only. The bind dialog
+    /// calls this first, so 「绑定」is only enabled for a readable archive.
+    pub fn probe(path: &Path) -> Result<ZimInfo, String> {
+        let mut file = File::open(path).map_err(|e| e.to_string())?;
+        let file_len = file.metadata().map_err(|e| e.to_string())?.len();
+        let head = read_header(&mut file, file_len)?;
+        let mimes = read_mimes(&mut file, head.mime_pos)?;
+        if mimes.is_empty() {
+            return Err("Invalid ZIM MIME table".into());
         }
+        Ok(ZimInfo {
+            major: head.major,
+            minor: head.minor,
+            entries: head.count,
+            clusters: head.cluster_count,
+            bytes: file_len,
+        })
+    }
+
+    /// Open like [`Zim::open`], calling `progress(done, total)` every few
+    /// thousand entries while the pointer table is parsed; returning `false`
+    /// from it aborts with `已取消`. A huge archive takes a while here, so the
+    /// window can show where it is and let the user give up.
+    pub fn open_with(path: &Path, mut progress: impl FnMut(usize, usize) -> bool) -> Result<Self, String> {
+        let mut file = File::open(path).map_err(|e| e.to_string())?;
+        let file_len = file.metadata().map_err(|e| e.to_string())?.len();
+        let head = read_header(&mut file, file_len)?;
+        let Header { count, cluster_count, paths_pos, clusters_pos, .. } = head;
+        let mimes = read_mimes(&mut file, head.mime_pos)?;
         let mut ptr = vec![0; count.checked_mul(8).ok_or("Too many entries")?];
         read_at(&mut file, paths_pos, &mut ptr)?;
         let mut entries = Vec::with_capacity(count);
-        for chunk in ptr.as_chunks::<8>().0 {
+        for (i, chunk) in ptr.as_chunks::<8>().0.iter().enumerate() {
+            if i % 4096 == 0 && !progress(i, count) {
+                return Err("已取消".into());
+            }
             let pos = u64::from_le_bytes(*chunk);
             if pos.checked_add(12).filter(|&v| v <= file_len).is_none() {
                 return Err("Invalid ZIM entry offset".into());
@@ -153,6 +253,7 @@ impl Zim {
             .enumerate()
             .map(|(i, e)| (format!("{}/{}", e.namespace as char, e.path), i))
             .collect();
+        progress(count, count);
         Ok(Self {
             file,
             entries,
@@ -167,7 +268,7 @@ impl Zim {
             .iter()
             .enumerate()
             .filter(|(_, e)| {
-                e.namespace == b'A'
+                is_content(e.namespace)
                     && e.mime
                         .as_deref()
                         .is_some_and(|m| m.starts_with("text/html"))
@@ -184,9 +285,25 @@ impl Zim {
         self.paths.get(path).copied()
     }
     /// Find the article referenced by a Wikimedia URL in this archive.
+    /// `wiki_url` spells the path `/A/…`; newer archives keep content under
+    /// `C/`, and spaces in the title may be written either way.
     pub fn resolve_wiki_url(&self, href: &str) -> Result<(String, Option<String>), String> {
         let (_, path) = wiki_url(href).ok_or("不是可匹配的维基文章链接")?;
-        self.resolve_link("A/", &path).or_else(|_| self.resolve_link("A/", &path.replace('_', "%20")))
+        let escaped = path.replace('_', "%20");
+        let candidates = [
+            path.clone(),
+            path.replacen("/A/", "/C/", 1),
+            escaped.clone(),
+            escaped.replacen("/A/", "/C/", 1),
+        ];
+        let mut last = Err("数据包中没有这篇文章".to_string());
+        for p in candidates {
+            match self.resolve_link("A/", &p) {
+                Ok(v) => return Ok(v),
+                Err(e) => last = Err(e),
+            }
+        }
+        last
     }
     /// Resolve a relative HTML link to a readable article and its fragment.
     pub fn resolve_link(&self, source: &str, href: &str) -> Result<(String, Option<String>), String> {
@@ -212,7 +329,7 @@ impl Zim {
         for _ in 0..32 {
             let entry = self.entries.get(i).ok_or("无效的 ZIM 重定向")?;
             if let Some(next) = entry.redirect { i = next as usize; continue; }
-            if entry.namespace != b'A' || !entry.mime.as_deref().is_some_and(|m| m.starts_with("text/html")) {
+            if !is_content(entry.namespace) || !entry.mime.as_deref().is_some_and(|m| m.starts_with("text/html")) {
                 return Err("链接目标不是可阅读的文章".into());
             }
             let target = format!("{}/{}", entry.namespace as char, entry.path);
@@ -227,7 +344,7 @@ impl Zim {
         render: Option<&crate::render::RenderOptions>,
     ) -> Result<crate::article::Article, String> {
         let entry = self.entries.get(index).ok_or("Invalid ZIM entry index")?;
-        if entry.namespace != b'A'
+        if !is_content(entry.namespace)
             || !entry
                 .mime
                 .as_deref()
@@ -440,6 +557,9 @@ mod tests {
     }
 
     fn fixture() -> Vec<u8> {
+        fixture_ns(b'A')
+    }
+    fn fixture_ns(namespace: u8) -> Vec<u8> {
         let mut b = vec![0u8; 80];
         b[0..4].copy_from_slice(&0x044d495au32.to_le_bytes());
         b[4..6].copy_from_slice(&5u16.to_le_bytes());
@@ -449,14 +569,14 @@ mod tests {
         b.extend_from_slice(b"text/html\0\0");
         let first = b.len() as u64;
         b.extend_from_slice(&0u16.to_le_bytes());
-        b.extend_from_slice(&[0, b'A']);
+        b.extend_from_slice(&[0, namespace]);
         b.extend_from_slice(&0u32.to_le_bytes());
         b.extend_from_slice(&0u32.to_le_bytes());
         b.extend_from_slice(&0u32.to_le_bytes());
         b.extend_from_slice("正文\0标题\0".as_bytes());
         let redirect = b.len() as u64;
         b.extend_from_slice(&0xffffu16.to_le_bytes());
-        b.extend_from_slice(&[0, b'A']);
+        b.extend_from_slice(&[0, namespace]);
         b.extend_from_slice(&0u32.to_le_bytes());
         b.extend_from_slice(&0u32.to_le_bytes());
         b.extend_from_slice(b"redirect\0\0");
@@ -508,6 +628,60 @@ mod tests {
         });
     }
 
+    /// libzim 6 writes content under `C/`; the `A/` namespace only exists in
+    /// older dumps (2023 Wikihow, for one, is all `C`).
+    #[test]
+    fn reads_content_in_the_c_namespace_of_newer_dumps() {
+        with_file(&fixture_ns(b'C'), |p| {
+            let mut z = Zim::open(p).unwrap();
+            assert_eq!(z.entry_index("C/正文"), Some(0));
+            assert_eq!(z.article_jobs(), vec![0]);
+            assert!(z.article(0, None).unwrap().text.plain.contains("中文内容"));
+            assert_eq!(z.index_doc(0).unwrap().path, "C/正文");
+            assert_eq!(z.resolve_wiki_url("https://zh.wikipedia.org/wiki/正文").unwrap().0, "C/正文");
+            // relative links stay in the article's namespace
+            assert_eq!(z.resolve_link("C/正文", "redirect").unwrap().0, "C/正文");
+        });
+    }
+
+    #[test]
+    fn probe_reads_every_minor_of_major_5_and_6_and_nothing_else() {
+        with_file(&fixture(), |p| {
+            let i = Zim::probe(p).unwrap();
+            assert_eq!((i.major, i.minor, i.entries), (5, 0, 2));
+        });
+        let mut six = fixture();
+        six[4..6].copy_from_slice(&6u16.to_le_bytes());
+        six[6..8].copy_from_slice(&2u16.to_le_bytes());
+        with_file(&six, |p| {
+            let i = Zim::probe(p).unwrap();
+            assert_eq!((i.major, i.minor), (6, 2));
+        });
+        let mut five_one = fixture();
+        five_one[6..8].copy_from_slice(&1u16.to_le_bytes());
+        with_file(&five_one, |p| assert!(Zim::probe(p).is_ok()));
+        let mut four = fixture();
+        four[4..6].copy_from_slice(&4u16.to_le_bytes());
+        with_file(&four, |p| assert!(Zim::probe(p).is_err()));
+    }
+
+    #[test]
+    fn open_reports_progress_and_stops_when_asked_to() {
+        with_file(&fixture(), |p| {
+            let mut seen = Vec::new();
+            let z = Zim::open_with(p, |done, total| {
+                seen.push((done, total));
+                true
+            })
+            .unwrap();
+            assert_eq!(z.entries.len(), 2);
+            assert_eq!(seen.first(), Some(&(0, 2)));
+            assert_eq!(seen.last(), Some(&(2, 2)));
+            let cancelled = Zim::open_with(p, |_, _| false).err();
+            assert_eq!(cancelled.as_deref(), Some("已取消"));
+        });
+    }
+
     #[test]
     fn preserves_safe_links_and_fragment_positions_without_changing_text() {
         let source = include_str!("../../samples/zim/links.html");
@@ -534,6 +708,25 @@ mod tests {
         assert!(wiki_url("https://zh.wikipedia.org/wiki/x?oldid=1").is_none());
         assert!(external_url("javascript:alert(1)").is_none());
         assert!(external_url("https://user:password@example.com/").is_none());
+    }
+
+    #[test]
+    #[ignore = "requires the local ZIM test packages"]
+    fn reads_the_2023_wikihow_archive_in_the_c_namespace() {
+        let mut z = Zim::open(Path::new(r"C:\Devx\smartLib.d\wikihow_zh_maxi_2023-01.zim")).unwrap();
+        let jobs = z.article_jobs();
+        // 14970 HTML articles among 276662 entries in this dump
+        assert!(jobs.len() > 10_000, "只有 {} 个文章", jobs.len());
+        let doc = z.index_doc(jobs[0]).unwrap();
+        assert!(doc.path.starts_with("C/"));
+        assert!(!doc.text.trim().is_empty());
+        // the image JSON lives in a display:none span and must not be text
+        let i = z.entries.iter().position(|e| e.title.contains("缓解严重头痛")).unwrap();
+        let doc = z.index_doc(i).unwrap();
+        assert!(!doc.text.contains("smallUrl"), "图片信息漏进了正文");
+        assert!(doc.text.contains("止痛药"));
+        let html = z.article(i, Some(&crate::render::RenderOptions::default())).unwrap().html.unwrap();
+        assert!(!html.contains("#/File:"), "图片链接被当成了章节链接");
     }
 
     #[test]
