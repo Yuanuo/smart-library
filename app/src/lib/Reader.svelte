@@ -633,7 +633,7 @@
     max-width: var(--reader-max-width, 46em); margin: 0 auto; padding: 16px 24px 48px;
     font-size: var(--reader-size, 19px); /* for the em-based max-width */
   }
-  .line { display: flex; gap: 16px; line-height: var(--reader-line, 2); font-size: var(--reader-size, 19px); font-family: var(--reader-font, inherit); border-radius: 4px; }
+  .line { display: flex; gap: 16px; line-height: var(--reader-line, 2); font-size: var(--reader-size, 19px); font-family: var(--reader-font, var(--font-serif)); border-radius: 4px; }
   .line:global(.flash) { background: var(--focus); animation: fade 2.5s ease-out 0.5s forwards; }
   .lbn {
     flex: none; width: 64px; text-align: right; font-family: ui-monospace, Consolas, monospace;
@@ -648,7 +648,7 @@
   /* structured view: the HTML comes from core/src/render.rs */
   .doc {
     max-width: var(--reader-max-width, 46em); margin: 0 auto; padding: 24px 32px 64px; font-size: var(--reader-size, 19px);
-    line-height: var(--reader-line, 2); letter-spacing: var(--reader-spacing, 0.04em); font-family: var(--reader-font, inherit);
+    line-height: var(--reader-line, 2); letter-spacing: var(--reader-spacing, 0.04em); font-family: var(--reader-font, var(--font-serif));
     font-weight: var(--reader-weight, 400); -webkit-text-stroke-width: var(--reader-stroke, 0);
   }
   /* The browser's default for <b>/<strong> is "bolder", a relative keyword that

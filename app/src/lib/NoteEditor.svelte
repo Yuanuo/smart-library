@@ -270,8 +270,8 @@
     --crepe-color-hover: var(--accent-soft);
     --crepe-color-selected: var(--accent-soft);
     --crepe-color-inline-area: var(--bg);
-    --crepe-font-default: var(--reader-font, inherit);
-    --crepe-font-title: var(--reader-font, inherit);
+    --crepe-font-default: var(--reader-font, var(--font-serif));
+    --crepe-font-title: var(--reader-font, var(--font-serif));
     min-height: 100%;
   }
   .note-editor :global(.milkdown .ProseMirror) { padding: 24px 56px 80px; font-size: var(--reader-size, 19px); line-height: var(--reader-line, 1.9); }

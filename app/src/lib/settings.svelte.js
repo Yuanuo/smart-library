@@ -4,11 +4,31 @@
 // change in one window reaches the others through the `storage` event.
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
-export const FONTS = [
+// Font presets. `default` means "whatever the platform calls its own": the
+// interface takes the system UI sans (Segoe UI / San Francisco / Noto Sans),
+// reading text takes the system CJK serif (宋体 / 細明體 / Songti), which is
+// what makes a page read like a book. The stacks themselves live in app.css as
+// --font-ui and --font-serif; a null stack just drops the inline variable so
+// those defaults apply. That is why the two lists have different defaults: the
+// same word "default" lands on a sans for the UI and a serif for the reader.
+const SANS = '"Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif';
+const SERIF = '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Songti TC", "Songti SC", "Noto Serif TC", "Noto Serif CJK TC", "Source Han Serif TC", "PMingLiU", "MingLiU", "SimSun", serif';
+const KAI = '"KaiTi", "Kaiti TC", "STKaiti", "AR PL UKai TW", serif';
+const MONO = 'Consolas, "Courier New", "MingLiU", monospace';
+
+export const UI_FONTS = [
+  ["default", "系统默认（推荐）", null],
+  ["serif", "宋体 / 明体", SERIF],
+  ["kai", "楷体", KAI],
+  ["mono", "等宽", MONO],
+  ["custom", "自定义…", null],
+];
+
+export const READER_FONTS = [
   ["default", "宋体 / 明体（默认）", null],
-  ["sans", "黑体 / 无衬线", '"Microsoft YaHei", "Noto Sans TC", "Noto Sans SC", "PingFang SC", "PingFang TC", sans-serif'],
-  ["kai", "楷体", '"KaiTi", "Kaiti TC", "STKaiti", "AR PL UKai TW", serif'],
-  ["mono", "等宽", 'Consolas, "Courier New", "MingLiU", monospace'],
+  ["sans", "黑体 / 无衬线", SANS],
+  ["kai", "楷体", KAI],
+  ["mono", "等宽", MONO],
   ["custom", "自定义…", null],
 ];
 
@@ -99,6 +119,10 @@ function load() {
     if (!WEIGHTS[raw.readerWeight]) {
       raw.readerWeight = "std";
     }
+    // "sans" used to be a UI font preset; the UI's default is that stack now
+    if (raw.uiFont === "sans") {
+      raw.uiFont = "default";
+    }
     if (!SELECT_LOOKUP_MODES.some(([v]) => v === raw.selectLookup)) {
       raw.selectLookup = "ctrl";
     }
@@ -148,11 +172,12 @@ export function toBackendAiConfig(preset = activeAiPreset()) {
   };
 }
 
-function stack(kind, custom, fallback) {
+function stack(kind, custom, fallback, list) {
   if (kind === "custom") return custom.trim() ? `"${custom.trim().replace(/"/g, "")}", ${fallback}` : null;
   // a font installed on this computer: `sys:<family>`
   if (kind.startsWith("sys:")) return `"${kind.slice(4).replace(/"/g, "")}", ${fallback}`;
-  return FONTS.find((f) => f[0] === kind)?.[2] ?? null;
+  // "default" (and any value from an older version) keeps the CSS default
+  return list.find((f) => f[0] === kind)?.[2] ?? null;
 }
 
 let appliedZoom = 100;
@@ -163,8 +188,8 @@ export function apply() {
   if (settings.theme === "auto") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", settings.theme);
   const set = (name, value) => (value == null ? root.style.removeProperty(name) : root.style.setProperty(name, value));
-  set("--ui-font", stack(settings.uiFont, settings.uiFontCustom, "sans-serif"));
-  set("--reader-font", stack(settings.readerFont, settings.readerFontCustom, "serif"));
+  set("--ui-font", stack(settings.uiFont, settings.uiFontCustom, "sans-serif", UI_FONTS));
+  set("--reader-font", stack(settings.readerFont, settings.readerFontCustom, "serif", READER_FONTS));
   set("--reader-size", `${settings.readerSize}px`);
   set("--reader-line", String(settings.readerLine));
   set("--reader-spacing", `${settings.readerSpacing}em`);

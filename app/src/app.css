@@ -11,8 +11,15 @@
   --hl-bg: #fde3c8;
   --focus: #fff1a8;
   --note: #2f8f5b;
-  --font-serif: "Noto Serif TC", "Source Han Serif TC", "PMingLiU", "MingLiU", "SimSun", serif;
-  font-family: var(--ui-font, var(--font-serif));
+  /* Interface: the platform's own UI face for Latin and its CJK sans next to
+     it (Segoe UI + Microsoft YaHei, SF + PingFang, Cantarell + Noto Sans CJK).
+     Small text in a hinted serif (SimSun) looks poor, so the chrome stays sans. */
+  --font-ui: system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB",
+    "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif;
+  /* Reading: a book serif for Latin, the platform's CJK serif behind it. */
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Songti TC", "Songti SC",
+    "Noto Serif TC", "Noto Serif CJK TC", "Source Han Serif TC", "PMingLiU", "MingLiU", "SimSun", serif;
+  font-family: var(--ui-font, var(--font-ui));
   color: var(--ink);
   background: var(--bg);
 }

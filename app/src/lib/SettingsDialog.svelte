@@ -4,7 +4,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import * as api from "./api.js";
   import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import { settings, update, reset, FONTS, WEIGHT_LEVELS, SELECT_LOOKUP_MODES, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
+  import { settings, update, reset, UI_FONTS, READER_FONTS, WEIGHT_LEVELS, SELECT_LOOKUP_MODES, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
   import { SHORTCUT_DEFS, getShortcut, comboParts, eventToCombo, setShortcutRecording } from "./shortcuts.js";
   import DialogHeader from "./DialogHeader.svelte";
 
@@ -506,9 +506,9 @@
   const shown = (f) => (f.label !== f.family ? `${f.label}（${f.family}）` : f.family);
 </script>
 
-{#snippet picker(field, customField, hint)}
+{#snippet picker(field, customField, hint, list)}
   <select value={settings[field]} onchange={(e) => update({ [field]: e.currentTarget.value })}>
-    {#each FONTS.filter((f) => f[0] !== "custom") as [v, label]}<option value={v}>{label}</option>{/each}
+    {#each list.filter((f) => f[0] !== "custom") as [v, label]}<option value={v}>{label}</option>{/each}
     {#if cjk.length}
       <optgroup label="本机中文字体">
         {#each cjk as f (f.family)}<option value={"sys:" + f.family} style="font-family: '{css(f.family)}'">{shown(f)}</option>{/each}
@@ -560,7 +560,7 @@
             </div>
             <div class="row">
               <span>界面字体</span>
-              {@render picker("uiFont", "uiFontCustom", "字体名称，如 Microsoft YaHei")}
+              {@render picker("uiFont", "uiFontCustom", "字体名称，如 Microsoft YaHei", UI_FONTS)}
             </div>
           </div>
 
@@ -572,7 +572,7 @@
           <div class="card">
             <div class="row">
               <span>字体</span>
-              {@render picker("readerFont", "readerFontCustom", "字体名称，如 KaiTi")}
+              {@render picker("readerFont", "readerFontCustom", "字体名称，如 KaiTi", READER_FONTS)}
             </div>
             <div class="row">
               <span>字号</span>
@@ -1066,7 +1066,7 @@
   .seg button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
   .sample {
     margin: 0; padding: 10px 14px; background: var(--bg); border-radius: 6px;
-    font-family: var(--reader-font, inherit); font-size: var(--reader-size, 19px); line-height: var(--reader-line, 2);
+    font-family: var(--reader-font, var(--font-serif)); font-size: var(--reader-size, 19px); line-height: var(--reader-line, 2);
     letter-spacing: var(--reader-spacing, 0.04em);
     font-weight: var(--reader-weight, 400); -webkit-text-stroke-width: var(--reader-stroke, 0);
   }
