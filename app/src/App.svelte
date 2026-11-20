@@ -209,13 +209,19 @@
       });
       if (!path) return;
       notice = "正在导入…";
+      const before = new Set(libraries.map((l) => l.id));
       const r = await api.importPackage(path, target?.lib ?? null, target?.parent ?? null);
       st = r.status;
       if (target) {
         await libPanel?.reloadNode(target.lib, target.key);
         notice = `已导入到「${r.title}」：${r.notes} 篇笔记。`;
       } else {
-        notice = `已导入「${r.title}」：${r.notes} 篇笔记。右键知识库可以建立索引。`;
+        const added = (r.status?.libraries || []).filter((l) => !before.has(l.id));
+        const toIndex = added.filter((l) => !l.index_ready && !l.building && !l.error);
+        for (const l of toIndex) startIndex(l.id);
+        notice = toIndex.length
+          ? `已导入「${r.title}」：${r.notes} 篇笔记，正在后台建立索引…`
+          : `已导入「${r.title}」：${r.notes} 篇笔记。`;
       }
       api.prepareTitles().catch(() => {});
     } catch (e) {
@@ -766,8 +772,12 @@
     st = newStatus;
     binding = null;
     const added = newStatus.libraries.filter((l) => !before.has(l.id));
+    const toIndex = added.filter((l) => !l.index_ready && !l.building && !l.error);
+    for (const l of toIndex) startIndex(l.id);
     notice = added.length
-      ? `已绑定：${added.map((l) => l.title).join("、")}。右键知识库可以建立索引。`
+      ? toIndex.length
+        ? `已添加：${added.map((l) => l.title).join("、")}，正在后台建立索引…`
+        : `已添加：${added.map((l) => l.title).join("、")}。`
       : "目录树已更新。";
     api.prepareTitles().catch(() => {});
   }
