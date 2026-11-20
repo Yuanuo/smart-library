@@ -25,6 +25,8 @@
 
 注意两个方向不互通：构建完成后在草稿里修改说明，只改网页正文，**不会**回写 `latest.json` 的 `notes`。要让已构建版本的更新弹窗显示新文字，只能在 Release 里替换 `latest.json` 资产（下载、改 `notes`、删除原资产、重新上传同名文件，`platforms` 保持不动）。
 
+`latest.json` 里的下载地址也要留意。tauri-action 生成的是 `https://api.github.com/repos/<owner>/<repo>/releases/assets/<id>`；不带令牌访问这个接口时，每个 IP 每小时只有 60 次限额，共用出口地址的用户会在更新时遇到 `Download request failed with status: 403 Forbidden`。草稿发布后，「Fix updater JSON」工作流（`.github/workflows/fix-updater-json.yml`，调用 `tools/fix-updater-json.cjs`）会把每个地址换成 `https://github.com/<owner>/<repo>/releases/download/<标签>/<文件名>` 并替换该资产，发布后一两分钟内完成。手工替换 `latest.json` 时，`url` 也要按这个格式写。
+
 首次安装要从 Release 下载并运行安装程序；已经发布、没有内置该更新功能或使用不同签名公钥的版本不能凭空获得自动更新。当前程序的数据保存在程序目录旁的 `data` 文件夹：请在正式发布前，用测试数据和两个连续版本实际测试升级，确认数据、设置和笔记都保留。更新不会自动把已有便携版的数据迁移到新安装位置，迁移前应先备份。
 
 本地普通开发构建默认未配置更新地址和公钥；通过 GitHub Actions 发布时工作流将其注入构建配置，不会把私钥写进源代码。

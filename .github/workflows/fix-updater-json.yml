@@ -1,0 +1,35 @@
+name: Fix updater JSON
+
+# tauri-action writes latest.json with api.github.com asset URLs. Anonymous
+# downloads through that endpoint share GitHub's 60 requests/hour per-IP limit,
+# so clients behind a shared address hit "403 Forbidden" while updating. Once
+# the draft Release is published, the same files are also available at
+# https://github.com/<owner>/<repo>/releases/download/<tag>/<name>, which is not
+# rate limited this way. Rewrite the asset as soon as the Release goes live.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  rewrite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Point latest.json at the public download URLs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=$(mktemp -d)
+          gh release download "$TAG" --repo "$REPO" --pattern latest.json --dir "$dir" --clobber
+          gh api "repos/$REPO/releases/tags/$TAG" \
+            --jq '.assets[] | "\(.id)\t\(.name)"' > "$dir/assets.tsv"
+          node tools/fix-updater-json.cjs "$dir/latest.json" "$dir/assets.tsv" "$REPO" "$TAG"
+          gh release upload "$TAG" "$dir/latest.json" --repo "$REPO" --clobber
