@@ -21,7 +21,9 @@
 
 发版当天先跑 `node tools/stamp-version.cjs`（`npm run tauri build` 也会自动盖章；`tauri dev` 不盖章），把 `app/src-tauri/tauri.conf.json`、`app/src-tauri/Cargo.toml`、`app/package.json` 等五处版本写成当天日期（例如 `26.11.18`），同时更新 `Cargo.lock` 和 `app/package-lock.json`；提交这些文件后推送同日期的标签 `v26.11.18`。工作流会校验标签与 Tauri 版本一致；GitHub Actions 里的构建不再盖章，用的就是提交里的版本。不要发布不含 `latest.json` 的普通正式 Release，否则 GitHub 的 latest 地址可能指向它。
 
-发布前把本次改动写进 `CHANGELOG.md`（按版本号分段，分新增 / 改进 / 修复），再把同一段内容填进 GitHub 草稿 Release 的更新说明——草稿的说明默认只是一句占位文字。
+发布前把本次改动写进 `CHANGELOG.md`（按版本号分段，分新增 / 改进 / 修复）。工作流的「Read release notes from CHANGELOG.md」步骤会按 `app/package.json` 的版本号取出对应那一节，把 `### 新增` 这样的标题改成 `【新增】`（更新弹窗按纯文本显示），作为草稿 Release 的说明；`latest.json` 的 `notes` 也用这同一段文字，旧版用户检查更新时看到的就是它。取不到对应段落时退回「请在发布前填写更新说明。」。
+
+注意两个方向不互通：构建完成后在草稿里修改说明，只改网页正文，**不会**回写 `latest.json` 的 `notes`。要让已构建版本的更新弹窗显示新文字，只能在 Release 里替换 `latest.json` 资产（下载、改 `notes`、删除原资产、重新上传同名文件，`platforms` 保持不动）。
 
 首次安装要从 Release 下载并运行安装程序；已经发布、没有内置该更新功能或使用不同签名公钥的版本不能凭空获得自动更新。当前程序的数据保存在程序目录旁的 `data` 文件夹：请在正式发布前，用测试数据和两个连续版本实际测试升级，确认数据、设置和笔记都保留。更新不会自动把已有便携版的数据迁移到新安装位置，迁移前应先备份。
 

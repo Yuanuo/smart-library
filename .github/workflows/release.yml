@@ -43,6 +43,24 @@ jobs:
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci --legacy-peer-deps
+      - name: Read release notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        run: |
+          version=$(node -p "require('./app/package.json').version")
+          body=$(awk -v ver="$version" 'BEGIN { gsub(/\./, "[.]", ver) }
+            $0 ~ "^## " ver "( |$)" { inside = 1; next }
+            inside && /^## / { inside = 0 }
+            inside { print }
+          ' CHANGELOG.md | sed -E 's/^### +(.+)$/【\1】/; s/\*\*//g; s/`//g' | sed -e '/./,$!d' | awk 'NF { last = NR } { line[NR] = $0 } END { for (i = 1; i <= last; i++) print line[i] }')
+          if [ -z "$body" ]; then
+            body='请在发布前填写更新说明。'
+          fi
+          {
+            echo "body<<RELEASE_NOTES_EOF"
+            echo "$body"
+            echo "RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
       - name: Configure signed updater
         shell: pwsh
         env:
@@ -60,7 +78,7 @@ jobs:
           projectPath: app
           tagName: v__VERSION__
           releaseName: Smart Library v__VERSION__
-          releaseBody: '请在发布前填写更新说明。'
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

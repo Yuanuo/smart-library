@@ -33,7 +33,7 @@
   .dialog { width: min(500px, calc(100vw - 32px)); }
   h2 { font-size: 18px; color: var(--accent); }
   p { margin: 0 0 8px; }
-  .notes { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+  .notes { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; max-height: 40vh; overflow-y: auto; }
   .error { color: var(--hl); overflow-wrap: anywhere; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
   progress { width: 100%; }
