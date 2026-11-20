@@ -156,6 +156,7 @@ npm run tauri build
 开发与发布文档：
 
 - [设计规范](docs/design-spec.md)
+- [更新日志](CHANGELOG.md)
 - [Windows 发布与自动更新](docs/windows-release.md)
 
 ## 开源许可与致谢

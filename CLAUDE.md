@@ -54,6 +54,8 @@
 
 - 版本号 `YY.MM.DD`：每次 `npm run tauri build` 前由 `tools/stamp-version.cjs` 按当天本地日期写入五处（`core`、`cli`、`app/src-tauri` 的 Cargo.toml、`tauri.conf.json`、`app/package.json`），并同步 `Cargo.lock`、`app/package-lock.json`；文件里是 semver（不补零），界面补零显示。GitHub Actions 直接跑 `tauri build`，不盖章，用标签的版本；发版当天先提交盖章后的文件，再打同日期的标签。
 
+- 发版时更新 `CHANGELOG.md`：按版本号写一段（新增 / 改进 / 修复），并把同一段填进 GitHub 草稿 Release 的更新说明。
+
 - `core` 不依赖界面或 Tauri；适配器只产生 `IndexDoc`，不碰 Tantivy。
 - 渲染器分层：HTML 阅读器（`article.rs`）是通用实现，数据源差异写进 `Rules`（`PLAIN_RULES` / `ZIM_RULES`），不在通用分支里加 `if 源 == …`。CBETA 经文走自己的 `render.rs`。新数据源的兼容性改动只落在它自己的规则里，并配该源的测试，见 design-spec「渲染器分层」。
 - 永不修改源数据；索引等衍生数据都能删除后重建。
