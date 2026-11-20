@@ -90,6 +90,8 @@ AI 助手默认关闭。启用后，参与对话的内容会发送到你配置�
 
 Smart Library 面向 **Windows、macOS 与 Linux**。前往 [GitHub Releases](https://github.com/Yuanuo/smart-library/releases) 选择适合自己系统的安装包，按对应版本的说明安装。
 
+Windows 需要 **Windows 10（1803 及以上）**；Windows 7 和 8.1 不受支持——界面依赖的 Microsoft Edge WebView2 自 2023 年初起已停止支持这两个系统，新版内核在它们上面无法启动。
+
 各版本提供的平台、系统要求、安装与更新方式，以及平台验证情况，以对应的 Release 说明为准。
 
 ### 运行时依赖的 WebView
@@ -98,11 +100,13 @@ Smart Library 面向 **Windows、macOS 与 Linux**。前往 [GitHub Releases](ht
 
 | 平台 | 运行时依赖 |
 | --- | --- |
-| Windows | Microsoft Edge WebView2（Windows 11 及较新的 Windows 10 已内置；旧版系统需先安装 WebView2 运行时） |
+| Windows | Microsoft Edge WebView2（Windows 11 及较新的 Windows 10 已内置；缺少时安装程序会自动联网下载并安装，也可以先手动装好运行时再装程序） |
 | macOS | 系统自带的 WKWebView（随 macOS 提供） |
 | Linux | WebKitGTK（如 `webkit2gtk-4.1`，多数发行版需用包管理器另行安装） |
 
 WebView 的版本会影响界面渲染、字体和页面内的查找栏等表现；如果窗口空白或界面显示异常，先检查对应的 WebView 组件是否已安装并更新到较新版本。
+
+Windows 安装程序默认联网获取 WebView2，安装包本身不带浏览器内核。完全离线的环境需要先手动安装 WebView2 运行时；确有需要的话，后续可以另外提供带内核的安装包。
 
 ### 数据保存与备份
 
