@@ -69,18 +69,37 @@ fn endpoint_url(format: &str, base_url: &str) -> String {
     }
 }
 
-fn models_url(base_url: &str) -> String {
+fn models_url_candidates(format: &str, base_url: &str) -> Vec<(String, bool)> {
     let mut base = base_url.trim().trim_end_matches('/');
     if let Some(stripped) = base.strip_suffix("/chat/completions") {
         base = stripped.trim_end_matches('/');
     } else if let Some(stripped) = base.strip_suffix("/messages") {
         base = stripped.trim_end_matches('/');
     }
-    if base.ends_with("/v1") || base.ends_with("/v3") || base.ends_with("/v4") {
+    let primary = if base.ends_with("/v1") || base.ends_with("/v3") || base.ends_with("/v4") {
         format!("{}/models", base)
     } else {
         format!("{}/v1/models", base)
+    };
+
+    let is_anthropic = format == "anthropic";
+    let mut out = vec![(primary, is_anthropic)];
+
+    // Many Anthropic-compatible gateways (e.g. DeepSeek's `.../anthropic`,
+    // `.../anthropic/v1`) serve `/v1/messages` under `/anthropic` while keeping
+    // the model listing endpoint at the root (`/v1/models` or `/models`) with
+    // OpenAI-style Bearer auth.
+    if is_anthropic {
+        let without_ver = base.strip_suffix("/v1").unwrap_or(base).trim_end_matches('/');
+        if let Some(root) = without_ver.strip_suffix("/anthropic") {
+            let root = root.trim_end_matches('/');
+            if !root.is_empty() && root.contains("://") {
+                out.push((format!("{}/v1/models", root), false));
+                out.push((format!("{}/models", root), false));
+            }
+        }
     }
+    out
 }
 
 pub async fn fetch_models(
@@ -91,32 +110,59 @@ pub async fn fetch_models(
     if base_url.trim().is_empty() {
         return Err("请先填写大模型接口地址（Base URL）".into());
     }
-    let url = models_url(&base_url);
+    let candidates = models_url_candidates(&format, &base_url);
     let client = build_client(Some(15))?;
-    let mut req = client.get(&url);
     let key = api_key.trim();
-    if format == "anthropic" {
-        if !key.is_empty() {
-            req = req.header("x-api-key", key);
+
+    let mut last_err: Option<String> = None;
+    let mut body_ok: Option<String> = None;
+
+    for (idx, (url, use_anthropic_headers)) in candidates.iter().enumerate() {
+        let mut req = client.get(url);
+        if *use_anthropic_headers {
+            if !key.is_empty() {
+                req = req.header("x-api-key", key);
+            }
+            req = req.header("anthropic-version", "2023-06-01");
+        } else if !key.is_empty() {
+            req = req.bearer_auth(key);
         }
-        req = req.header("anthropic-version", "2023-06-01");
-    } else if !key.is_empty() {
-        req = req.bearer_auth(key);
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                if last_err.is_none() {
+                    last_err = Some(format!("获取模型列表失败：{}", e));
+                }
+                continue;
+            }
+        };
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("读取模型列表响应失败：{}", e))?;
+        if status.is_success() {
+            body_ok = Some(body);
+            break;
+        }
+        let preview: String = body.chars().take(240).collect();
+        let err_msg = format!("获取模型列表失败 ({}): {}", status.as_u16(), preview);
+        if idx == 0 {
+            last_err = Some(err_msg);
+        }
+        // Only fall back when the endpoint path itself is not found / not allowed
+        if status.as_u16() != 404 && status.as_u16() != 405 {
+            return Err(last_err.unwrap_or_else(|| {
+                format!("获取模型列表失败 ({}): {}", status.as_u16(), preview)
+            }));
+        }
     }
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("获取模型列表失败：{}", e))?;
-    let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| format!("读取模型列表响应失败：{}", e))?;
-    if !status.is_success() {
-        let preview: String = body.chars().take(240).collect();
-        return Err(format!("获取模型列表失败 ({}): {}", status.as_u16(), preview));
-    }
+    let body = match body_ok {
+        Some(b) => b,
+        None => return Err(last_err.unwrap_or_else(|| "获取模型列表失败".into())),
+    };
 
     let json: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("解析模型列表 JSON 失败：{}", e))?;
@@ -694,4 +740,38 @@ async fn stream_inner(
         .into_values()
         .filter(|c| !c.name.is_empty())
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_models_url_falls_back_when_suffix_is_anthropic() {
+        let c1 = models_url_candidates("anthropic", "https://api.deepseek.com/anthropic");
+        assert_eq!(
+            c1,
+            vec![
+                ("https://api.deepseek.com/anthropic/v1/models".into(), true),
+                ("https://api.deepseek.com/v1/models".into(), false),
+                ("https://api.deepseek.com/models".into(), false),
+            ]
+        );
+
+        let c2 = models_url_candidates("anthropic", "https://api.deepseek.com/anthropic/v1");
+        assert_eq!(
+            c2,
+            vec![
+                ("https://api.deepseek.com/anthropic/v1/models".into(), true),
+                ("https://api.deepseek.com/v1/models".into(), false),
+                ("https://api.deepseek.com/models".into(), false),
+            ]
+        );
+
+        let c3 = models_url_candidates("anthropic", "https://api.anthropic.com");
+        assert_eq!(
+            c3,
+            vec![("https://api.anthropic.com/v1/models".into(), true)]
+        );
+    }
 }
