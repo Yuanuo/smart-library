@@ -221,3 +221,7 @@ export const purgeDeletedNotes = (lib) => invoke("purge_deleted_notes", { lib })
 export const getSnapshotPolicy = () => invoke("get_snapshot_policy");
 export const setSnapshotPolicy = (aiMaxPerDoc, aiTtlDays) =>
   invoke("set_snapshot_policy", { aiMaxPerDoc, aiTtlDays });
+
+// ------------------------------------------------------------ local Agent (MCP)
+export const mcpStatusGet = () => invoke("mcp_status_get");
+export const mcpConfigSet = (config) => invoke("mcp_config_set", { config });

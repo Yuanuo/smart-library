@@ -685,6 +685,13 @@
         }
         api.prepareTitles().catch(() => {});
       }),
+      listen("library-mutated", async (e) => {
+        const lib = e.payload?.lib;
+        const path = e.payload?.path;
+        await refresh();
+        if (lib) libPanel?.reloadNode?.(lib, "");
+        if (lib && path) workspace.refreshDocument(lib, path);
+      }),
     ];
     const un0a = api.onTitlesProgress((p) => (titlesProgress[p.lib] = p));
     const un0b = api.onTitlesDone((d) => delete titlesProgress[d.lib]);

@@ -486,10 +486,13 @@
     list_libraries: "列出知识库",
     get_library_tree: "浏览目录树",
     search_library: "搜索知识库",
+    quick_search: "标题快搜",
     read_document: "读取文档",
     list_recent_history: "查看最近历史",
     list_marks_and_tags: "查看书签与标签",
     get_node_tags: "读取文档标签",
+    dict_lookup: "查询词典",
+    dict_search: "搜索词条",
     set_node_tags: "设置文档标签",
     add_bookmark: "添加书签/摘录",
     create_note: "新建文档",
@@ -504,7 +507,7 @@
     const label = TOOL_LABELS[tc.name] || tc.name;
     try {
       const args = JSON.parse(tc.arguments || "{}");
-      const detail = args.query || args.title || args.name || args.path || args.id || args.lib || "";
+      const detail = args.query || args.word || args.title || args.name || args.path || args.id || args.lib || "";
       return detail ? `${label}: ${String(detail).slice(0, 36)}` : label;
     } catch {
       return label;

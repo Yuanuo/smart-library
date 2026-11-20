@@ -1,5 +1,7 @@
 //! smart-library-cli: command line front end of Smart Library used to check the core library against a real bookcase.
 
+mod mcp_bridge;
+
 use smart_library_core::bookcase::Bookcase;
 use smart_library_core::catalog::Book;
 use smart_library_core::nav::NavNode;
@@ -38,6 +40,10 @@ fn usage() {
       import: TXT (【词条】词义), StarDict (.ifo/.idx/.dict), MDict (.mdx/.mdd)
       the default output directory is app_data/dicts
 
+  smart-library mcp-bridge [--url http://127.0.0.1:27123/mcp] [--token <token>]
+      stdio-to-HTTP bridge for MCP clients that only support stdio transport
+      (also reads SMART_LIBRARY_MCP_URL and SMART_LIBRARY_MCP_TOKEN)
+
   The index directory defaults to app_data/repos/cbeta/index (it can be deleted and rebuilt).
   search: loose match by default (every bigram in the same volume; a space separates
   keywords); --phrase for an exact phrase (punctuation ignored)."
@@ -46,6 +52,13 @@ fn usage() {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("mcp-bridge") {
+        if let Err(e) = mcp_bridge::run(&args[2..]) {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if args.len() < 3 {
         usage();
         std::process::exit(2);

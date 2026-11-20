@@ -9,6 +9,7 @@ mod ai;
 mod ai_tools;
 mod commands;
 mod fonts;
+mod mcp_server;
 
 use commands::AppState;
 use tauri::Manager;
@@ -72,6 +73,9 @@ fn main() {
                         if let Some(st) = window.app_handle().try_state::<AppState>() {
                             st.save_window_state();
                         }
+                        if let Some(mcp) = window.app_handle().try_state::<mcp_server::McpRuntime>() {
+                            mcp.stop();
+                        }
                         window.app_handle().exit(0);
                     }
                     _ => {}
@@ -83,7 +87,7 @@ fn main() {
                 Some(dirs) => dirs,
                 None => (app.path().app_config_dir()?, app.path().app_data_dir()?),
             };
-            let state = AppState::new(config_dir, data_dir);
+            let state = AppState::new(config_dir.clone(), data_dir);
             if let Some(main_win) = app.get_webview_window("main") {
                 if let Some(ws) = state.saved_window_state() {
                     if ws.width >= 400 && ws.height >= 300 {
@@ -114,6 +118,8 @@ fn main() {
                 let _ = main_win.set_focus();
             }
             app.manage(state);
+            let mcp = mcp_server::init_and_start(app.handle(), &config_dir);
+            app.manage(mcp);
             // pictures no note has referred to for 24 hours: look every few hours
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
@@ -261,6 +267,8 @@ fn main() {
             commands::purge_deleted_notes,
             commands::get_snapshot_policy,
             commands::set_snapshot_policy,
+            mcp_server::mcp_status_get,
+            mcp_server::mcp_config_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Smart Library");

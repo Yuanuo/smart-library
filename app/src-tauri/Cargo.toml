@@ -19,6 +19,8 @@ tauri-plugin-updater = "2"
 reqwest = { version = "0.13", default-features = false, features = ["stream", "json"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 futures-util = "0.3"
+tokio = { version = "1", features = ["net", "io-util", "sync", "rt", "macros", "time"] }
+httparse = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell"] }

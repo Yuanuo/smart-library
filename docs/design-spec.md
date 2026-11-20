@@ -721,9 +721,14 @@ app_data/
   - **Markdown 笔记**：AI 回复代码块或正文可一键「追加到笔记」或「替换笔记内容」，也可将任意回复「存为新笔记」。
   - **脑图（Mind-Elixir）**：`core/src/mindmap.rs` 新增 `from_outline_or_json`，支持将 AI 输出的 Markdown 缩进列表/标题大纲或 Mind-Elixir JSON 解析为脑图节点树；在脑图侧栏可一键「追加为选中节点的分支」或「替换整张脑图」。
   - **白板（Excalidraw）**：`WhiteboardView.svelte` 支持让 AI 生成 Excalidraw 图元骨架 JSON（或将列表自动转为带连线的流程图框），通过 `convertToExcalidrawElements` 一键「追加到白板」或「替换白板」。
-- **后续规划（AI 工具调用 / Agent 能力，待实现）**：
-  - 当前 AI 助手仅支持被动读取当前激活标签页上下文、用户显式引用的多篇文档，以及通过界面按钮将回复写入当前激活的可读写文档或另存为默认位置的新笔记/脑图；尚未接入大模型的 Tool Calling（函数调用）循环。
-  - 后续可扩展工具调用机制（OpenAI `tools` / Anthropic `tool_use`），使 AI 助手在会话中按需自主调用程序内部能力（写操作需带确认或可撤销提示）：
-    1. **检索与读取**：自主调用全文搜索（`search`）、标题快搜（`quick_search`）、目录树浏览（`tree_root` / `tree_children`）与文档正文读取（`ai_doc_text`）。
-    2. **历史与收藏标签**：查询最近阅读历史（`recent_list`）、查询/添加书签与收藏（`marks_list` / `mark_add`）、读写节点标签（`node_tags_get` / `node_tags_set`）。
-    3. **文档与目录结构管理**：在内部知识库的指定节点下新建不同类型文档（笔记 / 脑图 / 白板，或直接写入/追加到指定文档 `note_append` / `save_note`）、在读写模式的本地文件夹知识库中新建文件夹与文档（`folder_mkdir` / `folder_create` 等）。
+- **本地 Agent（MCP）服务（2026-11）**：
+  - 桌面端内置轻量 HTTP/MCP 服务（`app/src-tauri/src/mcp_server.rs`），严格仅监听 `127.0.0.1:<port>`（默认端口 `27123`），在程序运行期间直接共享唯一的 `AppState`（复用 Tantivy 索引、脏队列、SQLite 连接、词典与快照机制，避免多进程锁冲突）。
+  - 协议与端点：
+    - `POST /mcp`：MCP Streamable HTTP（JSON-RPC 2.0，实现 `initialize`、`notifications/initialized`、`ping`、`tools/list`、`tools/call`），直接兼容 Claude Code、Codex、Cursor、Cherry Studio、Antigravity 等主流 MCP 客户端。
+    - `GET /health`、`GET /api/tools`、`POST /api/tools/<name>`：轻量本地 REST 接口，方便脚本与非 MCP Agent 调用。
+    - `smart-library mcp-bridge [--url http://127.0.0.1:27123/mcp] [--token <token>]`（`cli/src/mcp_bridge.rs`）：零外部依赖的 stdio-to-HTTP 桥接子命令，兼容仅支持 stdio 传输的旧 MCP 客户端（也读取 `SMART_LIBRARY_MCP_URL` / `SMART_LIBRARY_MCP_TOKEN`）。
+  - 能力与权限控制（与内置 AI 助手共用 `app/src-tauri/src/ai_tools.rs`）：
+    - 工具集包含 10 个只读工具（`list_libraries`、`get_library_tree`、`search_library`、`quick_search`、`read_document` 支持 `offset` 分段、`list_recent_history`、`list_marks_and_tags`、`get_node_tags`、`dict_lookup`、`dict_search`）与 8 个写入工具（`create_note`、`edit_note`、`create_folder`、`rename_node`、`move_node`、`delete_node`、`set_node_tags`、`add_bookmark`）。
+    - 配置保存在 `<config_dir>/mcp.json`（默认关闭、开启时默认允许写入并以警告色标示），支持热启停、端口配置、只读/读写模式切换、可选 Bearer Token 鉴权以及「禁止访问的知识库」列表（`denied_libs`，默认允许全部，被屏蔽库在跨库查询与直连调用中均不可见/不可访问）。
+    - 写入防线：所有文档/目录写操作执行前均先检查目标知识库是否可写（`notes` 库或 `writable=true` 的 `folder` 库；只读库直接拒绝）；编辑前自动创建快照，删除进入回收站；写入成功后后端广播 `library-mutated` 事件，前端自动刷新目录树与已打开文档。
+  - 设置页（`SettingsDialog.svelte` →「本地 Agent」标签页）提供一键开关、权限与禁止库勾选，以及 Streamable HTTP / stdio 桥接两套客户端配置 JSON 的一键复制。

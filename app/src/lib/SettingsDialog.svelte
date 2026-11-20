@@ -18,6 +18,7 @@
     ["custom", "自定义"],
     ["daily", "每日一句"],
     ["ai", "AI 助手"],
+    ["mcp", "本地 Agent"],
     ["shortcuts", "快捷键"],
     ["clean", "数据清理"],
   ];
@@ -290,13 +291,144 @@
   let writableLibs = $state([]);
   const curPreset = $derived(activeAiPreset());
 
+  let allLibs = $state([]);
+  let mcpConfig = $state({
+    enabled: false,
+    port: 27123,
+    allow_write: true,
+    token: "",
+    denied_libs: [],
+  });
+  let mcpRunning = $state(false);
+  let mcpUrl = $state("http://127.0.0.1:27123/mcp");
+  let mcpError = $state("");
+  let mcpSaving = $state(false);
+  let mcpCopied = $state("");
+
+  async function loadMcpStatus() {
+    try {
+      const st = await api.mcpStatusGet();
+      mcpRunning = !!st.running;
+      mcpUrl = st.url || `http://127.0.0.1:${st.config?.port || 27123}/mcp`;
+      mcpError = st.error || "";
+      if (st.config) {
+        mcpConfig = {
+          enabled: !!st.config.enabled,
+          port: Number(st.config.port) || 27123,
+          allow_write: !!st.config.allow_write,
+          token: st.config.token || "",
+          denied_libs: Array.isArray(st.config.denied_libs) ? [...st.config.denied_libs] : [],
+        };
+      }
+    } catch (e) {
+      mcpError = String(e);
+    }
+  }
+
+  async function saveMcpConfig(nextCfg = mcpConfig) {
+    mcpSaving = true;
+    mcpError = "";
+    try {
+      const payload = {
+        enabled: !!nextCfg.enabled,
+        port: Math.max(1024, Math.min(65535, Number(nextCfg.port) || 27123)),
+        allow_write: !!nextCfg.allow_write,
+        token: String(nextCfg.token || "").trim(),
+        denied_libs: Array.isArray(nextCfg.denied_libs) ? nextCfg.denied_libs : [],
+      };
+      const st = await api.mcpConfigSet(payload);
+      mcpRunning = !!st.running;
+      mcpUrl = st.url || `http://127.0.0.1:${payload.port}/mcp`;
+      mcpError = st.error || "";
+      if (st.config) mcpConfig = { ...st.config };
+    } catch (e) {
+      mcpError = String(e);
+    } finally {
+      mcpSaving = false;
+    }
+  }
+
+  function toggleDeniedLib(libId) {
+    const set = new Set(mcpConfig.denied_libs || []);
+    if (set.has(libId)) set.delete(libId);
+    else set.add(libId);
+    mcpConfig = { ...mcpConfig, denied_libs: [...set] };
+    saveMcpConfig(mcpConfig);
+  }
+
+  function generateMcpToken() {
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    const tok = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    mcpConfig = { ...mcpConfig, token: tok };
+    saveMcpConfig(mcpConfig);
+  }
+
+  function mcpHttpSnippet() {
+    const entry = { url: mcpUrl };
+    if (mcpConfig.token.trim()) {
+      entry.headers = { Authorization: `Bearer ${mcpConfig.token.trim()}` };
+    }
+    return JSON.stringify({ mcpServers: { "smart-library": entry } }, null, 2);
+  }
+
+  function mcpStdioSnippet() {
+    const args = ["mcp-bridge", "--url", mcpUrl];
+    const entry = { command: "smart-library", args };
+    if (mcpConfig.token.trim()) {
+      entry.env = { SMART_LIBRARY_MCP_TOKEN: mcpConfig.token.trim() };
+    }
+    return JSON.stringify({ mcpServers: { "smart-library": entry } }, null, 2);
+  }
+
+  function mcpAgentPrompt() {
+    const healthUrl = mcpUrl.replace(/\/mcp$/, "/health");
+    const tok = mcpConfig.token.trim();
+    const stdioHint = tok
+      ? `smart-library mcp-bridge --url ${mcpUrl}（环境变量 SMART_LIBRARY_MCP_TOKEN=${tok}）`
+      : `smart-library mcp-bridge --url ${mcpUrl}`;
+    return [
+      "请帮我将本地知识库 Smart Library 的 MCP 服务加入到你的 MCP 配置中，并验证连通性：",
+      `1. 先检查 ${healthUrl} 是否可访问；`,
+      `2. 将下方 Streamable HTTP MCP 配置写入当前客户端的 MCP 配置文件（若当前客户端仅支持 stdio，可改用命令 ${stdioHint}）；`,
+      "3. 完成后告诉我配置路径，以及是否需要重启或刷新会话以生效。",
+      "",
+      "```json",
+      mcpHttpSnippet(),
+      "```",
+    ].join("\n");
+  }
+
+  async function copyMcpText(text, label) {
+    try {
+      await navigator.clipboard.writeText(text);
+      mcpCopied = label;
+      setTimeout(() => {
+        if (mcpCopied === label) mcpCopied = "";
+      }, 2000);
+    } catch (e) {
+      mcpError = `复制失败：${e}`;
+    }
+  }
+
+  function libKindLabel(l) {
+    if (l.kind === "notes") return "内部库 · 可写";
+    if (l.kind === "folder") return l.writable ? "本地文件夹 · 可写" : "本地文件夹 · 只读";
+    if (l.kind === "cbeta") return "CBETA · 只读";
+    if (l.kind === "zim") return "ZIM · 只读";
+    if (l.kind === "html") return "HTML · 只读";
+    return l.kind;
+  }
+
   onMount(() => {
     api.status().then((st) => {
-      writableLibs = (st.libraries || []).filter(
+      allLibs = st.libraries || [];
+      writableLibs = allLibs.filter(
         (l) => l.kind === "notes" || (l.kind === "folder" && l.writable),
       );
     }).catch(() => {});
     loadDictConfig();
+    loadMcpStatus();
   });
 
   function patchPreset(field, val) {
@@ -934,6 +1066,115 @@
             </div>
           </div>
 
+        {:else if activeTab === "mcp"}
+          <div class="sec-head">
+            <h3>本地 Agent（MCP）</h3>
+            <p class="muted">
+              开启后，本机运行的 Claude、Codex、Cursor、Cherry Studio、Antigravity 等 Agent <strong>可在程序运行期间</strong>通过 MCP 协议检索、阅读和整理知识库。仅监听本机回环地址 <code>127.0.0.1</code>。
+            </p>
+          </div>
+          <div class="card">
+            <label class="row">
+              <span>启用本地服务</span>
+              <input type="checkbox" checked={mcpConfig.enabled} disabled={mcpSaving}
+                onchange={(e) => {
+                  mcpConfig = { ...mcpConfig, enabled: e.currentTarget.checked };
+                  saveMcpConfig(mcpConfig);
+                }} />
+              <span class="wide">
+                {#if mcpRunning}
+                  <span class="mcp-status on">运行中 · {mcpUrl}</span>
+                {:else if mcpConfig.enabled}
+                  <span class="mcp-status err">启动失败</span>
+                {:else}
+                  <span class="muted">已关闭（默认）</span>
+                {/if}
+              </span>
+            </label>
+            {#if mcpError}
+              <p class="card-note mcp-err">{mcpError}</p>
+            {/if}
+            <div class="row">
+              <span>监听端口</span>
+              <input type="number" min="1024" max="65535" style="width: 110px"
+                value={mcpConfig.port} disabled={mcpSaving}
+                onchange={(e) => {
+                  const port = Math.max(1024, Math.min(65535, Number(e.currentTarget.value) || 27123));
+                  mcpConfig = { ...mcpConfig, port };
+                  saveMcpConfig(mcpConfig);
+                }} />
+              <span class="muted wide">默认 27123，修改后立即生效</span>
+            </div>
+            <label class="row">
+              <span class:mcp-warn={mcpConfig.allow_write}>允许写入</span>
+              <input type="checkbox" checked={mcpConfig.allow_write} disabled={mcpSaving}
+                onchange={(e) => {
+                  mcpConfig = { ...mcpConfig, allow_write: e.currentTarget.checked };
+                  saveMcpConfig(mcpConfig);
+                }} />
+              <span class="muted wide">
+                允许 Agent 新建/编辑笔记、脑图、白板、标签与书签（仅对可写知识库生效；编辑前自动创建快照，删除进入回收站）
+              </span>
+            </label>
+            <div class="row">
+              <span>访问令牌</span>
+              <input type="text" class="wide" placeholder="留空表示不校验令牌（仅依赖本机 127.0.0.1 限制）"
+                value={mcpConfig.token} disabled={mcpSaving}
+                onchange={(e) => {
+                  mcpConfig = { ...mcpConfig, token: e.currentTarget.value.trim() };
+                  saveMcpConfig(mcpConfig);
+                }} />
+              <button type="button" onclick={generateMcpToken} disabled={mcpSaving}>随机生成</button>
+              {#if mcpConfig.token}
+                <button type="button" onclick={() => copyMcpText(mcpConfig.token, "token")}>
+                  {mcpCopied === "token" ? "已复制" : "复制"}
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          <div class="card card-block">
+            <div class="block-title">禁止访问的知识库</div>
+            <p class="muted hint">默认允许外部 Agent 访问所有知识库；勾选下方知识库将其屏蔽。</p>
+            {#if allLibs.length === 0}
+              <p class="muted hint">当前尚未绑定任何知识库。</p>
+            {:else}
+              <div class="dict-items mcp-lib-list">
+                {#each allLibs as lib (lib.id)}
+                  {@const denied = (mcpConfig.denied_libs || []).includes(lib.id)}
+                  <label class="dict-item">
+                    <input type="checkbox" checked={denied} disabled={mcpSaving}
+                      onchange={() => toggleDeniedLib(lib.id)} />
+                    <span class="dict-name">{lib.title}</span>
+                    <span class="muted dict-count">{lib.id}</span>
+                    <span class="dict-badge">{libKindLabel(lib)}</span>
+                  </label>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <div class="card card-block">
+            <div class="dict-list-head">
+              <strong class="block-title" style="margin-bottom: 0">客户端接入配置</strong>
+              <div class="mcp-copy-btns">
+                <button type="button" class="primary" onclick={() => copyMcpText(mcpAgentPrompt(), "agent")}>
+                  {mcpCopied === "agent" ? "已复制（直接发给 Agent）" : "复制给 Agent 自动配置"}
+                </button>
+                <button type="button" onclick={() => copyMcpText(mcpHttpSnippet(), "http")}>
+                  {mcpCopied === "http" ? "已复制" : "复制 JSON（HTTP）"}
+                </button>
+                <button type="button" onclick={() => copyMcpText(mcpStdioSnippet(), "stdio")}>
+                  {mcpCopied === "stdio" ? "已复制" : "复制 JSON（stdio）"}
+                </button>
+              </div>
+            </div>
+            <p class="muted hint">
+              只需配置一次，后续新会话自动生效。Claude Code、Codex、Cursor、Antigravity 等支持本机配置的 Agent 可点击「复制给 Agent 自动配置」直接发到会话中完成校验与写入；Cherry Studio 等手动配置客户端可复制纯 JSON。
+            </p>
+            <pre class="mcp-code">{mcpHttpSnippet()}</pre>
+          </div>
+
         {:else if activeTab === "shortcuts"}
           <div class="sec-head">
             <h3>快捷键</h3>
@@ -1128,4 +1369,16 @@
   .shortcut-row:hover .icon-op, .icon-op:focus-visible { opacity: 1; }
   .icon-op:hover { background: var(--bg); color: var(--ink); }
   .shortcut-foot { display: flex; justify-content: flex-end; }
+  .mcp-status { font-size: 12px; font-weight: 600; }
+  .mcp-status.on { color: #2e7d32; }
+  .mcp-status.err, .mcp-err { color: var(--hl); font-size: 12px; }
+  .mcp-warn { color: var(--hl); font-weight: 600; }
+  .mcp-lib-list { margin-top: 8px; }
+  .mcp-copy-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .mcp-code {
+    margin: 10px 0 0; padding: 12px 14px; border-radius: 6px;
+    background: var(--bg); border: 1px solid var(--line);
+    font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.55;
+    overflow-x: auto; user-select: all;
+  }
 </style>

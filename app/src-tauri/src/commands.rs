@@ -187,6 +187,10 @@ impl AppState {
         }
     }
 
+    pub(crate) fn config_dir(&self) -> &Path {
+        &self.config_dir
+    }
+
     pub(crate) fn library(&self, id: &str) -> Result<Library, String> {
         self.libraries
             .read()
