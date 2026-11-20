@@ -4822,3 +4822,14 @@ mod library_id_tests {
         assert_eq!(parsed.get("text").and_then(|v| v.as_str()), Some("四谛"));
     }
 }
+
+/// Restart into the build that was just installed. On Windows the NSIS
+/// installer launches and the running process exits inside `install()`, but on
+/// macOS and Linux the updater only replaces the bundle under the running app,
+/// so the update dialog asks for this restart once `install()` returns.
+#[tauri::command]
+pub fn relaunch_after_update(app: AppHandle) {
+    if !cfg!(windows) {
+        app.restart();
+    }
+}

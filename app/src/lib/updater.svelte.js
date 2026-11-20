@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
 
 export const updateState = $state({ phase: "idle", visible: false, version: "", notes: "", error: "", downloaded: 0, total: 0 });
@@ -46,5 +47,13 @@ export async function installUpdate() {
   if (!update || updateState.phase !== "ready") return;
   updateState.phase = "installing";
   try { await update.install(); }
-  catch (e) { updateState.error = String(e); updateState.phase = "install-error"; }
+  catch (e) { updateState.error = String(e); updateState.phase = "install-error"; return; }
+  // Windows: the installer takes over and this process exits inside install().
+  // macOS / Linux: install() only swaps the bundle under the running app, so
+  // the new build starts only after this restart (a no-op on Windows).
+  try { await invoke("relaunch_after_update"); }
+  catch (e) {
+    updateState.error = `更新已安装，请手动重新打开程序。（${e}）`;
+    updateState.phase = "install-error";
+  }
 }

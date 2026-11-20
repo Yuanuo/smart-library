@@ -2,6 +2,8 @@
 
 自动更新使用 Tauri updater 和 GitHub Releases。应用启动时检查一次；「关于 → 检查更新」可手动检查。发现新版后由用户选择下载，下载并验签成功后再选择安装；安装会关闭并重启应用，应先保存所有窗口中的编辑内容。发布包是 Windows x64 NSIS 安装版，独立复制的 exe 不属于自动更新支持范围。
 
+安装完成后由谁重启，三个平台不一样。Windows 上 `install()` 启动 NSIS 安装程序后进程就退出，再由安装程序重新拉起应用。macOS 和 Linux 上 `install()` 只是把运行中的程序包换掉，不会自己重启——所以更新对话框在 `install()` 返回后调用 `relaunch_after_update` 命令（`commands.rs`）重启到新版本；macOS 如果装在 `/Applications` 以外、或从 DMG 直接运行，换包会要求管理员授权，否则失败。
+
 ## 数据目录与升级验证
 
 当前 Windows 发布版由安装程序安装，应用数据保存在程序目录下的 `data` 文件夹中。这是数据存储位置的选择；它与「直接复制一个 exe 运行」的分发方式不同。[Tauri 官方更新文档](https://v2.tauri.app/plugin/updater/)说明，Windows 更新复用 NSIS 或 MSI 安装包。是否能自动更新、更新时如何保留数据，取决于更新器、安装程序及应用的数据处理逻辑，与使用 Rust 语言本身无关。

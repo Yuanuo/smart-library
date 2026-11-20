@@ -269,6 +269,7 @@ fn main() {
             commands::set_snapshot_policy,
             mcp_server::mcp_status_get,
             mcp_server::mcp_config_set,
+            commands::relaunch_after_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Smart Library");
