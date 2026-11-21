@@ -2,7 +2,8 @@
 //! last reading position. SQLite, one small table; the file is user data
 //! (`<data>/history.db`) but losing it costs nothing but the list.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::{Map, Value};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -22,6 +23,8 @@ pub struct HistoryEntry {
     /// last opened, unix seconds
     pub opened: i64,
     pub visits: i64,
+    /// extensible per-document view metadata (JSON object)
+    pub extra: Option<Value>,
 }
 
 fn now() -> i64 {
@@ -58,11 +61,14 @@ impl History {
                  mode TEXT,
                  opened INTEGER NOT NULL,
                  visits INTEGER NOT NULL DEFAULT 1,
+                 extra TEXT,
                  PRIMARY KEY (lib, path)
              );
              CREATE INDEX IF NOT EXISTS history_opened ON history(opened DESC);",
         )
         .map_err(err)?;
+        // Upgrade older databases that don't yet have the `extra` column.
+        let _ = conn.execute("ALTER TABLE history ADD COLUMN extra TEXT", []);
         Ok(History { conn: Mutex::new(conn) })
     }
 
@@ -100,18 +106,71 @@ impl History {
         Ok(())
     }
 
+    /// Read the extensible per-document extra JSON object, if any.
+    pub fn get_extra(&self, lib: &str, path: &str) -> Result<Option<Value>, String> {
+        let c = self.conn.lock().unwrap();
+        let raw: Option<Option<String>> = c
+            .query_row("SELECT extra FROM history WHERE lib = ?1 AND path = ?2", params![lib, path], |r| r.get(0))
+            .optional()
+            .map_err(err)?;
+        Ok(raw.flatten().and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(|v| v.is_object()))
+    }
+
+    /// Merge keys from `patch` (must be a JSON object) into a document's `extra` JSON.
+    /// Keys with `null` values are removed. Creates the history row if missing and `title` is given.
+    pub fn patch_extra(&self, lib: &str, path: &str, patch: &Value, title: Option<&str>) -> Result<(), String> {
+        let Some(patch_obj) = patch.as_object() else {
+            return Err("extra 必须是 JSON 对象".into());
+        };
+        let c = self.conn.lock().unwrap();
+        let cur: Option<Option<String>> = c
+            .query_row("SELECT extra FROM history WHERE lib = ?1 AND path = ?2", params![lib, path], |r| r.get(0))
+            .optional()
+            .map_err(err)?;
+        let mut map: Map<String, Value> = cur
+            .as_ref()
+            .and_then(|opt| opt.as_deref())
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        for (k, v) in patch_obj {
+            if v.is_null() {
+                map.remove(k);
+            } else {
+                map.insert(k.clone(), v.clone());
+            }
+        }
+        let next = if map.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&Value::Object(map)).map_err(|e| e.to_string())?)
+        };
+        if cur.is_some() {
+            c.execute("UPDATE history SET extra = ?3 WHERE lib = ?1 AND path = ?2", params![lib, path, next])
+                .map_err(err)?;
+        } else if let Some(t) = title {
+            c.execute(
+                "INSERT INTO history (lib, path, title, opened, extra) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![lib, path, t, now(), next],
+            )
+            .map_err(err)?;
+        }
+        Ok(())
+    }
+
     /// Newest first; `filter` keeps titles containing it (case-insensitive).
     pub fn list(&self, filter: &str, limit: usize) -> Result<Vec<HistoryEntry>, String> {
         let c = self.conn.lock().unwrap();
         let like = format!("%{}%", filter.trim().replace('%', "\\%").replace('_', "\\_"));
         let mut st = c
             .prepare(
-                "SELECT lib, path, book_id, title, lb, mode, opened, visits FROM history
+                "SELECT lib, path, book_id, title, lb, mode, opened, visits, extra FROM history
                  WHERE title LIKE ?1 ESCAPE '\\' ORDER BY opened DESC LIMIT ?2",
             )
             .map_err(err)?;
         let rows = st
             .query_map(params![like, limit as i64], |r| {
+                let raw_extra: Option<String> = r.get(8)?;
                 Ok(HistoryEntry {
                     lib: r.get(0)?,
                     path: r.get(1)?,
@@ -121,6 +180,7 @@ impl History {
                     mode: r.get(5)?,
                     opened: r.get(6)?,
                     visits: r.get(7)?,
+                    extra: raw_extra.and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(|v| v.is_object()),
                 })
             })
             .map_err(err)?
@@ -198,5 +258,37 @@ mod tests {
         assert_eq!(h.list("", 10).unwrap().len(), 1);
         h.clear().unwrap();
         assert!(h.list("", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stores_and_merges_extra_metadata() {
+        let h = History::memory().unwrap();
+        h.touch("pub", "a/b.map.json", None, "科判").unwrap();
+        assert_eq!(h.get_extra("pub", "a/b.map.json").unwrap(), None);
+
+        h.patch_extra("pub", "a/b.map.json", &serde_json::json!({ "mindmapDirection": 1 }), None).unwrap();
+        assert_eq!(
+            h.get_extra("pub", "a/b.map.json").unwrap(),
+            Some(serde_json::json!({ "mindmapDirection": 1 }))
+        );
+
+        h.patch_extra("pub", "a/b.map.json", &serde_json::json!({ "zoom": 1.25 }), None).unwrap();
+        assert_eq!(
+            h.get_extra("pub", "a/b.map.json").unwrap(),
+            Some(serde_json::json!({ "mindmapDirection": 1, "zoom": 1.25 }))
+        );
+
+        h.patch_extra("pub", "a/b.map.json", &serde_json::json!({ "zoom": null }), None).unwrap();
+        assert_eq!(
+            h.get_extra("pub", "a/b.map.json").unwrap(),
+            Some(serde_json::json!({ "mindmapDirection": 1 }))
+        );
+
+        // rekey preserves extra
+        h.rekey("pub", "a/b.map.json", "a/c.map.json", Some("新科判")).unwrap();
+        assert_eq!(
+            h.get_extra("pub", "a/c.map.json").unwrap(),
+            Some(serde_json::json!({ "mindmapDirection": 1 }))
+        );
     }
 }
