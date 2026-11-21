@@ -298,8 +298,21 @@ impl FolderLibrary {
                 }
             }
         }
-        dirs.sort_by_key(|e| e.name.to_lowercase());
-        files.sort_by_key(|e| e.name.to_lowercase());
+        let order = read_dir_order(&dir.join(DIR_META_FILE));
+        let sort_entries = |list: &mut Vec<FolderEntry>| {
+            list.sort_by(|a, b| {
+                let oa = order.get(&a.name).or_else(|| order.get(stem_of(&a.name)));
+                let ob = order.get(&b.name).or_else(|| order.get(stem_of(&b.name)));
+                match (oa, ob) {
+                    (Some(ia), Some(ib)) => ia.cmp(ib),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => natural_cmp(&a.name, &b.name),
+                }
+            });
+        };
+        sort_entries(&mut dirs);
+        sort_entries(&mut files);
         dirs.extend(files);
         Ok(dirs)
     }
@@ -322,9 +335,12 @@ impl FolderLibrary {
         out
     }
 
-    /// Cheap fingerprint of a file list: count, sizes and modification times.
+    /// Cheap fingerprint of a file list: count, sizes and modification times
+    /// (including any `.meta.json` files in ancestor folders).
     pub fn fingerprint(&self, files: &[FolderFile]) -> String {
         let mut h: u64 = 1469598103934665603;
+        let mut dirs = std::collections::BTreeSet::new();
+        dirs.insert(String::new());
         for f in files {
             let m = self.abs(&f.rel).ok().and_then(|p| std::fs::metadata(p).ok());
             let t = m
@@ -334,6 +350,32 @@ impl FolderLibrary {
                 .unwrap_or(0);
             for b in f.rel.bytes().chain(f.size.to_le_bytes()).chain(t.to_le_bytes()) {
                 h = (h ^ b as u64).wrapping_mul(1099511628211);
+            }
+            let mut cur = f.rel.as_str();
+            while let Some((dir, _)) = cur.rsplit_once('/') {
+                if !dirs.insert(dir.to_string()) {
+                    break;
+                }
+                cur = dir;
+            }
+        }
+        for dir in dirs {
+            let meta_path = if dir.is_empty() {
+                self.root.join(DIR_META_FILE)
+            } else {
+                self.root.join(&dir).join(DIR_META_FILE)
+            };
+            if let Ok(m) = std::fs::metadata(&meta_path) {
+                let sz = m.len();
+                let t = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                for b in dir.bytes().chain(DIR_META_FILE.bytes()).chain(sz.to_le_bytes()).chain(t.to_le_bytes()) {
+                    h = (h ^ b as u64).wrapping_mul(1099511628211);
+                }
             }
         }
         format!("{}:{:x}", files.len(), h)
@@ -420,6 +462,13 @@ impl FolderLibrary {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         Ok(format!("{}:{}", t, m.len()))
+    }
+
+    /// The decoded text of a file (also in read-only mode, e.g. to render a mind map or whiteboard).
+    pub fn read_raw(&self, rel: &str) -> Result<String, String> {
+        let path = self.abs(rel)?;
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {}", rel, e))?;
+        Ok(decode_auto(&bytes))
     }
 
     /// The text of an editable file and its stamp.
@@ -1139,6 +1188,7 @@ impl FolderLibrary {
         &'a self,
         files: &'a [FolderFile],
     ) -> impl Iterator<Item = Result<IndexDoc, String>> + 'a {
+        let mut meta_cache: std::collections::HashMap<String, Option<DirMeta>> = std::collections::HashMap::new();
         files.iter().map(move |f| {
             let a = self.article(&f.rel, None)?;
             let folders: Vec<&str> = {
@@ -1160,16 +1210,256 @@ impl FolderLibrary {
             if !ext.is_empty() {
                 facets.push(vec!["kind".to_string(), ext]);
             }
+            let mut text = a.text.text;
+            if let Some(dims) = self.resolve_dir_meta(&folders, &f.name, &mut meta_cache) {
+                if dims.get("index_content").and_then(|v| v.first()).map(String::as_str) == Some("off") {
+                    text.clear();
+                }
+                apply_dir_meta_facets(&mut facets, &dims);
+            }
             Ok(IndexDoc {
                 path: f.rel.clone(),
                 book,
                 juan: 0,
                 title: stem_of(&f.name).to_string(),
-                text: a.text.text,
+                text,
                 facets,
                 keys: path_keys(&f.rel),
             })
         })
+    }
+
+    /// Persist custom item order into `<dir>/.meta.json` under `"list"`, preserving
+    /// `"*"` and every item's existing metadata fields.
+    pub fn set_dir_order(&self, rel_dir: &str, order: &[String]) -> Result<(), String> {
+        self.need_writable()?;
+        let dir = self.abs(rel_dir)?;
+        let meta_path = dir.join(DIR_META_FILE);
+        let mut root = std::fs::read_to_string(&meta_path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+
+        // Index existing item objects from `"list"` by their `"name"`
+        let mut existing: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> =
+            std::collections::HashMap::new();
+        if let Some(arr) = root.get("list").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(obj) = item.as_object() {
+                    if let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
+                        existing.insert(name.to_string(), obj.clone());
+                    }
+                }
+            }
+        }
+
+        let mut new_list: Vec<serde_json::Value> = Vec::with_capacity(order.len());
+        let mut seen = std::collections::HashSet::new();
+        for name in order {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let obj = existing.remove(name).unwrap_or_else(|| {
+                let mut m = serde_json::Map::new();
+                m.insert("name".into(), serde_json::Value::String(name.clone()));
+                m
+            });
+            new_list.push(serde_json::Value::Object(obj));
+        }
+        // Keep any remaining items that had custom metadata even if not in `order`
+        if let Some(arr) = root.get("list").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                    if seen.insert(name.to_string()) {
+                        new_list.push(item.clone());
+                    }
+                }
+            }
+        }
+
+        root.insert("list".into(), serde_json::Value::Array(new_list));
+        root.remove("_order");
+        let text = serde_json::to_string_pretty(&serde_json::Value::Object(root))
+            .map_err(|e| e.to_string())?
+            + "\n";
+        std::fs::write(&meta_path, text.as_bytes()).map_err(|e| format!("{}: {}", meta_path.display(), e))
+    }
+
+    /// Resolved `.meta.json` dimensions (including `index_content`) for a file or folder path.
+    pub fn dir_meta_dims(&self, rel: &str) -> Option<crate::props::Dims> {
+        let mut cache = std::collections::HashMap::new();
+        let is_dir = self.abs(rel).ok().is_some_and(|p| p.is_dir());
+        if is_dir {
+            let folders: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
+            self.resolve_dir_meta(&folders, "", &mut cache)
+        } else {
+            let mut folders: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
+            let file_name = folders.pop().unwrap_or("");
+            self.resolve_dir_meta(&folders, file_name, &mut cache)
+        }
+    }
+
+    fn resolve_dir_meta(
+        &self,
+        folders: &[&str],
+        file_name: &str,
+        cache: &mut std::collections::HashMap<String, Option<DirMeta>>,
+    ) -> Option<crate::props::Dims> {
+        let mut found_any = false;
+        let mut merged = crate::props::Dims::new();
+        // Walk from root ("") down to the document's parent folder
+        let mut rel_dir = String::new();
+        for depth in 0..=folders.len() {
+            if depth > 0 {
+                if !rel_dir.is_empty() {
+                    rel_dir.push('/');
+                }
+                rel_dir.push_str(folders[depth - 1]);
+            }
+            let entry = cache.entry(rel_dir.clone()).or_insert_with(|| {
+                let p = if rel_dir.is_empty() {
+                    self.root.join(DIR_META_FILE)
+                } else {
+                    self.root.join(&rel_dir).join(DIR_META_FILE)
+                };
+                read_dir_meta(&p)
+            });
+            if let Some(dm) = entry {
+                found_any = true;
+                if let Some(star) = dm.get("*") {
+                    for (dim, vals) in star {
+                        merged.insert(dim.clone(), vals.clone());
+                    }
+                }
+                if depth == folders.len() {
+                    let specific = dm.get(file_name).or_else(|| dm.get(stem_of(file_name)));
+                    if let Some(own) = specific {
+                        for (dim, vals) in own {
+                            merged.insert(dim.clone(), vals.clone());
+                        }
+                    }
+                }
+            }
+        }
+        found_any.then_some(merged)
+    }
+}
+
+const DIR_META_FILE: &str = ".meta.json";
+type DirMeta = std::collections::BTreeMap<String, crate::props::Dims>;
+
+/// Natural string comparison: digit runs compare numerically so `第2课` < `第10课`.
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let mut ai = a.chars().peekable();
+    let mut bi = b.chars().peekable();
+    loop {
+        match (ai.peek(), bi.peek()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some(&ac), Some(&bc)) if ac.is_ascii_digit() && bc.is_ascii_digit() => {
+                let mut an = String::new();
+                while let Some(&c) = ai.peek() {
+                    if c.is_ascii_digit() { an.push(c); ai.next(); } else { break; }
+                }
+                let mut bn = String::new();
+                while let Some(&c) = bi.peek() {
+                    if c.is_ascii_digit() { bn.push(c); bi.next(); } else { break; }
+                }
+                let av = an.trim_start_matches('0');
+                let bv = bn.trim_start_matches('0');
+                let ord = av.len().cmp(&bv.len()).then_with(|| av.cmp(bv)).then_with(|| an.len().cmp(&bn.len()));
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            (Some(_), Some(_)) => {
+                let ac = ai.next().unwrap().to_lowercase().next().unwrap_or('\0');
+                let bc = bi.next().unwrap().to_lowercase().next().unwrap_or('\0');
+                let ord = ac.cmp(&bc);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+        }
+    }
+}
+
+fn read_dir_order(path: &Path) -> std::collections::HashMap<String, usize> {
+    let mut map = std::collections::HashMap::new();
+    let Ok(text) = std::fs::read_to_string(path) else { return map };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) else { return map };
+    if let Some(arr) = val.get("list").and_then(|v| v.as_array()) {
+        for (i, item) in arr.iter().enumerate() {
+            if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                map.entry(name.to_string()).or_insert(i);
+            } else if let Some(name) = item.as_str() {
+                map.entry(name.to_string()).or_insert(i);
+            }
+        }
+    }
+    map
+}
+
+fn parse_dims_obj(fields: &serde_json::Map<String, serde_json::Value>) -> crate::props::Dims {
+    let mut raw = crate::props::Dims::new();
+    for (dim, v) in fields {
+        if !crate::props::is_dim(dim) && dim != "index_content" {
+            continue;
+        }
+        let list: Vec<String> = match v {
+            serde_json::Value::String(s) => vec![s.clone()],
+            serde_json::Value::Array(arr) => {
+                arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+            }
+            _ => continue,
+        };
+        raw.insert(dim.clone(), list);
+    }
+    crate::props::clean(&raw)
+}
+
+fn read_dir_meta(path: &Path) -> Option<DirMeta> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let val: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let obj = val.as_object()?;
+    let mut out = DirMeta::new();
+    if let Some(star) = obj.get("*").and_then(|v| v.as_object()) {
+        out.insert("*".to_string(), parse_dims_obj(star));
+    }
+    if let Some(list) = obj.get("list").and_then(|v| v.as_array()) {
+        for item in list {
+            if let Some(fields) = item.as_object() {
+                if let Some(name) = fields.get("name").and_then(|v| v.as_str()) {
+                    let dims = parse_dims_obj(fields);
+                    if !dims.is_empty() {
+                        out.insert(name.to_string(), dims);
+                    }
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+fn apply_dir_meta_facets(facets: &mut Vec<Vec<String>>, dims: &crate::props::Dims) {
+    for (dim, _) in crate::props::DIMS {
+        if let Some(vals) = dims.get(dim) {
+            if !vals.is_empty() {
+                facets.retain(|f| f.first().map(String::as_str) != Some(dim));
+                for v in vals {
+                    if let Some(fp) = crate::props::facet_path(dim, v) {
+                        facets.push(fp);
+                    }
+                }
+                continue;
+            }
+        }
+        // Fallback to "其他" when a library uses `.meta.json` and a dimension has no value
+        if !facets.iter().any(|f| f.first().map(String::as_str) == Some(dim)) {
+            facets.push(vec![dim.to_string(), "其他".to_string()]);
+        }
     }
 }
 
@@ -1851,6 +2141,75 @@ mod tests {
         std::fs::write(d.join("big.txt"), vec![b'a'; 2 * 1024 * 1024]).unwrap();
         let lib = FolderLibrary::open(&d, FolderFilter { exts: vec!["txt".into()], max_mb: 1 }).unwrap();
         assert!(lib.files().is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn dir_meta_json_inheritance_and_fallback() {
+        let d = tmp("dirmeta");
+        std::fs::create_dir_all(d.join("译作/教言合集")).unwrap();
+        std::fs::write(d.join("译作/.meta.json"), r#"{"*": {"canon": "智悲文集", "period": "现代"}}"#).unwrap();
+        std::fs::write(
+            d.join("译作/教言合集/.meta.json"),
+            r#"{
+              "*": {"person": ["索达吉堪布"]},
+              "list": [
+                {"name": "01 第一篇.md", "person": ["华智仁波切", "索达吉堪布"], "date": "1999-02-20"},
+                {"name": "02 第二篇.md"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(d.join("译作/教言合集/01 第一篇.md"), "# 第一篇\n\n正文").unwrap();
+        std::fs::write(d.join("译作/教言合集/02 第二篇.md"), "# 第二篇\n\n正文").unwrap();
+
+        let lib = FolderLibrary::open(&d, FolderFilter::default()).unwrap();
+        let files = lib.files();
+        // `.meta.json` must not appear as a document in the tree
+        assert_eq!(files.len(), 2);
+        let fp1 = lib.fingerprint(&files);
+        let docs: Vec<IndexDoc> = lib.docs(&files).map(|r| r.unwrap()).collect();
+
+        let d1 = docs.iter().find(|x| x.path.ends_with("01 第一篇.md")).unwrap();
+        assert!(d1.facets.contains(&vec!["canon".into(), "智悲文集".into()]));
+        assert!(d1.facets.contains(&vec!["period".into(), "现代".into()]));
+        assert!(d1.facets.contains(&vec!["person".into(), "华智仁波切".into()]));
+        assert!(d1.facets.contains(&vec!["person".into(), "索达吉堪布".into()]));
+
+        let d2 = docs.iter().find(|x| x.path.ends_with("02 第二篇.md")).unwrap();
+        assert!(d2.facets.contains(&vec!["person".into(), "索达吉堪布".into()]));
+        assert!(!d2.facets.contains(&vec!["person".into(), "华智仁波切".into()]));
+
+        // Editing `.meta.json` changes the fingerprint
+        std::fs::write(
+            d.join("译作/.meta.json"),
+            r#"{"*": {"canon": "智悲文集", "period": "现代", "bulei": "译作/教言"}}"#,
+        )
+        .unwrap();
+        let fp2 = lib.fingerprint(&files);
+        assert_ne!(fp1, fp2);
+
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn dir_meta_order_and_natural_sort() {
+        let d = tmp("order");
+        std::fs::write(d.join("第10课.md"), "10").unwrap();
+        std::fs::write(d.join("第2课.md"), "2").unwrap();
+        std::fs::write(d.join("第1课.md"), "1").unwrap();
+        std::fs::write(d.join("序.md"), "0").unwrap();
+
+        let lib = FolderLibrary::open(&d, FolderFilter::default()).unwrap().with_writable(true);
+        // Without `_order`: natural order puts 第1课 < 第2课 < 第10课
+        let names: Vec<String> = lib.children("").unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, vec!["序.md", "第1课.md", "第2课.md", "第10课.md"]);
+
+        // With `_order` specifying partial order: listed items come first in exact order, rest in natural order
+        lib.set_dir_order("", &["第2课.md".into(), "序.md".into()]).unwrap();
+        let names2: Vec<String> = lib.children("").unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names2, vec!["第2课.md", "序.md", "第1课.md", "第10课.md"]);
+
         let _ = std::fs::remove_dir_all(&d);
     }
 }
