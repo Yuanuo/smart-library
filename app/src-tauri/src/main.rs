@@ -233,6 +233,7 @@ fn main() {
             commands::set_pinyin_text,
             commands::citation_command,
             commands::build_index,
+            commands::check_folder_changes,
             commands::load_workspace,
             commands::save_workspace,
             commands::ai_stream,

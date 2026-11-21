@@ -867,6 +867,7 @@
             onexport={(lib, sel, label, name, nodePath = "") => (exportDlg = { lib, sel, label, name, nodePath })}
             onimport={importLibrary}
             onlibs={async () => (st = await api.status())}
+            onnotice={(msg) => (notice = msg)}
             onerror={(e) => (error = e)} />
         {:else}
           <p class="muted">载入中…</p>

@@ -551,7 +551,7 @@ impl AppState {
             let result = (|| -> Result<(), String> {
                 let overlay = self.props.overlay(&l.id).unwrap_or_default();
                 let mut removed = Vec::new();
-                let (docs, version): (Vec<_>, Option<String>) = if l.kind == "folder" {
+                let (docs, version, folder_snap): (Vec<_>, Option<String>, Option<HashMap<String, (u64, u64)>>) = if l.kind == "folder" {
                     let f = self.folder(l)?;
                     let mut files = Vec::new();
                     for p in &paths {
@@ -560,16 +560,21 @@ impl AppState {
                             None => removed.push(p.clone()),
                         }
                     }
-                    (f.docs(&files).collect(), None)
+                    let all = f.files();
+                    let snap = folder_snapshot_map(&f, &all);
+                    (f.docs(&files).collect(), Some(f.fingerprint(&all)), Some(snap))
                 } else if l.kind == "notes" {
                     let store = self.notes(l)?;
                     let rows: Vec<_> = store.rows()?.into_iter().filter(|r| paths.contains(&r.id.to_string())).collect();
                     removed = paths.iter().filter(|p| !rows.iter().any(|r| &r.id.to_string() == *p)).cloned().collect();
-                    (notes::docs(&rows, &l.title).into_iter().map(Ok).collect(), Some(store.fingerprint()))
+                    (notes::docs(&rows, &l.title).into_iter().map(Ok).collect(), Some(store.fingerprint()), None)
                 } else {
                     return Ok(());
                 };
                 smart_library_core::search::sync_docs(&dir, docs.into_iter(), &removed, version.as_deref(), &overlay)?;
+                if let Some(snap) = folder_snap {
+                    save_folder_snapshot(&dir, &snap);
+                }
                 self.indexes.write().unwrap().remove(&l.id); // opened again with the new documents
                 Ok(())
             })();
@@ -3955,6 +3960,116 @@ struct IndexDoneDto {
     message: String,
 }
 
+const FOLDER_SNAPSHOT_FILE: &str = "folder-snapshot.json";
+
+fn folder_snapshot_map(f: &folder::FolderLibrary, files: &[folder::FolderFile]) -> HashMap<String, (u64, u64)> {
+    let mut map = HashMap::with_capacity(files.len());
+    for file in files {
+        let mtime = f
+            .abs(&file.rel)
+            .ok()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        map.insert(file.rel.clone(), (file.size, mtime));
+    }
+    map
+}
+
+fn save_folder_snapshot(index_dir: &Path, snap: &HashMap<String, (u64, u64)>) {
+    if let Ok(bytes) = serde_json::to_vec(snap) {
+        let _ = std::fs::write(index_dir.join(FOLDER_SNAPSHOT_FILE), bytes);
+    }
+}
+
+fn load_folder_snapshot(index_dir: &Path) -> Option<HashMap<String, (u64, u64)>> {
+    let bytes = std::fs::read(index_dir.join(FOLDER_SNAPSHOT_FILE)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+#[derive(Serialize)]
+pub struct FolderChangeDto {
+    lib: String,
+    title: String,
+    added: usize,
+    modified: usize,
+    removed: usize,
+    has_snapshot: bool,
+}
+
+/// Check all indexed local folder libraries for external file changes (add/modify/delete or `.meta.json`).
+/// Returns libraries whose current disk fingerprint differs from their index's `data_version`,
+/// along with counts of added, modified, and removed documents when a previous snapshot is available.
+#[tauri::command]
+pub async fn check_folder_changes(app: AppHandle) -> Result<Vec<FolderChangeDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let libs: Vec<Library> = state
+            .libraries
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|l| l.kind == "folder")
+            .cloned()
+            .collect();
+        let mut changed = Vec::new();
+        for l in libs {
+            let dir = state.index_dir(&l.id);
+            if !dir.join("smart-library-index.json").exists() {
+                continue;
+            }
+            if state.building.lock().unwrap().contains(&l.id) {
+                continue;
+            }
+            // Flush any pending in-app edits first so their fingerprint matches the index
+            state.flush_dirty(std::slice::from_ref(&l));
+            let indexed_ver = SearchIndex::data_version(&dir);
+            let Ok(f) = state.folder(&l) else { continue };
+            let files = f.files();
+            let cur_ver = f.fingerprint(&files);
+            if indexed_ver.as_deref() != Some(cur_ver.as_str()) {
+                let (added, modified, removed, has_snapshot) = match load_folder_snapshot(&dir) {
+                    Some(old) => {
+                        let cur = folder_snapshot_map(&f, &files);
+                        let mut a = 0usize;
+                        let mut m = 0usize;
+                        let mut r = 0usize;
+                        for (rel, stamp) in &cur {
+                            match old.get(rel) {
+                                None => a += 1,
+                                Some(prev) if prev != stamp => m += 1,
+                                _ => {}
+                            }
+                        }
+                        for rel in old.keys() {
+                            if !cur.contains_key(rel) {
+                                r += 1;
+                            }
+                        }
+                        (a, m, r, true)
+                    }
+                    None => (0, 0, 0, false),
+                };
+                state.folders.write().unwrap().remove(&l.id);
+                state.titles.write().unwrap().remove(&l.id);
+                changed.push(FolderChangeDto {
+                    lib: l.id,
+                    title: l.title,
+                    added,
+                    modified,
+                    removed,
+                    has_snapshot,
+                });
+            }
+        }
+        Ok(changed)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Build (or rebuild) the index of a library on a background thread. Emits
 /// `index-progress` {lib, done, total} and finally `index-done` {lib, ok, message}.
 #[tauri::command]
@@ -4016,7 +4131,9 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
                         "kind": "folder",
                         "data_version": f.fingerprint(&files),
                     });
-                    smart_library_core::search::build_index(&dir, meta, files.len(), f.docs(&files), &overlay, progress)?
+                    let stats = smart_library_core::search::build_index(&dir, meta, files.len(), f.docs(&files), &overlay, progress)?;
+                    save_folder_snapshot(&dir, &folder_snapshot_map(f, &files));
+                    stats
                 }
                 (_, Some(bc), Some(t)) => SearchIndex::build_html(bc, t, &dir, &overlay, progress)?,
                 (_, Some(bc), None) => SearchIndex::build(bc, &dir, &overlay, progress)?,

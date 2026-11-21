@@ -21,7 +21,7 @@
   import { isAiReady, toBackendAiConfig } from "./settings.svelte.js";
   import { matchesShortcut } from "./shortcuts.js";
 
-  let { libraries, progress, titles = {}, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onerror = null } = $props();
+  let { libraries, progress, titles = {}, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onnotice = null, onerror = null } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -799,6 +799,17 @@
       }
     }
     api.sidecarRefresh().catch(() => {}); // the file that travels with a folder may have been changed by git
+    try {
+      const changed = await api.checkFolderChanges();
+      for (const c of changed || []) {
+        const detail =
+          c.has_snapshot && (c.added > 0 || c.modified > 0 || c.removed > 0)
+            ? `（新增 ${c.added} 篇、修改 ${c.modified} 篇、删除 ${c.removed} 篇）`
+            : "";
+        onnotice?.(`检测到「${c.title}」外部更新${detail}，正在重新索引…`);
+        onindex?.(c.lib);
+      }
+    } catch {}
   }
 
   $effect(() => {

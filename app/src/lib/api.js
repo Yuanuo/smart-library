@@ -111,6 +111,7 @@ export const pinyinConvert = (text) => invoke("pinyin_convert", { text });
 export const pinyinText = () => invoke("pinyin_text");
 export const setPinyinText = (text) => invoke("set_pinyin_text", { text });
 export const buildIndex = (lib) => invoke("build_index", { lib });
+export const checkFolderChanges = () => invoke("check_folder_changes");
 export const onIndexProgress = (fn) => listen("index-progress", (e) => fn(e.payload));
 export const onIndexDone = (fn) => listen("index-done", (e) => fn(e.payload));
 /** Reading and binding a library: { label, done, total } (total 0 = unknown). */
