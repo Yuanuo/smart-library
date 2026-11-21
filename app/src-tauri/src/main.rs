@@ -223,6 +223,7 @@ fn main() {
             commands::resolve_zim_link,
             commands::open_external_url,
             commands::open_external_window,
+            commands::open_in_file_manager,
             commands::search,
             commands::random_sentence,
             commands::quick_search,

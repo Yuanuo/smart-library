@@ -16,6 +16,7 @@ export const inspectZim = (path) => invoke("inspect_zim", { path });
 export const resolveZimLink = (lib, path, href) => invoke("resolve_zim_link", { lib, path, href });
 export const openExternalUrl = (url) => invoke("open_external_url", { url });
 export const openExternalWindow = (url, aiOn = false) => invoke("open_external_window", { url, aiOn });
+export const openInFileManager = (lib, rel = null) => invoke("open_in_file_manager", { lib, rel });
 /** A new note / mind map / whiteboard file (`kind`: md, mindmap, whiteboard) in a folder (`parent`: path, "" for the top). */
 export const createFolderFile = (lib, parent, kind = "md", title = null) => invoke("create_folder_file", { lib, parent, kind, title });
 /** A new folder inside a folder (`parent`: path, "" for the top) of a read-write folder library. */

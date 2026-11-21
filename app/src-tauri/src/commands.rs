@@ -2950,6 +2950,64 @@ pub async fn open_external_url(url: String) -> Result<(), String> {
     open_external_url_sync(&url)
 }
 
+#[tauri::command]
+pub async fn open_in_file_manager(lib: String, rel: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let l = state.library(&lib)?;
+    if l.kind != "folder" {
+        return Err("只有本地文件夹类型的知识库可以打开本地位置".into());
+    }
+    let f = state.folder(&l)?;
+    let target = match rel.filter(|r| !r.is_empty()) {
+        Some(r) => f.abs(&r)?,
+        None => f.root.clone(),
+    };
+    if !target.exists() {
+        return Err(format!("路径不存在：{}", target.display()));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        if target.is_file() {
+            let escaped = target.display().to_string().replace('"', "");
+            std::process::Command::new("explorer")
+                .raw_arg(format!("/select,\"{}\"", escaped))
+                .spawn()
+                .map_err(|e| format!("无法打开资源管理器：{}", e))?;
+        } else {
+            std::process::Command::new("explorer")
+                .arg(&target)
+                .spawn()
+                .map_err(|e| format!("无法打开资源管理器：{}", e))?;
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if target.is_file() {
+            cmd.arg("-R");
+        }
+        cmd.arg(&target)
+            .spawn()
+            .map_err(|e| format!("无法打开 Finder：{}", e))?;
+        Ok(())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let dir = if target.is_file() { target.parent().unwrap_or(&target) } else { target.as_path() };
+        std::process::Command::new("xdg-open")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| format!("无法打开文件管理器：{}", e))?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = target;
+        Err("当前系统暂不支持打开本地位置".into())
+    }
+}
+
 fn external_context_menu_script(ai_on: bool, token: &str) -> String {
     let ai_flag = if ai_on { "true" } else { "false" };
     format!(

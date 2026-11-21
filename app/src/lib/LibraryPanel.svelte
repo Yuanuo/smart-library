@@ -910,6 +910,7 @@
               ]
             : [],
       [
+        ...(l.kind === "folder" && node.rel ? [{ label: openFolderLabel, action: () => openInFileManager(l.id, node.rel) }] : []),
         ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(filePath(l, node)) }]),
         { label: "复制目录树路径", action: () => oncopy(titleChain(l, key).join(" › ")) },
       ],
@@ -930,6 +931,21 @@
         { label: "导出此节点…", action: () => onexport(l, { whole: false, keys: [key], rels: node.rel ? [node.rel] : [] }, node.title, node.title, pathOf(l.id, key)) },
       ],
     );
+  }
+
+  const openFolderLabel =
+    typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")
+      ? "在 Finder 中打开"
+      : typeof navigator !== "undefined" && /Win/i.test(navigator.platform || navigator.userAgent || "")
+        ? "在资源管理器中打开"
+        : "打开本地位置";
+
+  async function openInFileManager(lib, rel = null) {
+    try {
+      await api.openInFileManager(lib, rel);
+    } catch (e) {
+      onerror?.(String(e));
+    }
   }
 
   /** Context menu of a node. */
@@ -1194,6 +1210,7 @@
           : [],
         [{ label: "重命名…（F2）", action: () => renameLibrary(l) }, { label: "属性…", action: () => onprops(l, null, "", l.title) }],
         [
+          ...(l.kind === "folder" ? [{ label: openFolderLabel, action: () => openInFileManager(l.id, null) }] : []),
           ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
           { label: "复制目录树路径", action: () => oncopy(l.title) },
         ],
