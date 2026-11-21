@@ -161,6 +161,8 @@ ZIM 正文中，HTML 的二至六级标题若完整文本为「语录」「参�
 - **目录树操作**：文件夹库（和所有只读库）的节点禁用上移 / 下移，顺序按文件名。读写模式下可在库根、文件夹里、文件旁「新建文件夹」（同样受文件名约束，`FolderLibrary::create_dir`）；文件夹节点点击只展开，不打开阅读器。内部库的笔记本身可以有子笔记，暂不需要另设文件夹类型。删除走回收站或库内 `.trash`，不直接硬删。
 - **文件名约束**（新建、重命名、新建文件夹都适用，跨平台一律按最严格的执行）：不允许 `\ / : * ? " < > |` 和控制字符；不能以空格或点结尾；不能用 `CON`、`PRN`、`AUX`、`NUL`、`COM1`–`COM9`、`LPT1`–`LPT9` 等保留名；长度有上限；同目录重名忽略大小写比较。后缀固定，重命名时只改主名。输入时实时校验，旁边显示「本地文件名限制」提示。自动取名「笔记 n」走同一套校验。
 - **索引**：保存时不更新索引。被改动的文档（保存、新建、重命名、删除，内部库也一样）记入「待索引」集合，**在全文搜索开始前**成批写入索引（`AppState::flush_dirty` → `search::sync_docs`：存在的重写，已不存在的删除，内部库同时记下新的数据版本）；没有建过索引、或正在重建时跳过，重建会清空该集合。所以不管怎么编辑，用到全文搜索之前索引与否没有区别。标题快搜的缓存保存后作废重建。
+- **在文件管理器中打开**（2026-11）：目录树右键本地文件夹知识库打开库根，右键其中的节点打开它所在的文件夹（文件在资源管理器里选中它，macOS 用 `open -R`）；菜单文字按平台写「在资源管理器中打开」/「在 Finder 中打开」/「打开本地位置」。命令 `open_in_file_manager`，只接受 `kind == folder` 的库，路径经 `FolderLibrary::abs` 限制在库根内。
+- **索引与外部改动**（2026-11）：文件夹库建索引和增量同步时，把每个文件的 `(大小, 修改时间)` 写进索引目录的 `folder-snapshot.json`（`folder_snapshot_map` / `save_folder_snapshot`）。窗口获得焦点时 `check_folder_changes` 把所有「已建索引、不在重建中」的文件夹库的当前指纹与索引的 `data_version` 比较；不同就先 `flush_dirty`（把程序内的改动写进索引，避免误报），再用快照算新增 / 修改 / 删除的篇数，通知栏提示「检测到「标题」外部更新（新增 n 篇、修改 m 篇、删除 k 篇），正在重新索引…」并自动重建；没有快照的旧索引只提示、不计数。比较前清掉该库的文件夹与标题缓存，重建后重新读取。没有索引的库不参与，等用户自己建。
 - **分步**：第一步（已实现）= 开关与确认（添加向导的勾选、右键菜单「改为读写模式…」，开关存 `libraries.json` 的 `writable`）、三种类型的编辑与自动保存、新建 / 重命名 / 删除（回收到 `.smart-library/trash`，可在「回收站…」里恢复）、保存前的修改时间比对（`FolderLibrary::stamp`）、文件名约束（`folder::check_name`，前后端共用同一函数）。第二步（已实现，待点验）= 侧车元数据、粘贴图片的附件、文件夹和文件的重命名 / 移动（右键「移动到…」选目标文件夹，`FolderLibrary::move_to` / `rename`；关闭里面已打开的标签、改名、再打开）、改名 / 移动时属性与标记的键同步。第三步（已实现，待点验）：删除文件夹（进回收）、新建文件夹时可输入 `甲/乙/丙` 一次建多级、拖放移动（把一个或多个选中的节点拖到目录树里的文件夹行、文件行或知识库行上）、设置里的「清理缓存」（清空读写本地文件夹的 `.smart-library/trash`，删除没有笔记引用的图片，内部知识库的图片也一样）。**目录树与磁盘同步**：窗口重新获得焦点时（延迟 0.3 秒）、以及每次展开已读过的文件夹时，把显示的内容和磁盘比对，消失的节点移除、新增的加入，已展开的文件夹保持展开（按相对路径重新对应展开状态）；侧车文件被外部改过（git pull）时也在获得焦点时重新读入。不另外锁定侧车文件（锁住会让 git 操作失败）。**切换锁定 / 解锁**只是库的一个状态，目录树不重建；已打开的阅读标签关闭后重新打开。**导入知识库包**到内部库后，新笔记记入「待索引」，库已有索引时在下一次全文搜索前自动补进，没有索引就等用户建立。**未做**：外部改名 / 移动 / 删除的笔记，属性和标记仍对不上（用户在软件外的操作）。
 - 实现位置：`core/src/folder.rs`（`EditKind`、`check_name`、`write_edit` / `create` / `rename` / `delete`）；`app/src-tauri/src/commands.rs`（`save_note`、`rename_note`、`delete_note` 对文件夹库分支，新增 `create_folder_file`、`set_folder_writable`、`check_file_name`）；前端 `writable.js`（确认文字）、`LibraryPanel.svelte`（菜单）、`NameDialog.svelte`（实时校验与提示）。前端用阅读结果里的 `raw` 是否存在判断能否编辑。
 
@@ -654,6 +656,17 @@ app_data/
 - 右键菜单里导入、导出放在同一组（上下有分隔线）。自建知识库和它的笔记节点上有「导入到这里」：包里的内容成为该位置的子节点（整库的包先包一层以库名命名的笔记，导出的几个节点则原样放入）；「＋」菜单的导入仍是新建一个知识库。
 - 窗口标题和「只看当前文档」跟随激活的标签：dockview 的 `onDidActivePanelChange` 给的是 `{ panel, origin }`，之前把它当成了面板。
 
+**文件夹数据包（`.smartdir`，2026-11）**
+- 目的：把本地文件夹知识库原样备份、分享，并且能原样还原成文件夹（`.smartlib` 会把内容转成 Markdown，还原不成文件夹）。范围同样是整个库、一个节点或多个节点。
+- 导出（`exchange::export_folder_dir`）：ZIP，`manifest.json` 是 `format: smart-library-dir`、`version: 1`、`app_version`、`created`、`library {title, kind: folder, exts, max_mb}`、`scope: library|nodes`；内容在 `data/<库内相对路径>`，目录结构、原始文件（Markdown、脑图、白板和其他文件都原样）和 `.meta.json` 一起保留。跳过整个 `.smart-library/`（回收站和没用到的附件都在里面）、`.git`、`__MACOSX`、`.DS_Store`、`Thumbs.db`、`desktop.ini`。只打包笔记引用到的图片（`attach::refs`），放在 `data/.smart-library/attachments/<前 2 位>/<3-4 位>/<名>`。
+- 部分导出：只选一个文件夹时以它为根，多个节点取共同上级为根（`common_parent_dir`、`drop_nested_rels`）。`.meta.json` 只保留 `"*"` 和仍被包含的 `"list"` 条目（`filter_dir_meta`）；被选中部分所在的上级文件夹也生成裁剪后的 `.meta.json`。图片链接层数变化时，Markdown 里的相对链接按新位置重写（`folder::attach_to_links`，为此把 `attach_to_links` 和 `DIR_META_FILE` 开放为 `pub`）。
+- 打包：图片、PDF、Office 文档、压缩包、音视频、字体等已经压缩的扩展名用 `Stored`，其余用 `Deflate`（`PackageWriter::options_for`）。
+- 导入：App 的「导入知识库…」先用 `inspect_package` 看包类型（`.smartlib` 照旧直接导入），`.smartdir` 打开 `ImportDirDialog`，两种方式：
+  - **解压并绑定为本地文件夹知识库**（`import_dir_as_folder` → `extract_dir_package` + `add_folder`）：目标目录必须存在且为空，不能与已绑定的库重叠或包含；解压拒绝带 `..`、盘符或反斜杠的路径。可勾选「允许编辑」，绑定后同时启用侧车（`.smart-library/meta.json`）。这样还原的库与导出前一致，除图片附件外的文件都在。
+  - **转为内部知识库**（`import_dir_into_notes`）：先解压到临时目录，再用 `FolderLibrary` 读——目录变文件夹笔记（空内容），Markdown / 脑图 / 白板按 `EditKind` 建对应类型的笔记，其他文件渲染成 Markdown，图片复制进内部库的附件目录，`.meta.json` 的顺序和属性（含继承）按新笔记写回 `props.db`。整个导入在一个事务里。
+  - 两种方式都能另起库名，重名时加「（导入）」「（导入 n）」（`unique_library_title`）；`import_package` 对 `.smartlib` 也接受 `title` 覆盖包里的名字。
+- 导出对话框（`ExportDialog.svelte`）：文件夹库默认选 `.smartdir`，可改选通用数据包 `.smartlib`（只有它显示「同时打包原文件」）。默认文件名为 `名称-yyyyMMddHH.smartdir`。`export-progress` 事件多了可选字段 `stage`（「正在打包附件…」「正在写入压缩包，请稍候…」），弹窗按有无 `stage` 切换确定进度条和文字。两种导出都改在 `spawn_blocking` 里跑，不再占用界面线程。
+
 **笔记里的图片（2026-11）**
 - 在笔记编辑器里粘贴或拖入图片：前端把图片字节交给命令 `note_attach`（请求体是原始字节，请求头 `lib`、`mime`），后端存到 `<数据>/repos/<库>/attachments/<名>`，名字是内容哈希（32 位十六进制 + 扩展名，相同图片只存一份，`core/src/attach.rs`；支持 png、jpg、gif、webp、bmp），编辑框里插入 `![](attach:<名>)`。
 - 渲染：`markdown.rs` 把它变成 `<img src="attach:…">`，`article.rs` 输出 `sl://…/<库>/attachments/<名>`，`asset()` 从附件目录读取（只认合法的名字，不能越出目录）。图片不进全文索引。
@@ -661,7 +674,7 @@ app_data/
 
 **笔记编辑器（2026-11）**
 - 笔记标签的编辑区有两种方式（工具栏「排版 | 源码」，选择记在本地存储 `note.editor`）：排版 = Milkdown Crepe 所见即所得（`NoteEditor.svelte`，第一次编辑时才载入，约 1.1 MB）；源码 = 原来的文本框。内容始终是 Markdown，两种方式共用同一份草稿，切换时重新载入。
-- 排版方式只开启阅读器能显示的功能：标题、列表、引文、粗体斜体、链接、图片、脚注；关闭表格、公式、代码编辑器、顶栏。颜色和阅读字体用程序的变量。图片：粘贴、拖入或「/」菜单上传都交给 `note_attach`，在文档里是 `attach:<名>`，显示时由 `proxyDomURL` 换成附件地址。
+- 排版方式只开启阅读器能显示的功能：标题、列表、引文、粗体斜体、链接、图片、脚注；关闭表格、公式、代码编辑器、顶栏。正文跟随阅读器设置：字体、字号、行距、字距、字重和最强字重、版心宽度都用 `--reader-*` 变量（`--reader-font`、`--reader-size`、`--reader-line`、`--reader-spacing`、`--reader-weight`、`--reader-strong-weight`、`--reader-max-width`、`--reader-stroke`、`--reader-strong-stroke`），段落、列表、标题、引用的间距和行高按同一行高对齐；源码方式不受影响。图片：粘贴、拖入或「/」菜单上传都交给 `note_attach`，在文档里是 `attach:<名>`，显示时由 `proxyDomURL` 换成附件地址。
 - 排版方式不用 Escape 取消编辑（Escape 要用来关它的菜单），只能点「取消」。
 - 试验结果（往返 Markdown）：`-` 列表改写成 `*`，硬换行改写成行尾 `\`，`&` 等写成 `\&`，图片的说明文字被换成缩放比例，脚注定义之间多一个空行；脚注和 `smartlib://` 链接保留。`markdown.rs` 因此认得反斜杠转义和行尾反斜杠（`unbackslash`）。
 
