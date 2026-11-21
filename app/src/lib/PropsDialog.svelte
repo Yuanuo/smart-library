@@ -12,11 +12,11 @@
   let { lib, libTitle = "", bookId = null, path = "", title = "", nodePath = "", onsaved, onclose } = $props();
 
   const DIMS = [
-    ["bulei", "部类", "用 / 分层，如 华严部类/华严部"],
-    ["period", "时域", "朝代或时期，如 唐"],
+    ["bulei", "部类", "用 / 分层，如 文学/现代诗"],
+    ["period", "时域", "朝代或时期，如 现代、唐"],
     ["person", "人物", "作者、译者，可多个"],
-    ["canon", "藏经", "如 大正新脩大藏經"],
-    ["kind", "典类", "用 / 分层，如 论/经释"],
+    ["canon", "文集", "如 丛书或文集名称"],
+    ["kind", "典类", "用 / 分层，如 论文/综述"],
   ];
 
   // common values to pick with a click (names only: what is chosen is what the index gets)
@@ -108,7 +108,7 @@
         <legend>正文索引</legend>
         <label>正文是否加入全文索引
           <select bind:value={indexContent}>
-            <option value="inherit">继承上级（根节点默认索引）</option>
+            <option value="inherit">{#if derived.index_content?.[0] === "off"}继承上级/数据（当前：不索引正文）{:else if derived.index_content?.[0] === "on"}继承上级/数据（当前：索引正文）{:else}继承上级（根节点默认索引）{/if}</option>
             <option value="on">索引正文</option>
             <option value="off">不索引正文</option>
           </select>
@@ -142,7 +142,7 @@
       <fieldset>
         <legend>别名</legend>
         <div class="row">
-          <div class="field"><ChipInput bind:values={aliases} placeholder="这个节点的其他名字，可多个，如 法华经、莲华经" /></div>
+          <div class="field"><ChipInput bind:values={aliases} placeholder="这个节点的其他名字，可多个，如 简称、旧称" /></div>
         </div>
         <p class="muted hint">标题快搜里输入别名也能找到这个节点（不会继承给下面的内容，也不是搜索过滤）。</p>
       </fieldset>

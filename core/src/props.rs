@@ -24,7 +24,7 @@ pub const DIMS: [(&str, &str); 5] = [
     ("bulei", "部类"),
     ("period", "时域"),
     ("person", "人物"),
-    ("canon", "藏经"),
+    ("canon", "文集"),
     ("kind", "典类"),
 ];
 
