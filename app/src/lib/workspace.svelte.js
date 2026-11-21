@@ -141,6 +141,7 @@ function readerRenderer() {
         infos[panelApi.id] = { title: params.title || "", lib: prm.lib, path: prm.path, bookId: prm.bookId ?? null, author: "" };
       }
       panelApi.onDidVisibilityChange(({ isVisible }) => {
+        if (p) p.visible = isVisible;
         if (!isVisible) return;
         if (!positioned && p?.target) {
           positioned = true;
@@ -169,6 +170,8 @@ function readerRenderer() {
         nonce: 0,
         mode: prm.mode || saved?.mode || defaultMode,
         reload: 0, // +1: read the document again
+        visible: panelApi.isVisible, // whether this tab is currently shown
+        check: 0, // +1: check if a folder file changed outside
         editing: false, // a note is open in its editor
         append: null, // { text }: a clipping for the editor
       });
@@ -215,8 +218,12 @@ function readerRenderer() {
       if (!p) return;
       if ("query" in q) p.query = q.query || null;
       if ("phrase" in q) p.phrase = !!q.phrase;
-      if ("target" in q) {
+      if (q.target != null) {
         p.target = q.target;
+        p.quiet = false;
+        p.nonce += 1;
+      } else if (q.query) {
+        p.target = null;
         p.quiet = false;
         p.nonce += 1;
       }
@@ -632,6 +639,9 @@ export async function init(element, h) {
       ws.activeDoc = null;
       ws.activeSearch = null;
     }
+    if (panel && states[panel.id]) {
+      states[panel.id].check = (states[panel.id].check ?? 0) + 1;
+    }
     requestAnimationFrame(() => revealActiveTab(panel));
   });
   dv.onDidAddPanel(refreshEmpty);
@@ -725,6 +735,7 @@ export async function openVolume({ lib, bookId = null, path = null, lb = null, q
   if (panel) {
     panel.api.setActive();
     panel.api.updateParameters({ target: lb, query, phrase });
+    if (states[id.tab]) states[id.tab].check = (states[id.tab].check ?? 0) + 1;
     return;
   }
   dv.addPanel({

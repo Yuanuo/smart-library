@@ -108,6 +108,7 @@
   });
 
   let restoring = false;
+  let lastPath = null;
   $effect(() => {
     const t = target;
     const v = vol;
@@ -115,6 +116,8 @@
     const _n = nonce;
     const q = quiet;
     if (!v) return;
+    const pathChanged = lastPath !== v.path;
+    lastPath = v.path;
     restoring = true;
     tick().then(() => {
       if (!scroller) return;
@@ -123,7 +126,7 @@
       if (el) {
         el.scrollIntoView({ block: q ? "start" : "center" });
         if (!q) el.classList.add("flash");
-      } else {
+      } else if (pathChanged) {
         scroller.scrollTop = 0;
       }
       setTimeout(() => (restoring = false), 100);

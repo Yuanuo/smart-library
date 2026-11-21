@@ -38,9 +38,15 @@
       const q = e.payload || {};
       p.query = q.query || null;
       p.phrase = !!q.phrase;
-      p.target = q.lb;
-      p.quiet = false;
-      p.nonce += 1;
+      if (q.lb != null) {
+        p.target = q.lb;
+        p.quiet = false;
+        p.nonce += 1;
+      } else if (q.query) {
+        p.target = null;
+        p.quiet = false;
+        p.nonce += 1;
+      }
     });
     // closed by the user: forget this pop-out (not when the app exits)
     const un2 = win.onCloseRequested(() => {
