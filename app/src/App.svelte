@@ -27,6 +27,7 @@
   import { fullPath } from "./lib/paths.js";
   import ClipDialog from "./lib/ClipDialog.svelte";
   import ExportDialog from "./lib/ExportDialog.svelte";
+  import ImportDirDialog from "./lib/ImportDirDialog.svelte";
   import AiPanel from "./lib/AiPanel.svelte";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { clipMarkdown, clipNode } from "./lib/clip.js";
@@ -198,16 +199,31 @@
 
   // ---- export and import of libraries
   let exportDlg = $state(null); // { lib, sel, label }
+  let importDirDlg = $state(null); // { path, info }
+  let importing = $state(false);
 
   /** `target`: { lib, parent, key } to import below a place of an internal library; none: as a new library. */
   async function importLibrary(target = null) {
+    if (importing) return;
     try {
       const path = await openFile({
         multiple: false,
         title: "选择数据包",
-        filters: [{ name: "知识库数据包（*.smartlib）", extensions: ["smartlib"] }, { name: "ZIP", extensions: ["zip"] }],
+        filters: [
+          { name: "知识库数据包（*.smartlib, *.smartdir）", extensions: ["smartlib", "smartdir"] },
+          { name: "文件夹数据包（*.smartdir）", extensions: ["smartdir"] },
+          { name: "ZIP", extensions: ["zip"] },
+        ],
       });
       if (!path) return;
+      if (!target) {
+        const info = await api.inspectPackage(path);
+        if (info.kind === "smartdir") {
+          importDirDlg = { path, info };
+          return;
+        }
+      }
+      importing = true;
       notice = "正在导入…";
       const before = new Set(libraries.map((l) => l.id));
       const r = await api.importPackage(path, target?.lib ?? null, target?.parent ?? null);
@@ -226,7 +242,23 @@
       api.prepareTitles().catch(() => {});
     } catch (e) {
       error = String(e);
+    } finally {
+      importing = false;
     }
+  }
+
+  function onImportDirDone(r, mode) {
+    const before = new Set(libraries.map((l) => l.id));
+    st = r.status;
+    importDirDlg = null;
+    const added = (r.status?.libraries || []).filter((l) => !before.has(l.id));
+    const toIndex = added.filter((l) => !l.index_ready && !l.building && !l.error);
+    for (const l of toIndex) startIndex(l.id);
+    const unit = mode === "folder" ? "个文件" : "篇笔记";
+    notice = toIndex.length
+      ? `已导入「${r.title}」：${r.notes} ${unit}，正在后台建立索引…`
+      : `已导入「${r.title}」：${r.notes} ${unit}。`;
+    api.prepareTitles().catch(() => {});
   }
 
   // ---- clippings: selected text into a note
@@ -962,8 +994,25 @@
 {/if}
 
 {#if exportDlg}
-  <ExportDialog lib={exportDlg.lib} sel={exportDlg.sel} label={exportDlg.label} name={exportDlg.name}
-    ondone={(r) => (notice = `已导出 ${r.docs} 篇：${r.path}`)} onclose={() => (exportDlg = null)} />
+  <ExportDialog lib={exportDlg.lib} sel={exportDlg.sel} label={exportDlg.label} name={exportDlg.name} nodePath={exportDlg.nodePath}
+    ondone={(r) => (notice = `已导出 ${r.docs} 项：${r.path}`)} onclose={() => (exportDlg = null)} />
+{/if}
+
+{#if importDirDlg}
+  <ImportDirDialog path={importDirDlg.path} info={importDirDlg.info}
+    ondone={onImportDirDone} onclose={() => (importDirDlg = null)} />
+{/if}
+
+{#if importing}
+  <div class="import-mask" role="dialog" aria-modal="true" aria-label="正在导入">
+    <div class="dialog dialog-shell import-busy">
+      <div class="dialog-content">
+        <p style="margin: 0 0 8px; font-weight: 500;">正在导入数据包…</p>
+        <progress style="width: 100%;"></progress>
+        <p class="muted" style="margin: 8px 0 0; font-size: 13px;">正在解压并写入笔记，请勿关闭窗口。</p>
+      </div>
+    </div>
+  </div>
 {/if}
 
 {#if clipDlg}
@@ -1067,6 +1116,11 @@
     border-right: 1px solid var(--line); touch-action: none;
   }
   .splitter:hover, .splitter.dragging, .splitter:focus-visible { background: var(--accent-soft); outline: none; }
+  .import-mask {
+    position: fixed; inset: 0; z-index: 960; background: rgba(0, 0, 0, 0.35);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .import-busy { width: min(380px, calc(100vw - 32px)); }
   .body:has(.splitter.dragging) { user-select: none; cursor: col-resize; }
   .side-head {
     display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; padding: 4px 8px;

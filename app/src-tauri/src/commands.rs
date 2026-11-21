@@ -4009,6 +4009,8 @@ struct ProgressDto {
     lib: String,
     done: usize,
     total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -4167,7 +4169,7 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
             let app2 = app.clone();
             let lib2 = lib.clone();
             let progress = move |done, total| {
-                let _ = app2.emit("index-progress", ProgressDto { lib: lib2.clone(), done, total });
+                let _ = app2.emit("index-progress", ProgressDto { lib: lib2.clone(), done, total, stage: None });
             };
             let stats = match (&folder, &bc, &html) {
                 _ if zim.is_some() => {

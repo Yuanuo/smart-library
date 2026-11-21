@@ -79,7 +79,10 @@ export const listFonts = () => invoke("list_fonts");
 export const findInPage = () => invoke("find_in_page");
 export const onExportProgress = (cb) => listen("export-progress", (e) => cb(e.payload));
 export const exportLibrary = (req) => invoke("export_library", { req });
-export const importPackage = (path, lib = null, parent = null) => invoke("import_package", { path, lib, parent });
+export const inspectPackage = (path) => invoke("inspect_package", { path });
+export const importPackage = (path, lib = null, parent = null, title = null) => invoke("import_package", { path, lib, parent, title });
+export const importDirAsFolder = (path, dest, title = null, writable = false) =>
+  invoke("import_dir_as_folder", { path, dest, title, writable });
 export const renameNote = (lib, id, title) => invoke("rename_note", { lib, id, title });
 /** Keep a picture (an ArrayBuffer) for the notes of a library; resolves to its name. */
 /** Keep a picture for a note; `path`: the note (a file of a local folder keeps its pictures beside it). */

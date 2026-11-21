@@ -25,6 +25,7 @@ use std::path::Path;
 use crate::props::Dims;
 
 pub const FORMAT: &str = "smart-library-export";
+pub const DIR_FORMAT: &str = "smart-library-dir";
 
 // ------------------------------------------------------------ HTML -> Markdown
 
@@ -432,6 +433,25 @@ impl PackageWriter {
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated)
     }
 
+    /// Already-compressed formats (images, PDF, EPUB, Office docs, archives, media)
+    /// are stored directly so packaging large libraries does not stall CPU on futile deflation.
+    fn options_for(name: &str) -> zip::write::SimpleFileOptions {
+        let ext = name.rsplit('.').next().map(|s| s.to_ascii_lowercase());
+        let stored = matches!(
+            ext.as_deref(),
+            Some(
+                "png" | "jpg" | "jpeg" | "gif" | "webp" | "pdf" | "epub" | "zip" | "docx"
+                    | "xlsx" | "pptx" | "7z" | "gz" | "bz2" | "xz" | "mp3" | "mp4" | "m4a"
+                    | "mov" | "avi" | "mkv" | "woff" | "woff2"
+            )
+        );
+        zip::write::SimpleFileOptions::default().compression_method(if stored {
+            zip::CompressionMethod::Stored
+        } else {
+            zip::CompressionMethod::Deflated
+        })
+    }
+
     /// Add a document; returns its name in the package.
     pub fn add_doc(&mut self, markdown: &str) -> Result<String, String> {
         self.docs += 1;
@@ -443,7 +463,7 @@ impl PackageWriter {
 
     /// Add a file as it is (`name` is the path in the package).
     pub fn add_file(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
-        self.zip.start_file(name, Self::options()).map_err(zerr)?;
+        self.zip.start_file(name, Self::options_for(name)).map_err(zerr)?;
         self.zip.write_all(bytes).map_err(zerr)
     }
 
@@ -604,13 +624,45 @@ impl Package {
                 legacy_manifest(&names, &package_title(path)).ok_or("这不是知识库数据包（没有 manifest.json，也没有旧版的 html / kmind 文件）")?
             }
         };
-        if manifest["format"] != FORMAT {
+        let fmt = manifest["format"].as_str().unwrap_or("");
+        if fmt != FORMAT && fmt != DIR_FORMAT {
             return Err("这不是知识库数据包".into());
         }
         if manifest["version"].as_u64().unwrap_or(0) > 1 {
             return Err("数据包的版本比这个程序新，请升级程序".into());
         }
         Ok(Package { archive, manifest })
+    }
+
+    pub fn is_dir_package(&self) -> bool {
+        self.manifest["format"] == DIR_FORMAT
+    }
+
+    pub fn dir_filter(&self) -> crate::folder::FolderFilter {
+        let mut f = crate::folder::FolderFilter::default();
+        if let Some(arr) = self.manifest["library"]["exts"].as_array() {
+            let exts: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_ascii_lowercase())).filter(|s| !s.is_empty()).collect();
+            if !exts.is_empty() {
+                f.exts = exts;
+            }
+        }
+        if let Some(mb) = self.manifest["library"]["max_mb"].as_u64() {
+            f.max_mb = mb;
+        }
+        f
+    }
+
+    pub fn data_file_count(&self) -> usize {
+        self.archive
+            .file_names()
+            .filter(|n| {
+                n.starts_with("data/")
+                    && !n.ends_with('/')
+                    && !n.starts_with("data/.smart-library/")
+                    && !n.ends_with("/.meta.json")
+                    && *n != "data/.meta.json"
+            })
+            .count()
     }
 
     pub fn title(&self) -> String {
@@ -765,6 +817,473 @@ pub fn document(title: &str, body: &str, source: &str) -> String {
     }
     s.push('\n');
     s
+}
+
+// ------------------------------------------------------------ .smartdir (folder package)
+
+pub struct DirExportReport {
+    pub docs: usize,
+    pub files: usize,
+}
+
+fn is_ignored_dir_export_name(name: &str) -> bool {
+    matches!(name, crate::folder::SIDECAR_DIR | ".git" | ".DS_Store" | "Thumbs.db" | "desktop.ini" | "__MACOSX")
+}
+
+fn drop_nested_rels(rels: &[String]) -> Vec<String> {
+    let clean: Vec<String> = rels
+        .iter()
+        .map(|r| r.trim_matches('/').to_string())
+        .filter(|r| !r.is_empty())
+        .collect();
+    clean
+        .iter()
+        .filter(|k| !clean.iter().any(|o| o != *k && k.starts_with(&format!("{}/", o))))
+        .cloned()
+        .collect()
+}
+
+fn common_parent_dir(rels: &[String]) -> String {
+    let parents: Vec<Vec<&str>> = rels
+        .iter()
+        .map(|r| match r.rsplit_once('/') {
+            Some((p, _)) => p.split('/').filter(|s| !s.is_empty()).collect(),
+            None => Vec::new(),
+        })
+        .collect();
+    let Some(first) = parents.first() else { return String::new() };
+    let mut common = Vec::new();
+    for (i, seg) in first.iter().enumerate() {
+        if parents.iter().all(|p| p.get(i) == Some(seg)) {
+            common.push(*seg);
+        } else {
+            break;
+        }
+    }
+    common.join("/")
+}
+
+fn strip_rel_prefix(rel: &str, prefix: &str) -> String {
+    if prefix.is_empty() {
+        return rel.to_string();
+    }
+    rel.strip_prefix(&format!("{}/", prefix)).unwrap_or(rel).to_string()
+}
+
+/// Filter a `.meta.json` so it keeps `"*"` and only `"list"` entries whose name
+/// is in `keep_names`. Returns `None` if nothing remains.
+fn filter_dir_meta(raw: &str, keep_names: &std::collections::HashSet<String>) -> Option<String> {
+    let val: Value = serde_json::from_str(raw).ok()?;
+    let obj = val.as_object()?;
+    let mut out = serde_json::Map::new();
+    if let Some(star) = obj.get("*") {
+        out.insert("*".into(), star.clone());
+    }
+    if let Some(arr) = obj.get("list").and_then(|v| v.as_array()) {
+        let kept: Vec<Value> = arr
+            .iter()
+            .filter(|item| {
+                let name = item
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| item.as_str());
+                name.is_some_and(|n| {
+                    keep_names.contains(n)
+                        || keep_names.iter().any(|k| k.rsplit_once('.').is_some_and(|(s, _)| s == n))
+                })
+            })
+            .cloned()
+            .collect();
+        if !kept.is_empty() {
+            out.insert("list".into(), Value::Array(kept));
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    serde_json::to_string_pretty(&Value::Object(out)).ok().map(|s| s + "\n")
+}
+
+/// Export a local folder library (whole or picked nodes) as a `.smartdir` ZIP package.
+/// Preserves folder structure, `.meta.json`, original files, and only referenced attachments
+/// (excluding `.smart-library/trash` and VCS/OS junk). Rewrites Markdown attachment links when
+/// a partial export changes directory depth.
+pub fn export_folder_dir(
+    folder: &crate::folder::FolderLibrary,
+    title: &str,
+    rels: &[String],
+    whole: bool,
+    out: &Path,
+    on_progress: &mut dyn FnMut(usize, usize, &str),
+) -> Result<DirExportReport, String> {
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+    // (abs_path, src_rel, dst_rel)
+    let mut entries: Vec<(std::path::PathBuf, String, String)> = Vec::new();
+    let mut seen_dst: HashSet<String> = HashSet::new();
+
+    fn walk_dir(
+        dir: &Path,
+        src_prefix: &str,
+        strip: &str,
+        entries: &mut Vec<(std::path::PathBuf, String, String)>,
+        seen_dst: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        let mut items: Vec<_> = std::fs::read_dir(dir)
+            .map_err(|e| format!("{}: {}", dir.display(), e))?
+            .flatten()
+            .collect();
+        items.sort_by_key(|e| e.file_name());
+        for e in items {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if is_ignored_dir_export_name(&name) {
+                continue;
+            }
+            let Ok(ft) = e.file_type() else { continue };
+            let src_rel = if src_prefix.is_empty() { name.clone() } else { format!("{}/{}", src_prefix, name) };
+            if ft.is_dir() {
+                walk_dir(&e.path(), &src_rel, strip, entries, seen_dst)?;
+            } else if ft.is_file() {
+                let dst_rel = strip_rel_prefix(&src_rel, strip);
+                if seen_dst.insert(dst_rel.clone()) {
+                    entries.push((e.path(), src_rel, dst_rel));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    let is_whole = whole || rels.is_empty();
+    let mut partial_meta: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+
+    if is_whole {
+        walk_dir(&folder.root, "", "", &mut entries, &mut seen_dst)?;
+    } else {
+        let picked = drop_nested_rels(rels);
+        if picked.is_empty() {
+            return Err("没有选中要导出的文件或目录".into());
+        }
+        let single_dir = picked.len() == 1 && folder.abs(&picked[0]).map(|p| p.is_dir()).unwrap_or(false);
+        let strip = if single_dir {
+            picked[0].clone()
+        } else {
+            common_parent_dir(&picked)
+        };
+        for rel in &picked {
+            let abs = folder.abs(rel)?;
+            if abs.is_dir() {
+                walk_dir(&abs, rel, &strip, &mut entries, &mut seen_dst)?;
+            } else if abs.is_file() {
+                let dst_rel = strip_rel_prefix(rel, &strip);
+                if seen_dst.insert(dst_rel.clone()) {
+                    entries.push((abs, rel.clone(), dst_rel));
+                }
+            }
+        }
+        // Preserve filtered `.meta.json` on ancestor directories that were partially included
+        if !single_dir {
+            let mut dir_children: BTreeMap<String, HashSet<String>> = BTreeMap::new();
+            for (_, src_rel, _) in &entries {
+                let mut cur = src_rel.as_str();
+                while let Some((parent, child)) = cur.rsplit_once('/') {
+                    if !strip.is_empty() && parent.len() < strip.len() {
+                        break;
+                    }
+                    dir_children.entry(parent.to_string()).or_default().insert(child.to_string());
+                    if parent == strip {
+                        break;
+                    }
+                    cur = parent;
+                }
+                if strip.is_empty() && !cur.contains('/') {
+                    dir_children.entry(String::new()).or_default().insert(cur.to_string());
+                }
+            }
+            for (src_dir, kept) in dir_children {
+                let dst_dir = if src_dir == strip {
+                    String::new()
+                } else {
+                    strip_rel_prefix(&src_dir, &strip)
+                };
+                let dst_meta_rel = if dst_dir.is_empty() {
+                    crate::folder::DIR_META_FILE.to_string()
+                } else {
+                    format!("{}/{}", dst_dir, crate::folder::DIR_META_FILE)
+                };
+                if seen_dst.contains(&dst_meta_rel) {
+                    continue;
+                }
+                let src_meta = if src_dir.is_empty() {
+                    folder.root.join(crate::folder::DIR_META_FILE)
+                } else {
+                    folder.root.join(&src_dir).join(crate::folder::DIR_META_FILE)
+                };
+                if let Ok(raw) = std::fs::read_to_string(&src_meta) {
+                    if let Some(filtered) = filter_dir_meta(&raw, &kept) {
+                        partial_meta.insert(dst_meta_rel, filtered.into_bytes());
+                    }
+                }
+            }
+        }
+    }
+
+    let total = entries.len();
+    let mut w = PackageWriter::create(out)?;
+    let mut used_attachments: BTreeSet<String> = BTreeSet::new();
+    let mut docs = 0usize;
+
+    for (idx, (abs, src_rel, dst_rel)) in entries.iter().enumerate() {
+        let name = dst_rel.rsplit('/').next().unwrap_or(dst_rel);
+        let zip_path = format!("data/{}", dst_rel);
+        match crate::folder::EditKind::of(name) {
+            Some(crate::folder::EditKind::Markdown) => {
+                let raw = std::fs::read(abs).map_err(|e| format!("{}: {}", src_rel, e))?;
+                let text = String::from_utf8_lossy(&raw);
+                let editor = crate::folder::to_editor(&text);
+                for att in crate::attach::refs(&editor) {
+                    used_attachments.insert(att);
+                }
+                let depth_changed = src_rel.matches('/').count() != dst_rel.matches('/').count();
+                if depth_changed && !crate::attach::refs(&editor).is_empty() {
+                    let rewritten = crate::folder::attach_to_links(&editor, dst_rel);
+                    w.add_file(&zip_path, rewritten.as_bytes())?;
+                } else {
+                    w.add_file(&zip_path, &raw)?;
+                }
+                docs += 1;
+            }
+            Some(crate::folder::EditKind::MindMap | crate::folder::EditKind::Whiteboard) => {
+                let raw = std::fs::read(abs).map_err(|e| format!("{}: {}", src_rel, e))?;
+                let text = String::from_utf8_lossy(&raw);
+                for att in crate::attach::refs(&text) {
+                    used_attachments.insert(att);
+                }
+                w.add_file(&zip_path, &raw)?;
+                docs += 1;
+            }
+            None => {
+                let raw = std::fs::read(abs).map_err(|e| format!("{}: {}", src_rel, e))?;
+                w.add_file(&zip_path, &raw)?;
+                if name != crate::folder::DIR_META_FILE {
+                    docs += 1;
+                }
+            }
+        }
+        on_progress(idx + 1, total, "");
+    }
+
+    for (dst_meta_rel, bytes) in partial_meta {
+        w.add_file(&format!("data/{}", dst_meta_rel), &bytes)?;
+    }
+
+    let attach_root = folder.root.join(crate::folder::SIDECAR_DIR).join("attachments");
+    let mut files = 0usize;
+    let total_att = used_attachments.len();
+    for (att_idx, att) in used_attachments.iter().enumerate() {
+        if att_idx == 0 || (att_idx + 1) % 20 == 0 || att_idx + 1 == total_att {
+            on_progress(att_idx + 1, total_att, "正在打包附件…");
+        }
+        let disk = crate::attach::sharded(&attach_root, att)
+            .filter(|p| p.is_file())
+            .or_else(|| crate::attach::path_of(&attach_root, att).filter(|p| p.is_file()));
+        if let Some(p) = disk {
+            if let Ok(bytes) = std::fs::read(p) {
+                let shard = crate::attach::shard_of(att).unwrap_or_default();
+                let zip_path = format!("data/{}/attachments/{}{}", crate::folder::SIDECAR_DIR, shard, att);
+                w.add_file(&zip_path, &bytes)?;
+                files += 1;
+            }
+        }
+    }
+
+    on_progress(total, total, "正在写入压缩包，请稍候…");
+
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let manifest = json!({
+        "format": DIR_FORMAT,
+        "version": 1,
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "created": created,
+        "library": {
+            "title": title,
+            "kind": "folder",
+            "source": "",
+            "exts": folder.filter.exts,
+            "max_mb": folder.filter.max_mb,
+        },
+        "scope": if is_whole { "library" } else { "nodes" },
+    });
+    w.finish(&manifest)?;
+    Ok(DirExportReport { docs, files })
+}
+
+/// Extract a `.smartdir` package into `dest`. `dest` must exist and be completely empty.
+pub fn extract_dir_package(pkg: &mut Package, dest: &Path) -> Result<usize, String> {
+    if !pkg.is_dir_package() {
+        return Err("这不是文件夹数据包（.smartdir）".into());
+    }
+    if !dest.is_dir() {
+        return Err(format!("目标文件夹不存在：{}", dest.display()));
+    }
+    let mut iter = std::fs::read_dir(dest).map_err(|e| format!("{}: {}", dest.display(), e))?;
+    if iter.next().is_some() {
+        return Err("目标文件夹不为空，请选择一个空目录".into());
+    }
+    let names = pkg.names();
+    let mut count = 0usize;
+    for name in names {
+        let Some(rel) = name.strip_prefix("data/") else { continue };
+        if rel.is_empty() || rel.ends_with('/') {
+            continue;
+        }
+        if rel.starts_with('/') || rel.contains('\\') || rel.split('/').any(|s| s == ".." || s.contains(':')) {
+            return Err(format!("数据包里有不安全的路径：{}", rel));
+        }
+        let target = rel.split('/').filter(|s| !s.is_empty()).fold(dest.to_path_buf(), |p, s| p.join(s));
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {}", parent.display(), e))?;
+        }
+        let bytes = pkg.read_bytes(&name)?;
+        std::fs::write(&target, &bytes).map_err(|e| format!("{}: {}", target.display(), e))?;
+        if !rel.starts_with(&format!("{}/", crate::folder::SIDECAR_DIR)) && !rel.ends_with(crate::folder::DIR_META_FILE) {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Import a `.smartdir` package into an internal notes library (SQLite).
+/// Extracts to a temporary folder, reads via `FolderLibrary` (preserving `.meta.json` order
+/// and properties, mind maps, whiteboards, attachments, and converting other documents to Markdown).
+pub fn import_dir_into_notes(
+    store: &NotesStore,
+    pkg: &mut Package,
+    parent: Option<i64>,
+    wrap: bool,
+    attach: &mut AttachFn<'_>,
+    props: &mut dyn FnMut(i64, &Dims),
+) -> Result<usize, String> {
+    if !pkg.is_dir_package() {
+        return Err("这不是文件夹数据包（.smartdir）".into());
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!("smart-library-dir-import-{}-{}", std::process::id(), stamp));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("无法创建临时目录：{}", e))?;
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(tmp.clone());
+
+    extract_dir_package(pkg, &tmp)?;
+    let filter = pkg.dir_filter();
+    let folder = crate::folder::FolderLibrary::open(&tmp, filter)?;
+
+    // Copy all attachments into the target internal library's attachment store
+    fn walk_attachments(dir: &Path, attach: &mut AttachFn<'_>) -> Result<(), String> {
+        let Ok(rd) = std::fs::read_dir(dir) else { return Ok(()) };
+        for e in rd.flatten() {
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                walk_attachments(&e.path(), attach)?;
+            } else if ft.is_file() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if crate::attach::is_name(&name) {
+                    let bytes = std::fs::read(e.path()).map_err(|err| err.to_string())?;
+                    attach(&name, bytes)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    walk_attachments(&tmp.join(crate::folder::SIDECAR_DIR).join("attachments"), attach)?;
+
+    fn import_folder_children(
+        folder: &crate::folder::FolderLibrary,
+        rel: &str,
+        store: &NotesStore,
+        parent: Option<i64>,
+        n: &mut usize,
+        props: &mut dyn FnMut(i64, &Dims),
+    ) -> Result<(), String> {
+        for e in folder.children(rel)? {
+            if e.is_dir {
+                let id = store.create(parent, &e.name, "")?;
+                *n += 1;
+                if let Some(dims) = folder.dir_meta_dims(&e.rel) {
+                    let cleaned = crate::props::clean(&dims);
+                    if !cleaned.is_empty() {
+                        props(id, &cleaned);
+                    }
+                }
+                import_folder_children(folder, &e.rel, store, Some(id), n, props)?;
+            } else {
+                let title = match crate::folder::EditKind::of(&e.name) {
+                    Some(crate::folder::EditKind::MindMap) => e.name.strip_suffix(".map.json").unwrap_or(&e.name),
+                    Some(crate::folder::EditKind::Whiteboard) => e.name.strip_suffix(".wbd.json").unwrap_or(&e.name),
+                    _ => e.name.rsplit_once('.').map(|(s, _)| s).filter(|s| !s.is_empty()).unwrap_or(&e.name),
+                };
+                let id = match crate::folder::EditKind::of(&e.name) {
+                    Some(crate::folder::EditKind::MindMap) => {
+                        let text = std::fs::read_to_string(folder.abs(&e.rel)?).map_err(|err| err.to_string())?;
+                        store.create_typed(parent, title, &text, crate::mindmap::TYPE)?
+                    }
+                    Some(crate::folder::EditKind::Whiteboard) => {
+                        let text = std::fs::read_to_string(folder.abs(&e.rel)?).map_err(|err| err.to_string())?;
+                        store.create_typed(parent, title, &text, crate::whiteboard::TYPE)?
+                    }
+                    Some(crate::folder::EditKind::Markdown) => {
+                        let raw = std::fs::read(folder.abs(&e.rel)?).map_err(|err| err.to_string())?;
+                        let text = String::from_utf8_lossy(&raw);
+                        let md = crate::folder::to_editor(&text);
+                        store.create(parent, title, &md)?
+                    }
+                    None => {
+                        let md = match folder.article(&e.rel, Some(&crate::render::RenderOptions::default())) {
+                            Ok(a) => html_to_md(&a.html.unwrap_or_default()),
+                            Err(_) => continue,
+                        };
+                        store.create(parent, title, &md)?
+                    }
+                };
+                *n += 1;
+                if let Some(dims) = folder.dir_meta_dims(&e.rel) {
+                    let cleaned = crate::props::clean(&dims);
+                    if !cleaned.is_empty() {
+                        props(id, &cleaned);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    let mut n = 0;
+    store.begin()?;
+    let done = (|| {
+        let mut parent = parent;
+        if wrap {
+            parent = Some(store.create(parent, &pkg.title(), "")?);
+            n += 1;
+        }
+        import_folder_children(&folder, "", store, parent, &mut n, props)
+    })();
+    match done {
+        Ok(()) => store.commit()?,
+        Err(e) => {
+            store.rollback();
+            return Err(e);
+        }
+    }
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -956,5 +1475,92 @@ mod real {
         assert!(md.contains("[^1]"));
         let back = crate::markdown::to_html(&md);
         assert!(back.contains("data-note="));
+    }
+
+    #[test]
+    fn smartdir_export_extract_and_import_notes() {
+        let base = std::env::temp_dir().join(format!("sl-smartdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("src");
+        std::fs::create_dir_all(src.join("专题/子节")).unwrap();
+        std::fs::create_dir_all(src.join(".smart-library/attachments/5c/99")).unwrap();
+        std::fs::create_dir_all(src.join(".smart-library/trash")).unwrap();
+        std::fs::write(src.join(".smart-library/trash/deleted.md"), "deleted").unwrap();
+
+        let used_pic = "5c9907840123456789abcdef01234567.png";
+        let unused_pic = "5c9900000123456789abcdef01234567.png";
+        std::fs::write(src.join(".smart-library/attachments/5c/99").join(used_pic), &[1, 2, 3]).unwrap();
+        std::fs::write(src.join(".smart-library/attachments/5c/99").join(unused_pic), &[9, 9]).unwrap();
+
+        std::fs::write(
+            src.join("专题/.meta.json"),
+            r#"{"*": {"canon": "测试藏"}, "list": [{"name": "子节"}, {"name": "说明.md", "period": "现代"}]}"#,
+        ).unwrap();
+        std::fs::write(
+            src.join("专题/说明.md"),
+            format!("正文 ![]( ../.smart-library/attachments/5c/99/{})\n![](../.smart-library/attachments/5c/99/{})", used_pic, used_pic),
+        ).unwrap();
+        std::fs::write(
+            src.join("专题/子节/图.map.json"),
+            crate::mindmap::new_data("图"),
+        ).unwrap();
+        std::fs::write(src.join("其他.txt"), "其他文本").unwrap();
+
+        let folder = crate::folder::FolderLibrary::open(&src, crate::folder::FolderFilter::default()).unwrap();
+
+        // 1. Partial export of single directory "专题"
+        let pkg_path = base.join("topic.smartdir");
+        let rep = export_folder_dir(&folder, "专题", &["专题".to_string()], false, &pkg_path, &mut |_, _, _| {}).unwrap();
+        assert_eq!(rep.files, 1); // only used_pic, not unused_pic or trash
+        assert!(rep.docs >= 2);
+
+        let mut pkg = Package::open(&pkg_path).unwrap();
+        assert!(pkg.is_dir_package());
+        assert_eq!(pkg.title(), "专题");
+
+        // 2. Extract to non-empty dir fails
+        let nonempty = base.join("nonempty");
+        std::fs::create_dir_all(&nonempty).unwrap();
+        std::fs::write(nonempty.join("x.txt"), "x").unwrap();
+        assert!(extract_dir_package(&mut pkg, &nonempty).is_err());
+
+        // 3. Extract to empty dir succeeds and rewrites markdown attachment link depth
+        let dest = base.join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        extract_dir_package(&mut pkg, &dest).unwrap();
+        assert!(!dest.join(".smart-library/trash").exists());
+        assert!(dest.join(".smart-library/attachments/5c/99").join(used_pic).is_file());
+        assert!(!dest.join(".smart-library/attachments/5c/99").join(unused_pic).exists());
+        assert!(dest.join(".meta.json").is_file());
+        let extracted_md = std::fs::read_to_string(dest.join("说明.md")).unwrap();
+        assert!(extracted_md.contains(&format!("](.smart-library/attachments/5c/99/{})", used_pic)), "{}", extracted_md);
+        assert!(!extracted_md.contains("](../.smart-library/"));
+
+        // 4. Import .smartdir into internal notes library
+        let store = NotesStore::memory().unwrap();
+        let mut pics = Vec::new();
+        let mut props_got: Vec<(i64, Dims)> = Vec::new();
+        let mut pkg2 = Package::open(&pkg_path).unwrap();
+        let count = import_dir_into_notes(
+            &store,
+            &mut pkg2,
+            None,
+            false,
+            &mut |n, b| { pics.push((n.to_string(), b)); Ok(()) },
+            &mut |id, d| props_got.push((id, d.clone())),
+        ).unwrap();
+        assert_eq!(count, 3); // 子节 + 图 + 说明
+        assert_eq!(pics.len(), 1);
+        assert_eq!(pics[0].0, used_pic);
+        let top = store.children(None).unwrap();
+        assert_eq!(top[0].title, "子节");
+        assert_eq!(top[1].title, "说明");
+        let note = store.get(top[1].id).unwrap().unwrap();
+        assert!(note.content.contains(&format!("![](attach:{})", used_pic)), "{}", note.content);
+        let note_dims = &props_got.iter().find(|(id, _)| *id == note.id).unwrap().1;
+        assert_eq!(note_dims.get("canon"), Some(&vec!["测试藏".to_string()]));
+        assert_eq!(note_dims.get("period"), Some(&vec!["现代".to_string()]));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

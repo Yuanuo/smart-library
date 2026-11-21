@@ -1346,7 +1346,7 @@ impl FolderLibrary {
     }
 }
 
-const DIR_META_FILE: &str = ".meta.json";
+pub const DIR_META_FILE: &str = ".meta.json";
 type DirMeta = std::collections::BTreeMap<String, crate::props::Dims>;
 
 /// Natural string comparison: digit runs compare numerically so `第2课` < `第10课`.
@@ -1476,7 +1476,7 @@ pub struct CleanReport {
 
 /// `attach:<name>` of a note's Markdown -> a link relative to the note
 /// (`../.smart-library/attachments/5c/99/<name>`); `rel`: the note's path in the library.
-fn attach_to_links(content: &str, rel: &str) -> String {
+pub fn attach_to_links(content: &str, rel: &str) -> String {
     let up = "../".repeat(rel.matches('/').count());
     let mut out = content.to_string();
     for name in crate::attach::refs(content) {

@@ -15,6 +15,12 @@ pub struct ExportReq {
     /// folder libraries: also keep the original files
     #[serde(default)]
     with_files: bool,
+    /// `"smartdir"` for local-folder packages; empty or `"smartlib"` for standard packages
+    #[serde(default)]
+    format: String,
+    /// display title for `.smartdir` (node / parent / library title)
+    #[serde(default)]
+    title: String,
     /// the ZIP file to write
     out: String,
 }
@@ -132,7 +138,7 @@ impl Exporter<'_> {
         self.done += 1;
         let _ = self.app.emit(
             "export-progress",
-            ProgressDto { lib: self.lib.id.clone(), done: self.done, total: self.total.max(self.done) },
+            ProgressDto { lib: self.lib.id.clone(), done: self.done, total: self.total.max(self.done), stage: None },
         );
     }
 
@@ -264,6 +270,49 @@ impl Exporter<'_> {
 #[tauri::command]
 pub async fn export_library(req: ExportReq, app: AppHandle, state: State<'_, AppState>) -> Result<ExportDone, String> {
     let l = state.library(&req.lib)?;
+    if req.format == "smartdir" {
+        if l.kind != "folder" {
+            return Err("只有本地文件夹类型的知识库可以导出为 .smartdir".into());
+        }
+        let export_title = if !req.title.trim().is_empty() {
+            req.title.trim().to_string()
+        } else if !req.whole && req.rels.len() == 1 {
+            req.rels[0].rsplit('/').next().unwrap_or(&l.title).to_string()
+        } else {
+            l.title.clone()
+        };
+        let lib_id = l.id.clone();
+        let rels = req.rels;
+        let whole = req.whole;
+        let out = req.out;
+        let app2 = app.clone();
+        let rep = tauri::async_runtime::spawn_blocking(move || {
+            let state = app2.state::<AppState>();
+            let f = state.folder(&l)?;
+            smart_library_core::exchange::export_folder_dir(
+                &f,
+                &export_title,
+                &rels,
+                whole,
+                Path::new(&out),
+                &mut |done, total, stage| {
+                    let _ = app2.emit(
+                        "export-progress",
+                        ProgressDto {
+                            lib: lib_id.clone(),
+                            done,
+                            total: total.max(done),
+                            stage: (!stage.is_empty()).then(|| stage.to_string()),
+                        },
+                    );
+                },
+            )
+            .map(|rep| (out, rep))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        return Ok(ExportDone { path: rep.0, docs: rep.1.docs, files: rep.1.files });
+    }
     let mut plans: Vec<Plan> = Vec::new();
     match l.kind.as_str() {
         "folder" => {
@@ -321,17 +370,34 @@ pub async fn export_library(req: ExportReq, app: AppHandle, state: State<'_, App
         }
     }
     let whole = req.whole || (req.keys.is_empty() && req.rels.is_empty());
-    let w = smart_library_core::exchange::PackageWriter::create(Path::new(&req.out))?;
-    let mut ex = Exporter { state: &state, lib: l.clone(), w, with_files: req.with_files, done: 0, files: 0, total: 0, app, attached: HashSet::new() };
-    ex.total = plans.iter().map(|p| ex.count(p)).sum();
-    let mut nodes = Vec::new();
-    for p in &plans {
-        nodes.push(ex.node(p)?);
-    }
-    let manifest = smart_library_core::exchange::manifest(&l.title, &l.kind, &l.source, if whole { "library" } else { "nodes" }, nodes);
-    let (docs, files) = (ex.done, ex.files);
-    ex.w.finish(&manifest)?;
-    Ok(ExportDone { path: req.out, docs, files })
+    let with_files = req.with_files;
+    let out = req.out;
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app2.state::<AppState>();
+        let w = smart_library_core::exchange::PackageWriter::create(Path::new(&out))?;
+        let mut ex = Exporter { state: &state, lib: l.clone(), w, with_files, done: 0, files: 0, total: 0, app: app2.clone(), attached: HashSet::new() };
+        ex.total = plans.iter().map(|p| ex.count(p)).sum();
+        let mut nodes = Vec::new();
+        for p in &plans {
+            nodes.push(ex.node(p)?);
+        }
+        let manifest = smart_library_core::exchange::manifest(&l.title, &l.kind, &l.source, if whole { "library" } else { "nodes" }, nodes);
+        let (docs, files) = (ex.done, ex.files);
+        let _ = app2.emit(
+            "export-progress",
+            ProgressDto {
+                lib: l.id.clone(),
+                done: docs,
+                total: ex.total.max(docs),
+                stage: Some("正在写入压缩包，请稍候…".into()),
+            },
+        );
+        ex.w.finish(&manifest)?;
+        Ok(ExportDone { path: out, docs, files })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// A picture of an export package goes to the attachments of the library (the same name = the same picture).
@@ -345,54 +411,117 @@ fn keep_picture(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
 }
 
 #[derive(Serialize)]
+pub struct PackageInfo {
+    kind: String,
+    title: String,
+    scope: String,
+    files: usize,
+    exts: Vec<String>,
+    max_mb: u64,
+}
+
+#[tauri::command]
+pub async fn inspect_package(path: String) -> Result<PackageInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let pkg = smart_library_core::exchange::Package::open(Path::new(&path))?;
+        let is_dir = pkg.is_dir_package();
+        let filter = pkg.dir_filter();
+        Ok(PackageInfo {
+            kind: if is_dir { "smartdir".into() } else { "smartlib".into() },
+            title: pkg.title(),
+            scope: pkg.manifest["scope"].as_str().unwrap_or("library").to_string(),
+            files: if is_dir { pkg.data_file_count() } else { 0 },
+            exts: filter.exts,
+            max_mb: filter.max_mb,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
 pub struct ImportDone {
     status: StatusDto,
     title: String,
     notes: usize,
 }
 
-/// Read an export package: into a new internal library, or (`lib`, and
+fn unique_library_title(state: &AppState, base: &str) -> String {
+    let libs = state.libraries.read().unwrap();
+    let mut t = base.to_string();
+    let mut n = 1;
+    while libs.iter().any(|l| l.title == t) {
+        n += 1;
+        t = if n == 2 { format!("{}（导入）", base) } else { format!("{}（导入 {}）", base, n) };
+    }
+    t
+}
+
+/// Read an export package (`.smartlib` or `.smartdir`): into a new internal library, or (`lib`, and
 /// `parent` a note id or none for the top) below a place of an internal one.
 #[tauri::command]
-pub async fn import_package(path: String, lib: Option<String>, parent: Option<String>, state: State<'_, AppState>) -> Result<ImportDone, String> {
-    let mut pkg = smart_library_core::exchange::Package::open(Path::new(&path))?;
+pub async fn import_package(
+    path: String,
+    lib: Option<String>,
+    parent: Option<String>,
+    title: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ImportDone, String> {
+    let mut pkg = tauri::async_runtime::spawn_blocking({
+        let path = path.clone();
+        move || smart_library_core::exchange::Package::open(Path::new(&path))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let is_dir = pkg.is_dir_package();
     if let Some(lib_id) = lib.filter(|l| !l.is_empty()) {
-        let store = notes_of(&state, &lib_id)?;
         let parent = match parent.filter(|p| !p.is_empty()) {
             Some(p) => Some(note_id(&p)?),
             None => None,
         };
-        // a whole library comes as one note named like it; picked nodes come as they are
-        let wrap = pkg.manifest["scope"] == "library";
-        let dir = state.attachments_dir(&lib_id);
-        let ids_before: HashSet<i64> = store.rows()?.into_iter().map(|r| r.id).collect();
-        let notes = smart_library_core::exchange::import_into(
-            &store,
-            &mut pkg,
-            parent,
-            wrap,
-            &mut |name, bytes| keep_picture(&dir, name, &bytes),
-            &mut |id, dims| {
-                let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
-            },
-        )?;
-        // the new notes join the index (when the library has one) just before the next full-text search
-        let added: Vec<String> = store.rows()?.into_iter().map(|r| r.id).filter(|i| !ids_before.contains(i)).map(|i| i.to_string()).collect();
-        state.mark_dirty(&lib_id, added);
-        return Ok(ImportDone { status: status_of(&state), title: state.library(&lib_id)?.title, notes });
+        let app2 = app.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            let state = app2.state::<AppState>();
+            let store = notes_of(&state, &lib_id)?;
+            // a whole library comes as one note named like it; picked nodes come as they are
+            let wrap = pkg.manifest["scope"] == "library";
+            let dir = state.attachments_dir(&lib_id);
+            let ids_before: HashSet<i64> = store.rows()?.into_iter().map(|r| r.id).collect();
+            let notes = if is_dir {
+                smart_library_core::exchange::import_dir_into_notes(
+                    &store,
+                    &mut pkg,
+                    parent,
+                    wrap,
+                    &mut |name, bytes| keep_picture(&dir, name, &bytes),
+                    &mut |id, dims| {
+                        let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
+                    },
+                )?
+            } else {
+                smart_library_core::exchange::import_into(
+                    &store,
+                    &mut pkg,
+                    parent,
+                    wrap,
+                    &mut |name, bytes| keep_picture(&dir, name, &bytes),
+                    &mut |id, dims| {
+                        let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
+                    },
+                )?
+            };
+            // the new notes join the index (when the library has one) just before the next full-text search
+            let added: Vec<String> = store.rows()?.into_iter().map(|r| r.id).filter(|i| !ids_before.contains(i)).map(|i| i.to_string()).collect();
+            state.mark_dirty(&lib_id, added);
+            Ok(ImportDone { status: status_of(&state), title: state.library(&lib_id)?.title, notes })
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
-    let base = pkg.title();
-    let title = {
-        let libs = state.libraries.read().unwrap();
-        let mut t = base.clone();
-        let mut n = 1;
-        while libs.iter().any(|l| l.title == t) {
-            n += 1;
-            t = if n == 2 { format!("{}（导入）", base) } else { format!("{}（导入 {}）", base, n) };
-        }
-        t
-    };
-    let status = create_notes_library(title.clone(), None, state.clone()).await?;
+    let base = title.filter(|t| !t.trim().is_empty()).map(|t| t.trim().to_string()).unwrap_or_else(|| pkg.title());
+    let title = unique_library_title(&state, &base);
+    let _ = create_notes_library(title.clone(), None, state.clone()).await?;
     let lib = state
         .libraries
         .read()
@@ -401,19 +530,85 @@ pub async fn import_package(path: String, lib: Option<String>, parent: Option<St
         .find(|l| l.title == title)
         .cloned()
         .ok_or("知识库没有建好")?;
-    let store = state.notes(&lib)?;
-    let dir = state.attachments_dir(&lib.id);
-    let lib_id = lib.id.clone();
-    let notes = smart_library_core::exchange::import_into(
-        &store,
-        &mut pkg,
-        None,
-        false,
-        &mut |name, bytes| keep_picture(&dir, name, &bytes),
-        &mut |id, dims| {
-            let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
-        },
-    )?;
-    state.titles.write().unwrap().remove(&lib.id);
-    Ok(ImportDone { status, title, notes })
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app2.state::<AppState>();
+        let store = state.notes(&lib)?;
+        let dir = state.attachments_dir(&lib.id);
+        let lib_id = lib.id.clone();
+        let notes = if is_dir {
+            smart_library_core::exchange::import_dir_into_notes(
+                &store,
+                &mut pkg,
+                None,
+                false,
+                &mut |name, bytes| keep_picture(&dir, name, &bytes),
+                &mut |id, dims| {
+                    let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
+                },
+            )?
+        } else {
+            smart_library_core::exchange::import_into(
+                &store,
+                &mut pkg,
+                None,
+                false,
+                &mut |name, bytes| keep_picture(&dir, name, &bytes),
+                &mut |id, dims| {
+                    let _ = state.props.set(&lib_id, None, &id.to_string(), dims);
+                },
+            )?
+        };
+        state.titles.write().unwrap().remove(&lib.id);
+        Ok(ImportDone { status: status_of(&state), title, notes })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Extract a `.smartdir` package into an empty local directory and bind it as a local folder library.
+#[tauri::command]
+pub async fn import_dir_as_folder(
+    path: String,
+    dest: String,
+    title: Option<String>,
+    writable: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<ImportDone, String> {
+    let canon = folder::canonical(&dest)?;
+    {
+        let libs = state.libraries.read().unwrap();
+        let existing: Vec<&str> = libs.iter().filter(|l| l.kind == "folder").map(|l| l.source.as_str()).collect();
+        if let Some(c) = folder::conflict(&existing, &canon) {
+            return Err(c);
+        }
+    }
+    let (count, pkg_title, filter) = tauri::async_runtime::spawn_blocking({
+        let path = path.clone();
+        let canon = canon.clone();
+        move || {
+            let mut pkg = smart_library_core::exchange::Package::open(Path::new(&path))?;
+            if !pkg.is_dir_package() {
+                return Err("只有 .smartdir 文件夹数据包可以导入为本地文件夹知识库".into());
+            }
+            let pkg_title = pkg.title();
+            let filter = pkg.dir_filter();
+            let count = smart_library_core::exchange::extract_dir_package(&mut pkg, Path::new(&canon))?;
+            Ok::<_, String>((count, pkg_title, filter))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let base = title.filter(|t| !t.trim().is_empty()).map(|t| t.trim().to_string()).unwrap_or(pkg_title);
+    let lib_title = unique_library_title(&state, &base);
+    let exts = filter.exts.join(" ");
+    let want_writable = writable.unwrap_or(false);
+    let _ = add_folder(canon.clone(), Some(lib_title.clone()), exts, filter.max_mb, Some(want_writable), None, state.clone()).await?;
+    if want_writable {
+        let added = state.libraries.read().unwrap().iter().find(|l| l.source == canon).cloned();
+        if let Some(l) = added {
+            let _ = state.sidecar_enable(&l);
+        }
+    }
+    Ok(ImportDone { status: status_of(&state), title: lib_title, notes: count })
 }
