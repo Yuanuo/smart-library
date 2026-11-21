@@ -70,9 +70,9 @@
     });
   }
 
-  // `raw` comes only with what can be edited here: the notes of internal
-  // libraries and the editable files of folder libraries in read-write mode
-  const isNote = (v) => v?.raw != null && v.content_type !== "mindmap" && v.content_type !== "whiteboard";
+  // `writable` is true only for documents that can be edited in place: notes of
+  // internal libraries and editable files of folder libraries in read-write mode
+  const isNote = (v) => Boolean(v?.writable) && v?.raw != null && v.content_type !== "mindmap" && v.content_type !== "whiteboard";
 
   function getDocText() {
     if (!vol) return "";
@@ -83,14 +83,14 @@
   }
 
   function getCurrentRawContent() {
-    if (!vol || vol.raw == null) return null;
+    if (!vol || !vol.writable || vol.raw == null) return null;
     if (vol.content_type === "mindmap") return mindRef?.getRaw?.() ?? vol.raw;
     if (vol.content_type === "whiteboard") return boardRef?.getRaw?.() ?? vol.raw;
     return draft;
   }
 
   async function handleEditDoc({ mode, text }) {
-    if (!vol || vol.raw == null || !text?.trim()) return;
+    if (!vol || !vol.writable || vol.raw == null || !text?.trim()) return;
     const raw = getCurrentRawContent();
     await api.createSnapshot(p.lib, p.path, "ai", "AI 修改前", raw).catch(() => {});
     if (vol.content_type === "mindmap") {
@@ -120,9 +120,9 @@
       bookId: p.bookId,
       title: p.retitled ?? vol.title,
       contentType: vol.content_type || "markdown",
-      writable: vol.raw != null,
+      writable: Boolean(vol.writable),
       getText: getDocText,
-      editDoc: vol.raw != null ? handleEditDoc : null,
+      editDoc: vol.writable ? handleEditDoc : null,
     });
   });
 
@@ -131,6 +131,51 @@
   let ver = $state(0); // +1: the editor reads `draft` again
   let loaded = false; // the draft came from the note
   let seenReload = -1;
+  let loadedStamp = null; // folder file stamp when last loaded or saved
+  let checkingExternal = false;
+
+  function hasUnsavedEdits() {
+    if (!vol?.writable) return false;
+    if (vol.content_type === "mindmap") return Boolean(mindRef?.isDirty?.());
+    if (vol.content_type === "whiteboard") return Boolean(boardRef?.isDirty?.());
+    return editSeq !== savedSeq;
+  }
+
+  async function checkExternal() {
+    if (checkingExternal || !vol || vol.kind !== "folder" || !loadedStamp) return;
+    if (hasUnsavedEdits()) return;
+    checkingExternal = true;
+    try {
+      const cur = await api.folderFileStamp(p.lib, p.path);
+      if (cur && cur !== loadedStamp) {
+        p.reload = (p.reload ?? 0) + 1;
+      }
+    } catch {} finally {
+      checkingExternal = false;
+    }
+  }
+
+  $effect(() => {
+    const visible = p.visible;
+    const _check = p.check;
+    if (visible !== false) {
+      untrack(() => checkExternal());
+    }
+  });
+
+  $effect(() => {
+    let t = null;
+    const onFocus = () => {
+      if (p.visible === false) return;
+      clearTimeout(t);
+      t = setTimeout(checkExternal, 250);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      clearTimeout(t);
+    };
+  });
 
   $effect(() => {
     const { lib, bookId, path, query, phrase } = p;
@@ -139,6 +184,7 @@
       .openNode(lib, bookId, path, query || null, !!phrase)
       .then((v) => {
         vol = v;
+        loadedStamp = v.stamp ?? null;
         error = "";
         // the draft is read once, and again when the note changed outside; a new
         // search or jump in the same note must not take the editor away from the user
@@ -185,7 +231,8 @@
     const targetSeq = editSeq;
     const text = draft;
     try {
-      await api.saveNote(p.lib, p.path, text);
+      const nextStamp = await api.saveNote(p.lib, p.path, text);
+      if (nextStamp) loadedStamp = nextStamp;
       if (vol.kind === "notes") setLast({ lib: p.lib, id: p.path, title: vol.title }); // the note clippings go to by default
       if (savedSeq < targetSeq) savedSeq = targetSeq;
       if (editSeq === savedSeq) status = "已保存";
@@ -342,7 +389,7 @@
 </script>
 
 {#snippet aiBtn()}
-  {#if vol?.raw != null}
+  {#if vol?.writable}
     <button type="button" class="tool-btn" onclick={() => (snapshotOpen = true)} title="文档快照（查看、创建或还原历史版本）" aria-label="文档快照">
       <Icon name="snapshot" size={16} />
     </button>
@@ -366,6 +413,8 @@
           bind:this={mindRef}
           {vol}
           title={p.retitled ?? vol.title}
+          readonly={!vol.writable}
+          onsaved={(s) => s && (loadedStamp = s)}
           {onlocate}
           ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
           onprops={onaction ? () => onaction({ type: "props", vol }) : null}
@@ -388,6 +437,8 @@
           bind:this={boardRef}
           {vol}
           title={p.retitled ?? vol.title}
+          readonly={!vol.writable}
+          onsaved={(s) => s && (loadedStamp = s)}
           {onlocate}
           ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
           onprops={onaction ? () => onaction({ type: "props", vol }) : null}
@@ -469,7 +520,7 @@
   <p class="loading muted">载入中…</p>
 {/if}
 
-{#if snapshotOpen && vol?.raw != null}
+{#if snapshotOpen && vol?.writable}
   <SnapshotDialog
     lib={p.lib}
     docId={p.path}

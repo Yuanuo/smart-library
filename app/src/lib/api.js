@@ -57,6 +57,8 @@ export const mindmapAddClip = (lib, id, topic, link, tag) => invoke("mindmap_add
 export const recentTouch = (lib, path, bookId, title) => invoke("recent_touch", { lib, path, bookId, title });
 export const recentBump = (lib, path) => invoke("recent_bump", { lib, path });
 export const recentProgress = (lib, path, lb, mode) => invoke("recent_progress", { lib, path, lb, mode });
+export const recentPatchExtra = (lib, path, patch, title = null) =>
+  invoke("recent_patch_extra", { lib, path, patch, title });
 export const recentList = (filter = "", limit = 300) => invoke("recent_list", { filter, limit });
 export const openedSet = (lib) => invoke("opened_set", { lib });
 export const recentRemove = (lib, path) => invoke("recent_remove", { lib, path });
@@ -94,6 +96,7 @@ export const unbindLibrary = (id) => invoke("unbind_library", { id });
 export const tree = (lib) => invoke("tree", { lib });
 export const openNode = (lib, bookId, path, query = null, phrase = false) =>
   invoke("open_node", { lib, bookId, path, query, phrase });
+export const folderFileStamp = (lib, path) => invoke("folder_file_stamp", { lib, path });
 export const resolveNode = (lib, bookId = null, path = null) => invoke("resolve_node", { lib, bookId, path });
 /** The original text of a document, for the raw data window. */
 export const rawSource = (lib, path = null, bookId = null) => invoke("raw_source", { lib, path, bookId });

@@ -161,7 +161,7 @@ pub async fn ai_doc_text(
         let title = folder::title_of(name).to_string();
         let edit_kind = folder::EditKind::of(name);
         if matches!(edit_kind, Some(folder::EditKind::MindMap) | Some(folder::EditKind::Whiteboard)) {
-            let (raw, _) = f.read_edit(&path)?;
+            let raw = f.read_raw(&path)?;
             let text = if edit_kind == Some(folder::EditKind::MindMap) {
                 smart_library_core::mindmap::to_markdown(&raw)
             } else {

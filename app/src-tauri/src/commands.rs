@@ -1692,20 +1692,30 @@ pub async fn rename_note(lib: String, id: String, title: String, state: State<'_
 }
 
 #[tauri::command]
-pub async fn save_note(lib: String, id: String, content: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn save_note(lib: String, id: String, content: String, state: State<'_, AppState>) -> Result<Option<String>, String> {
     if let Some(f) = rw_folder(&state, &lib)? {
         let key = format!("{}|{}", lib, id);
         let seen = state.stamps.lock().unwrap().get(&key).cloned();
         // pictures: kept in the note's own folder, a Markdown note links to them (other programs show them too)
         let content = f.prepare_save(&id, &content)?;
         let stamp = f.write_edit(&id, &content, seen.as_deref())?;
-        state.stamps.lock().unwrap().insert(key, stamp);
+        state.stamps.lock().unwrap().insert(key, stamp.clone());
         state.mark_dirty(&lib, [id]);
-        return Ok(());
+        return Ok(Some(stamp));
     }
     notes_of(&state, &lib)?.update(note_id(&id)?, None, Some(&content))?;
     state.mark_dirty(&lib, [id]);
-    Ok(())
+    Ok(None)
+}
+
+#[tauri::command]
+pub fn folder_file_stamp(lib: String, path: String, state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let l = state.library(&lib)?;
+    if l.kind != "folder" {
+        return Ok(None);
+    }
+    let f = state.folder(&l)?;
+    Ok(f.stamp(&path).ok())
 }
 
 /// Add a Markdown note, mind map or whiteboard (`kind`: `md`, `mindmap`,
@@ -2389,9 +2399,15 @@ pub struct ReaderDto {
     hits: usize,
     /// line of the first hit
     first_hit_lb: Option<String>,
-    /// internal libraries: the Markdown source, for editing
+    /// raw source (for editing, or read-only mindmap/whiteboard rendering)
     raw: Option<String>,
-    /// `mindmap` for a mind map note, else empty
+    /// whether this document can be edited in place
+    writable: bool,
+    /// folder libraries: file modification stamp (`<mtime_nanos>:<size>`) to detect external edits
+    stamp: Option<String>,
+    /// extensible per-document view metadata from reading history (e.g. mindmap direction)
+    view_extra: Option<serde_json::Value>,
+    /// `mindmap` / `whiteboard`, else empty
     content_type: String,
     attribution: Option<String>,
 }
@@ -2464,6 +2480,7 @@ pub async fn open_node(
 ) -> Result<ReaderDto, String> {
     let l = state.library(&lib)?;
     let asset_prefix = format!("{}{}/", ASSET_PREFIX, l.id);
+    let view_extra = |p: &str| state.history.get_extra(&l.id, p).ok().flatten();
 
     if l.kind == "zim" {
         let path = path.ok_or("没有指定文章")?;
@@ -2476,7 +2493,7 @@ pub async fn open_node(
         let a = z.article(i, Some(&RenderOptions { highlights: ranges.clone(), asset_prefix }))?;
         return Ok(ReaderDto { lib: l.id.clone(), kind: l.kind.clone(), book_id: None, title, author: String::new(), path: path.clone(), juan: 0, label: String::new(), volumes: vec![],
             chapters: a.headings.iter().map(|h| ChapterDto { title: h.text.clone(), path: path.clone(), lb: Some(h.lb.clone()), depth: h.level.saturating_sub(1) as usize }).collect(),
-            lines: line_view(&a.text, &ranges), html: a.html.unwrap_or_default(), hits, first_hit_lb, raw: None, content_type: String::new(), attribution: a.attribution });
+            lines: line_view(&a.text, &ranges), html: a.html.unwrap_or_default(), hits, first_hit_lb, raw: None, writable: false, stamp: None, view_extra: view_extra(&path), content_type: String::new(), attribution: a.attribution });
     }
 
     if l.kind == "notes" {
@@ -2502,6 +2519,9 @@ pub async fn open_node(
                 hits: 0,
                 first_hit_lb: None,
                 raw: Some(note.content),
+                writable: true,
+                stamp: None,
+                view_extra: view_extra(&path),
                 content_type: if note.content_type == smart_library_core::mindmap::TYPE { "mindmap" } else { "whiteboard" }.into(),
                 attribution: None,
             });
@@ -2539,6 +2559,9 @@ pub async fn open_node(
             hits,
             first_hit_lb,
             raw: Some(note.content),
+            writable: true,
+            stamp: None,
+            view_extra: view_extra(&path),
             content_type: String::new(),
             attribution: None,
         });
@@ -2547,17 +2570,23 @@ pub async fn open_node(
         let f = state.folder(&l)?;
         let path = path.ok_or("没有指定文件")?;
         let name = path.rsplit('/').next().unwrap_or(&path);
-        let edit_kind = if f.writable { folder::EditKind::of(name) } else { None };
+        let file_kind = folder::EditKind::of(name);
+        let edit_kind = if f.writable { file_kind } else { None };
         // an editable file: its text goes to the editor (`raw`), the stamp is kept to notice outside changes
-        let raw = match edit_kind {
+        let (raw, stamp) = match edit_kind {
             Some(_) => {
                 let (text, stamp) = f.read_edit(&path)?;
-                state.stamps.lock().unwrap().insert(format!("{}|{}", l.id, path), stamp);
-                Some(if edit_kind == Some(folder::EditKind::Markdown) { folder::to_editor(&text) } else { text })
+                state.stamps.lock().unwrap().insert(format!("{}|{}", l.id, path), stamp.clone());
+                let raw = if edit_kind == Some(folder::EditKind::Markdown) { folder::to_editor(&text) } else { text };
+                (Some(raw), Some(stamp))
             }
-            None => None,
+            None => (None, f.stamp(&path).ok()),
         };
-        if matches!(edit_kind, Some(folder::EditKind::MindMap) | Some(folder::EditKind::Whiteboard)) {
+        if matches!(file_kind, Some(folder::EditKind::MindMap) | Some(folder::EditKind::Whiteboard)) {
+            let raw = match raw {
+                Some(t) => Some(t),
+                None => Some(f.read_raw(&path)?),
+            };
             return Ok(ReaderDto {
                 lib: l.id.clone(),
                 kind: l.kind.clone(),
@@ -2574,7 +2603,10 @@ pub async fn open_node(
                 hits: 0,
                 first_hit_lb: None,
                 raw,
-                content_type: edit_kind.unwrap().content_type().into(),
+                writable: f.writable,
+                stamp,
+                view_extra: view_extra(&path),
+                content_type: file_kind.unwrap().content_type().into(),
                 attribution: None,
             });
         }
@@ -2618,6 +2650,9 @@ pub async fn open_node(
             hits,
             first_hit_lb,
             raw,
+            writable: edit_kind.is_some(),
+            stamp,
+            view_extra: view_extra(&path),
             content_type: String::new(),
             attribution: None,
         });
@@ -2670,6 +2705,9 @@ pub async fn open_node(
             hits,
             first_hit_lb,
             raw: None,
+            writable: false,
+            stamp: None,
+            view_extra: view_extra(&path),
             content_type: String::new(),
             attribution: None,
         });
@@ -2717,6 +2755,9 @@ pub async fn open_node(
         hits,
         first_hit_lb,
         raw: None,
+        writable: false,
+        stamp: None,
+        view_extra: view_extra(&vol.path),
         content_type: String::new(),
         attribution: None,
     })
@@ -4205,10 +4246,19 @@ fn derived_dims(state: &AppState, l: &Library, book_id: Option<&str>, path: &str
         "folder" => {
             let f = state.folder(l)?;
             let files = f.files();
-            match files.iter().find(|x| x.rel == path) {
+            let facets = match files.iter().find(|x| x.rel == path) {
                 Some(file) => f.docs(std::slice::from_ref(file)).next().and_then(|d| d.ok()).map(|d| d.facets).unwrap_or_default(),
-                None => Vec::new(), // a folder: the data gives it nothing
+                None => Vec::new(),
+            };
+            let mut dims = props::dims_of(&facets);
+            if let Some(meta_dims) = f.dir_meta_dims(path) {
+                for (k, v) in meta_dims {
+                    if !v.is_empty() {
+                        dims.insert(k, v);
+                    }
+                }
             }
+            return Ok(dims);
         }
         "notes" => match path.parse::<i64>() {
             Ok(id) => {
@@ -4249,7 +4299,7 @@ pub async fn props_get(lib: String, book_id: Option<String>, path: String, state
             _ => Vec::new(),
         };
         for (dim, values) in overlay.merged(&parents) {
-            if props::is_dim(&dim) { derived.insert(dim, values); }
+            if props::is_dim(&dim) || dim == "index_content" { derived.insert(dim, values); }
         }
     }
     Ok(PropsDto {
@@ -4387,6 +4437,17 @@ pub async fn recent_bump(lib: String, path: String, state: State<'_, AppState>) 
 #[tauri::command]
 pub async fn recent_progress(lib: String, path: String, lb: String, mode: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
     state.history.set_progress(&lib, &path, &lb, mode.as_deref())
+}
+
+#[tauri::command]
+pub async fn recent_patch_extra(
+    lib: String,
+    path: String,
+    patch: serde_json::Value,
+    title: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.history.patch_extra(&lib, &path, &patch, title.as_deref())
 }
 
 #[tauri::command]

@@ -12,7 +12,7 @@
   import { matchesShortcut } from "./shortcuts.js";
   import { settings } from "./settings.svelte.js";
 
-  let { vol, title = vol.title, lib, path, onjump = null, onexternal = null, onlocate = null, ontag = null, onprops = null, onai = null, extra = null } = $props();
+  let { vol, title = vol.title, lib, path, readonly = false, onsaved = null, onjump = null, onexternal = null, onlocate = null, ontag = null, onprops = null, onai = null, extra = null } = $props();
 
   let el = $state();
   let mind = null;
@@ -32,8 +32,10 @@
   const dataText = () =>
     JSON.stringify({ ...mind.getData(), direction: mind.direction }, (k, v) => (k === "parent" ? undefined : v));
   export const getRaw = () => (mind && !blocked ? dataText() : null);
+  export const isDirty = () => !readonly && dirty;
 
   function changed() {
+    if (readonly) return;
     dirty = true;
     status = "未保存";
     clearTimeout(timer);
@@ -41,10 +43,11 @@
   }
 
   async function save() {
-    if (blocked || !mind || !dirty) return;
+    if (readonly || blocked || !mind || !dirty) return;
     dirty = false;
     try {
-      await api.saveNote(lib, path, dataText());
+      const nextStamp = await api.saveNote(lib, path, dataText());
+      if (nextStamp) onsaved?.(nextStamp);
       if (!gone) status = "已保存";
     } catch (e) {
       dirty = true;
@@ -139,7 +142,7 @@
   }
 
   export async function applyAi({ mode = "replace", text }) {
-    if (!mind) return;
+    if (readonly || !mind) return;
     const rawJson = await api.aiMindmapParse(text, title);
     const parsed = JSON.parse(rawJson);
     if (!parsed?.nodeData) throw new Error("未能解析出有效的脑图节点");
@@ -249,55 +252,67 @@
       } else {
         data = MindElixir.new(vol.title);
       }
+      const savedDirection = vol.view_extra?.mindmapDirection;
+      const initialDirection =
+        typeof savedDirection === "number"
+          ? savedDirection
+          : typeof data.direction === "number"
+            ? data.direction
+            : MindElixir.SIDE;
       mind = new MindElixir({
         el,
-        direction: typeof data.direction === "number" ? data.direction : MindElixir.SIDE,
+        direction: initialDirection,
+        editable: !readonly,
         toolBar: true,
-        keypress: true,
-        allowUndo: true,
-        contextMenu: {
-          locale: zh_CN,
-          extend: [
-            {
-              name: "插入图片…",
-              onclick: () => {
-                const cover = el?.querySelector(".context-menu");
-                if (cover instanceof HTMLElement) cover.hidden = true;
-                pickPicture();
-              },
-            },
-            ...(onai
-              ? [
-                  {
-                    name: "AI 扩充此节点…",
-                    onclick: () => {
-                      const cover = el?.querySelector(".context-menu");
-                      if (cover instanceof HTMLElement) cover.hidden = true;
-                      const topic = mind?.currentNode?.nodeObj?.topic || title;
-                      onai({
-                        text: topic,
-                        prompt: `请围绕节点「${topic}」扩展生成 4～6 个下级分支与子节点（仅输出纯 Markdown 缩进列表，直接从下级分支开始，不要包含开场白或总结）。`,
-                      });
-                    },
+        keypress: !readonly,
+        allowUndo: !readonly,
+        contextMenu: readonly
+          ? false
+          : {
+              locale: zh_CN,
+              extend: [
+                {
+                  name: "插入图片…",
+                  onclick: () => {
+                    const cover = el?.querySelector(".context-menu");
+                    if (cover instanceof HTMLElement) cover.hidden = true;
+                    pickPicture();
                   },
-                ]
-              : []),
-          ],
-        },
+                },
+                ...(onai
+                  ? [
+                      {
+                        name: "AI 扩充此节点…",
+                        onclick: () => {
+                          const cover = el?.querySelector(".context-menu");
+                          if (cover instanceof HTMLElement) cover.hidden = true;
+                          const topic = mind?.currentNode?.nodeObj?.topic || title;
+                          onai({
+                            text: topic,
+                            prompt: `请围绕节点「${topic}」扩展生成 4～6 个下级分支与子节点（仅输出纯 Markdown 缩进列表，直接从下级分支开始，不要包含开场白或总结）。`,
+                          });
+                        },
+                      },
+                    ]
+                  : []),
+              ],
+            },
         theme: isDark() ? MindElixir.DARK_THEME : MindElixir.THEME,
         imageProxy: (url) => (url.startsWith("attach:") ? `${info.asset_prefix}${lib}/attachments/${url.slice(7)}` : url),
         // nothing copied inside the map: a picture on the clipboard goes to the selected node
-        pasteHandler: (e) => {
-          const f = pictureOf(e);
-          if (f) {
-            e.preventDefault();
-            setPicture(f);
-          }
-        },
+        pasteHandler: readonly
+          ? undefined
+          : (e) => {
+              const f = pictureOf(e);
+              if (f) {
+                e.preventDefault();
+                setPicture(f);
+              }
+            },
       });
       // the node menu (font, colors, tag, icon, link, memo) in Chinese
       mind.locale = "zh_CN";
-      mind.install(nodeMenu);
+      if (!readonly) mind.install(nodeMenu);
       MindElixirClass = MindElixir;
       await mind.init(data);
       mindReady = true;
@@ -326,8 +341,16 @@
       el.addEventListener("pointermove", drag);
       el.addEventListener("pointerup", drop);
       el.addEventListener("pointercancel", drop);
-      mind.bus.addListener("operation", changed);
-      mind.bus.addListener("changeDirection", changed);
+      mind.bus.addListener("changeDirection", (dir) => {
+        const nextDir = typeof dir === "number" ? dir : mind?.direction;
+        if (typeof nextDir === "number") {
+          api.recentPatchExtra(lib, path, { mindmapDirection: nextDir }, title).catch(() => {});
+        }
+        if (!readonly) changed();
+      });
+      if (!readonly) {
+        mind.bus.addListener("operation", changed);
+      }
     } catch (e) {
       error = String(e);
     }
@@ -374,7 +397,7 @@
     wait?.disconnect();
     gone = true;
     clearTimeout(timer);
-    if (!blocked && mind && dirty) api.saveNote(lib, path, dataText()).catch(() => {});
+    if (!readonly && !blocked && mind && dirty) api.saveNote(lib, path, dataText()).catch(() => {});
     mind?.destroy?.();
   });
 
@@ -386,12 +409,14 @@
     e.stopPropagation();
     const raw = a.getAttribute("href") || "";
     const to = parseSource(raw);
-    if (to && onjump) Promise.resolve(onjump(to)).catch((err) => (error = String(err)));
-    else if (/^https?:\/\//i.test(raw)) onexternal?.(raw);
+    if (to && onjump) {
+      if (to.lib === ".") to.lib = lib;
+      Promise.resolve(onjump(to)).catch((err) => (error = String(err)));
+    } else if (/^https?:\/\//i.test(raw)) onexternal?.(raw);
   }
 
   function key(e) {
-    if (matchesShortcut(e, "save")) {
+    if (!readonly && matchesShortcut(e, "save")) {
       e.preventDefault();
       clearTimeout(timer);
       save();
@@ -407,7 +432,11 @@
     {#if onprops}<button type="button" class="tool-btn" onclick={onprops} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>{/if}
     {@render extra?.()}
     <button type="button" class="tool-btn" onclick={exportMenu}>导出 ▾</button>
-    <span class="muted hint" title="脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布">脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布</span>
+    {#if readonly}
+      <span class="muted hint" title="脑图（只读）· 按住中键拖动画布，滚轮缩放">脑图（只读）· 按住中键拖动画布，滚轮缩放</span>
+    {:else}
+      <span class="muted hint" title="脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布">脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布</span>
+    {/if}
     <span class="muted status">{status}</span>
   </div>
   {#if error}<p class="error">{error}</p>{/if}
