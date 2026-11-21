@@ -272,8 +272,69 @@
     --crepe-color-inline-area: var(--bg);
     --crepe-font-default: var(--reader-font, var(--font-serif));
     --crepe-font-title: var(--reader-font, var(--font-serif));
+    --crepe-base-font-size: var(--reader-size, 19px);
     min-height: 100%;
   }
-  .note-editor :global(.milkdown .ProseMirror) { padding: 24px 56px 80px; font-size: var(--reader-size, 19px); line-height: var(--reader-line, 1.9); }
+  .note-editor :global(.milkdown .ProseMirror) {
+    max-width: var(--reader-max-width, 46em);
+    margin: 0 auto;
+    padding: 24px 56px 80px;
+    font-family: var(--reader-font, var(--font-serif));
+    font-size: var(--reader-size, 19px);
+    line-height: var(--reader-line, 2);
+    letter-spacing: var(--reader-spacing, 0.04em);
+    font-weight: var(--reader-weight, 400);
+    -webkit-text-stroke-width: var(--reader-stroke, 0);
+  }
+  .note-editor :global(.milkdown .ProseMirror p) {
+    font-size: 1em;
+    line-height: inherit;
+    margin: var(--reader-para, 0.35em) 0;
+    padding: 0;
+  }
+  .note-editor :global(.milkdown .ProseMirror li p) {
+    margin: 0.15em 0;
+  }
+  .note-editor :global(.milkdown .ProseMirror strong),
+  .note-editor :global(.milkdown .ProseMirror b),
+  .note-editor :global(.milkdown .ProseMirror th) {
+    font-weight: var(--reader-strong-weight, 700);
+    -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
+  }
+  .note-editor :global(.milkdown .ProseMirror h1),
+  .note-editor :global(.milkdown .ProseMirror h2),
+  .note-editor :global(.milkdown .ProseMirror h3),
+  .note-editor :global(.milkdown .ProseMirror h4),
+  .note-editor :global(.milkdown .ProseMirror h5),
+  .note-editor :global(.milkdown .ProseMirror h6) {
+    font-weight: var(--reader-strong-weight, 700);
+    -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
+    line-height: 1.35;
+    margin: 1.1em 0 0.45em;
+  }
+  .note-editor :global(.milkdown .ProseMirror h1) { font-size: 1.65em; margin-top: 0.4em; }
+  .note-editor :global(.milkdown .ProseMirror h2) { font-size: 1.38em; }
+  .note-editor :global(.milkdown .ProseMirror h3) { font-size: 1.18em; }
+  .note-editor :global(.milkdown .ProseMirror h4) { font-size: 1.06em; }
+  .note-editor :global(.milkdown .ProseMirror h5),
+  .note-editor :global(.milkdown .ProseMirror h6) { font-size: 1em; }
+  .note-editor :global(.milkdown .ProseMirror blockquote) {
+    margin: calc(var(--reader-para, 0.35em) + 0.25em) 0;
+    padding-left: 20px;
+    color: var(--muted);
+  }
+  .note-editor :global(.milkdown .ProseMirror code),
+  .note-editor :global(.milkdown .ProseMirror pre) {
+    letter-spacing: 0;
+    -webkit-text-stroke-width: 0;
+  }
+  .note-editor :global(.milkdown .milkdown-list-item-block li .label-wrapper),
+  .note-editor :global(.milkdown .milkdown-list-item-block li .label-wrapper .label) {
+    height: calc(1em * var(--reader-line, 2));
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
   .note-editor :global(a[data-smartlib]) { color: var(--accent); cursor: pointer; }
 </style>
