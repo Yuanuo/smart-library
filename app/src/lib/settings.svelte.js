@@ -94,6 +94,14 @@ export const DEFAULT_AI_PRESET = {
   systemPrompt: "你是 Smart Library 知识库的 AI 助手，擅长经典文献研读、笔记撰写、创新方案构思、脑图大纲生成与白板绘图。",
 };
 
+export const AI_PROVIDER_TEMPLATES = [
+  { id: "deepseek", label: "DeepSeek", format: "openai", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", needsKey: true },
+  { id: "openai", label: "OpenAI", format: "openai", baseUrl: "https://api.openai.com/v1", model: "gpt-4o", needsKey: true },
+  { id: "anthropic", label: "Claude", format: "anthropic", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-20250514", needsKey: true },
+  { id: "qwen", label: "通义千问", format: "openai", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", needsKey: true },
+  { id: "ollama", label: "本地 Ollama", format: "openai", baseUrl: "http://localhost:11434/v1", model: "qwen2.5", needsKey: false },
+];
+
 const DEFAULTS = {
   theme: "auto", // auto | light | dark
   uiFont: "default",
@@ -115,7 +123,7 @@ const DEFAULTS = {
   quickPinyin: false, // title quick search: allow matching by pinyin (full or initials)
   dailyOn: true, // the sentence of the day
   dailySources: [], // its sources (search range items); none = every library
-  aiOn: false, // AI assistant master switch
+  aiOn: true, // AI assistant master switch (visible by default for discoverability)
   aiActiveId: "default-openai", // currently selected model preset id
   aiPresets: [{ ...DEFAULT_AI_PRESET }],
   aiSaveMode: "ask", // ask | default
@@ -178,11 +186,23 @@ export function activeAiPreset() {
   return list.find((p) => p.id === settings.aiActiveId) ?? list[0] ?? DEFAULT_AI_PRESET;
 }
 
-/** True when AI is enabled and the active preset has a URL and model name. */
+/** True when the given URL points to a local endpoint (which may not need an API key). */
+export function isLocalAiUrl(url) {
+  const u = (url || "").trim().toLowerCase();
+  return /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?(\/|$)/.test(u);
+}
+
+/** True when the preset has usable credentials (remote endpoints require an API key). */
+export function isAiConfigured(preset = activeAiPreset()) {
+  if (!preset || !preset.baseUrl?.trim() || !preset.model?.trim()) return false;
+  if (isLocalAiUrl(preset.baseUrl)) return true;
+  return !!preset.apiKey?.trim();
+}
+
+/** True when AI is enabled and the active preset has usable configuration. */
 export function isAiReady() {
   if (!settings.aiOn) return false;
-  const p = activeAiPreset();
-  return !!(p && p.baseUrl?.trim() && p.model?.trim());
+  return isAiConfigured(activeAiPreset());
 }
 
 /** Convert a preset to the backend `AiModelConfig` struct. */

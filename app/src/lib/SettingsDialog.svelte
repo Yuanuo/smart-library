@@ -1,7 +1,7 @@
 <script>
   // Settings: theme, interface zoom and font, reader font, size and line
   // height. Changes apply at once and are kept.
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
   import * as api from "./api.js";
   import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { settings, update, reset, UI_FONTS, READER_FONTS, WEIGHT_LEVELS, SELECT_LOOKUP_MODES, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
@@ -9,7 +9,7 @@
   import { MOD_KEY } from "./platform.js";
   import DialogHeader from "./DialogHeader.svelte";
 
-  let { onclose, dataDir = "" } = $props();
+  let { onclose, dataDir = "", initialTab = "appearance", onmcpchange = null } = $props();
 
   const TABS = [
     ["appearance", "外观"],
@@ -23,7 +23,7 @@
     ["shortcuts", "快捷键"],
     ["clean", "数据清理"],
   ];
-  let activeTab = $state("appearance");
+  let activeTab = $state(untrack(() => (TABS.some(([id]) => id === initialTab) ? initialTab : "appearance")));
 
   // Shortcuts customization
   let recordingId = $state(null);
@@ -342,6 +342,7 @@
       mcpUrl = st.url || `http://127.0.0.1:${payload.port}/mcp`;
       mcpError = st.error || "";
       if (st.config) mcpConfig = { ...st.config };
+      onmcpchange?.({ running: mcpRunning, url: mcpUrl, error: mcpError });
     } catch (e) {
       mcpError = String(e);
     } finally {
@@ -951,7 +952,7 @@
           <div class="card">
             <label class="row">
               <input type="checkbox" checked={settings.aiOn} onchange={(e) => update({ aiOn: e.currentTarget.checked })} />
-              <span class="wide">启用 AI 辅助功能（在阅读器、笔记/脑图/白板编辑器、搜索结果旁显示 AI 助手，开启笔记内置 AI 与独立会话）</span>
+              <span class="wide">在界面中显示 AI 助手入口（左侧栏、阅读器、编辑器与搜索页）</span>
             </label>
             <div class="row">
               <span>当前预设</span>

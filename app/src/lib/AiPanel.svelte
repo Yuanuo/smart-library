@@ -20,7 +20,7 @@
   import Icon from "./Icon.svelte";
   import AiHistoryDialog from "./AiHistoryDialog.svelte";
   import AiSaveNoteDialog from "./AiSaveNoteDialog.svelte";
-  import { settings, update as updateSettings, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
+  import { settings, update as updateSettings, activeAiPreset, toBackendAiConfig, AI_PROVIDER_TEMPLATES, isAiConfigured, isLocalAiUrl } from "./settings.svelte.js";
   import { formatShortcut, formatCombo } from "./shortcuts.js";
 
   let {
@@ -46,6 +46,8 @@
     onSessionChange = null,
     // Callback when an AI agent tool mutates a library/document: (lib, path) => void
     onLibraryChanged = null,
+    // Callback to open settings dialog on a specific tab (e.g. "ai" | "mcp")
+    onOpenSettings = null,
   } = $props();
 
   let sessionId = $state(null);
@@ -135,6 +137,90 @@
   const docCache = new Map();
 
   const curPreset = $derived(activeAiPreset());
+  const aiConfigured = $derived(isAiConfigured(curPreset));
+
+  // Quick setup form state (shown inline when AI is not configured yet)
+  let setupTpl = $state("deepseek");
+  let setupFormat = $state("openai");
+  let setupBaseUrl = $state("");
+  let setupApiKey = $state("");
+  let setupModel = $state("");
+  let setupShowKey = $state(false);
+  let setupTesting = $state(false);
+  let setupMsg = $state("");
+  let setupErr = $state(false);
+  let setupSyncedId = "";
+
+  $effect(() => {
+    const p = curPreset;
+    if (!p || p.id === setupSyncedId) return;
+    setupSyncedId = p.id;
+    setupFormat = p.format || "openai";
+    setupBaseUrl = p.baseUrl || "";
+    setupApiKey = p.apiKey || "";
+    setupModel = p.model || "";
+    const matched = AI_PROVIDER_TEMPLATES.find((t) => t.baseUrl === p.baseUrl);
+    setupTpl = matched ? matched.id : "";
+  });
+
+  function applySetupTemplate(tpl) {
+    setupTpl = tpl.id;
+    setupFormat = tpl.format;
+    setupBaseUrl = tpl.baseUrl;
+    setupModel = tpl.model;
+    setupMsg = "";
+    setupErr = false;
+  }
+
+  function saveQuickSetup() {
+    const url = setupBaseUrl.trim();
+    const model = setupModel.trim();
+    const key = setupApiKey.trim();
+    if (!url || !model) {
+      setupErr = true;
+      setupMsg = "请填写接口地址和模型名称。";
+      return false;
+    }
+    if (!isLocalAiUrl(url) && !key) {
+      setupErr = true;
+      setupMsg = "远程服务需要填写 API Key（本地 Ollama 可留空）。";
+      return false;
+    }
+    const tpl = AI_PROVIDER_TEMPLATES.find((t) => t.id === setupTpl);
+    const list = (settings.aiPresets || []).map((p) =>
+      p.id === curPreset.id
+        ? {
+            ...p,
+            name: tpl && p.id === "default-openai" ? tpl.label : p.name,
+            format: setupFormat,
+            baseUrl: url,
+            apiKey: key,
+            model,
+          }
+        : p,
+    );
+    updateSettings({ aiOn: true, aiPresets: list });
+    setupErr = false;
+    setupMsg = "";
+    statusMsg = "AI 模型已就绪，可以直接开始对话。";
+    return true;
+  }
+
+  async function testAndSaveQuickSetup() {
+    if (!saveQuickSetup()) return;
+    setupTesting = true;
+    setupMsg = "正在测试连接…";
+    setupErr = false;
+    try {
+      const reply = await api.aiTest(toBackendAiConfig(activeAiPreset()));
+      setupMsg = `连接成功：${reply || "OK"}`;
+    } catch (e) {
+      setupErr = true;
+      setupMsg = `连接失败：${e}`;
+    } finally {
+      setupTesting = false;
+    }
+  }
   const docKindLabel = $derived(
     doc?.contentType === "mindmap"
       ? "脑图"
@@ -914,6 +1000,46 @@
 
   <div class="msg-list" bind:this={listEl}>
     {#if !messages.length}
+      {#if !aiConfigured}
+        <div class="setup-card">
+          <div class="setup-title"><Icon name="sparkles" size={16} /> <strong>1 分钟启用 AI 助手 & 知识库 Agent</strong></div>
+          <p class="muted setup-desc">配置任意大模型接口后，即可在阅读、搜索与写作旁随时对话，并让内置 Agent 自动检索知识库、引用多篇文档、生成笔记 / 脑图 / 白板。</p>
+          <div class="setup-tpls" role="group" aria-label="常用服务商模板">
+            {#each AI_PROVIDER_TEMPLATES as tpl (tpl.id)}
+              <button type="button" class="tpl-chip" class:on={setupTpl === tpl.id} onclick={() => applySetupTemplate(tpl)}>
+                {tpl.label}
+              </button>
+            {/each}
+          </div>
+          <div class="setup-fields">
+            <label>
+              <span class="muted">接口地址</span>
+              <input type="text" bind:value={setupBaseUrl} placeholder="https://api.deepseek.com/v1" />
+            </label>
+            <label>
+              <span class="muted">API Key {isLocalAiUrl(setupBaseUrl) ? "（本地模型可留空）" : ""}</span>
+              <div class="key-row">
+                <input type={setupShowKey ? "text" : "password"} bind:value={setupApiKey} placeholder={isLocalAiUrl(setupBaseUrl) ? "可留空" : "sk-..."} />
+                <button type="button" class="link" onclick={() => (setupShowKey = !setupShowKey)}>{setupShowKey ? "隐藏" : "显示"}</button>
+              </div>
+            </label>
+            <label>
+              <span class="muted">模型名称</span>
+              <input type="text" bind:value={setupModel} placeholder="deepseek-chat / gpt-4o / qwen2.5" />
+            </label>
+          </div>
+          {#if setupMsg}
+            <p class="setup-msg" class:err={setupErr}>{setupMsg}</p>
+          {/if}
+          <div class="setup-actions">
+            <button type="button" class="primary" onclick={saveQuickSetup} disabled={setupTesting}>保存并开始</button>
+            <button type="button" onclick={testAndSaveQuickSetup} disabled={setupTesting}>{setupTesting ? "测试中…" : "测试并保存"}</button>
+            {#if onOpenSettings}
+              <button type="button" class="link" onclick={() => onOpenSettings("ai")}>更多设置…</button>
+            {/if}
+          </div>
+        </div>
+      {:else}
       <div class="welcome">
         <p class="muted">
           {#if searchContext}
@@ -925,7 +1051,7 @@
           {:else if doc}
             可结合当前{docKindLabel}、切换标签页或从目录树拖入多篇文档进行协同对话：
           {:else}
-            点击「＋引用文档」（或输入 <code>@</code>、从目录树拖入节点）引用一个或多个知识库文档开始对话：
+            内置知识库 Agent 可自动搜索与整理你的资料，也可输入 <code>@</code> 或拖入目录节点引用文档：
           {/if}
         </p>
         <div class="quick-prompts">
@@ -964,12 +1090,16 @@
               💡 构思延伸研究与创新方案
             </button>
           {:else}
+            <button onclick={() => sendPrompt("请帮我盘点当前已添加的知识库列表与大致目录结构，并建议我可以怎么高效整理或检索。")}>
+              🤖 Agent：盘点我的知识库结构
+            </button>
             <button onclick={() => openPicker("")}>
-              📚 选择知识库文档开始对话…
+              📚 引用指定知识库文档开始对话…
             </button>
           {/if}
         </div>
       </div>
+      {/if}
     {:else}
       {#each messages as m, idx}
         <div class="msg {m.role}">
@@ -1160,6 +1290,29 @@
 
   .msg-list { flex: 1; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
   .welcome { padding: 8px 4px; }
+  .setup-card {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .setup-title { display: flex; align-items: center; gap: 6px; color: var(--accent); font-size: 14px; }
+  .setup-desc { margin: 0; font-size: 12.5px; line-height: 1.55; }
+  .setup-tpls { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tpl-chip {
+    font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--bg);
+    border: 1px solid var(--line); color: var(--ink);
+  }
+  .tpl-chip:hover { border-color: var(--accent); }
+  .tpl-chip.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+  .setup-fields { display: flex; flex-direction: column; gap: 7px; }
+  .setup-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+  .setup-fields input { width: 100%; font-size: 13px; padding: 5px 8px; background: var(--bg); }
+  .key-row { display: flex; align-items: center; gap: 6px; }
+  .key-row input { flex: 1; min-width: 0; }
+  .setup-msg { margin: 0; font-size: 12px; color: var(--note); }
+  .setup-msg.err { color: var(--hl); }
+  .setup-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
+  .setup-actions button { font-size: 13px; padding: 5px 12px; }
+  .setup-actions .link { margin-left: auto; font-size: 12px; padding: 2px 4px; }
   .quick-prompts { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
   .quick-prompts button { text-align: left; padding: 6px 10px; font-size: 13px; border-radius: 6px; background: var(--paper); }
   .quick-prompts button:hover { background: var(--accent-soft); border-color: var(--accent); }
