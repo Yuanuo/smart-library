@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import * as api from "./api.js";
   import DialogHeader from "./DialogHeader.svelte";
+  import { autofocus } from "./autofocus.js";
 
   let {
     lib,
@@ -129,6 +130,7 @@
       <div class="create-bar">
         <input
           type="text"
+          use:autofocus
           bind:value={label}
           placeholder="快照备注（可选，例如：改写前 / 初稿）"
           onkeydown={(e) => e.key === "Enter" && createManual()}

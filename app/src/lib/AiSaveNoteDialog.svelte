@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import * as api from "./api.js";
   import { settings } from "./settings.svelte.js";
+  import { autofocus } from "./autofocus.js";
 
   let {
     kind = "md", // "md" | "mindmap"
@@ -109,6 +110,7 @@
         标题
         <input
           type="text"
+          use:autofocus={{ select: true }}
           value={title}
           placeholder={generatingTitle ? "AI 正在生成标题…" : "输入文档标题"}
           oninput={(e) => {

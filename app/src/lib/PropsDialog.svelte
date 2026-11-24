@@ -4,7 +4,7 @@
   // replaced; a replaced value goes back with "恢复默认". Nothing is written
   // into the source data. For a folder or a note the properties also apply to
   // everything below it. More properties can join this dialog later.
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import * as api from "./api.js";
   import ChipInput from "./ChipInput.svelte";
   import DialogHeader from "./DialogHeader.svelte";
@@ -36,6 +36,7 @@
   let loading = $state(true);
   let busy = $state(false);
   let error = $state("");
+  let contentEl = $state();
 
   const norm = (list) => [...new Set(list.map((v) => v.trim()).filter(Boolean))].sort().join("\u0001");
 
@@ -56,6 +57,7 @@
       error = String(e);
     } finally {
       loading = false;
+      tick().then(() => contentEl?.querySelector('input:not([type="hidden"]):not([disabled])')?.focus());
     }
     // values already in use in this library (when it has an index)
     try {
@@ -99,7 +101,7 @@
     onkeydown={(e) => e.key === "Escape" && onclose()}>
     <form style="display:contents" onsubmit={(e) => (e.preventDefault(), save())}>
     <DialogHeader title={`属性：${title}`} path={nodePath || libTitle} />
-    <div class="dialog-content">
+    <div class="dialog-content" bind:this={contentEl}>
 
     {#if loading}
       <p class="muted">载入中…</p>
