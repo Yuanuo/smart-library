@@ -20,7 +20,7 @@
   import { checkUpdates } from "./lib/updater.svelte.js";
   import { installShortcuts, readerSelection, formatShortcut } from "./lib/shortcuts.js";
   import { localDate, localTime } from "./lib/diary.js";
-  import { settings, update as updateSettings } from "./lib/settings.svelte.js";
+  import { settings, update as updateSettings, activeAiPreset, isAiConfigured } from "./lib/settings.svelte.js";
   import { daily, check as checkDaily, again as dailyAgain, markSeen as dailySeen } from "./lib/daily.svelte.js";
   import { status } from "./lib/status.svelte.js";
   import { openPanelWindow } from "./lib/panels.js";
@@ -45,6 +45,7 @@
   // seconds, but stays while the mouse rests on it or nothing was touched
   // since it appeared (the user may be away).
   let log = $state([]); // { id, time, kind, text }, newest first
+  let unreadLog = $state(0);
   let toast = $state(null);
   let showLog = $state(false);
   let lastActive = Date.now();
@@ -52,9 +53,15 @@
   let toastSeq = 0;
   let toastHover = false;
 
+  function toggleLog() {
+    showLog = !showLog;
+    if (showLog) unreadLog = 0;
+  }
+
   function push(kind, text) {
     const m = { id: ++toastSeq, time: new Date().toLocaleTimeString("zh-CN", { hour12: false }), kind, text };
     log = [m, ...log].slice(0, 200);
+    if (!showLog) unreadLog += 1;
     toast = m;
     scheduleHide(m.id, Date.now(), kind === "error" ? 10000 : 5000);
   }
@@ -105,9 +112,10 @@
     else if (type === "dict") openDictWindow(text);
     else if (type === "recent") openRecent();
     else if (type === "marks") openMarks();
-    else if (type === "settings") settingsBox = true;
+    else if (type === "settings") openSettings("appearance");
     else if (type === "ai") {
-      if (settings.aiOn) setAiOpen(!aiOpen);
+      if (!settings.aiOn) updateSettings({ aiOn: true });
+      setAiOpen(!aiOpen);
     }
     else if (type === "diary") libPanel?.openDiary();
     else if (type === "new") libPanel?.newNote();
@@ -233,7 +241,7 @@
   /** Add the selected text to today's diary (made when missing), after the time. */
   async function sendToDiary(a) {
     const r = await api.diaryToday(localDate());
-    st = r.status;
+    applyLibrariesStatus(r.status);
     const md = `**${localTime()}**
 
 ` + (await clipMarkdown({ text: a.text, vol: a.vol, lb: a.lb, comment: "" }));
@@ -412,6 +420,23 @@
     marksBox = true;
   }
   let settingsBox = $state(false);
+  let settingsTab = $state("appearance");
+  function openSettings(tab = "appearance") {
+    settingsTab = tab || "appearance";
+    settingsBox = true;
+  }
+  let mcpState = $state({ running: false, url: "http://127.0.0.1:27123/mcp", error: "" });
+  const aiConfigured = $derived(isAiConfigured(activeAiPreset()));
+  async function refreshMcpStatus() {
+    try {
+      const r = await api.mcpStatusGet();
+      mcpState = {
+        running: !!r?.running,
+        url: r?.url || `http://127.0.0.1:${r?.config?.port || 27123}/mcp`,
+        error: r?.error || "",
+      };
+    } catch {}
+  }
   let recentBox = $state(false); // reading history popup
   function openRecent() {
     quick = false;
@@ -550,7 +575,18 @@
     } catch {}
   }
 
-  // width of the tree panel: drag the splitter, kept in local storage
+  // width and visibility of the tree panel: kept in local storage
+  let sideOpen = $state(true);
+  try {
+    sideOpen = localStorage.getItem("side.open") !== "0";
+  } catch {}
+  function setSideOpen(v) {
+    sideOpen = !!v;
+    try {
+      localStorage.setItem("side.open", sideOpen ? "1" : "0");
+    } catch {}
+  }
+
   const SIDE_MIN = 180;
   let sideWidth = $state(300);
   try {
@@ -587,23 +623,55 @@
   }
 
   async function locate(doc) {
+    if (!sideOpen) setSideOpen(true);
     const ok = await libPanel?.reveal(doc);
     if (!ok) notice = "目录树里没有找到这个文档。";
   }
   let wsReady = false;
 
   const libraries = $derived(st?.libraries ?? []);
-  // The bottom-of-the-tree status slot: index building here, plus whatever
-  // other tasks report through `lib/status.svelte.js`; idle text otherwise.
-  const sideStatus = $derived.by(() => {
-    const parts = Object.keys(progress).map((id) => {
+  // Active background tasks (index building, title indexing, git pull, status tasks).
+  // Shown via a circular progress indicator on the left rail + a dismissible progress popup.
+  const activeTasks = $derived.by(() => {
+    const list = [];
+    for (const id of Object.keys(progress)) {
       const p = progress[id];
-      const t = libraries.find((l) => l.id === id)?.title ?? id;
-      return `${t}：建索引 ${Math.floor((100 * p.done) / Math.max(1, p.total))}%`;
-    });
-    if (status.text) parts.push(status.text);
-    return parts.join("　");
+      const title = libraries.find((l) => l.id === id)?.title ?? id;
+      const pct = Math.min(100, Math.floor((100 * (p.done || 0)) / Math.max(1, p.total || 1)));
+      list.push({ id: `idx:${id}`, title: `${title} · 建立全文索引`, detail: `${p.done || 0} / ${p.total || 1}`, pct });
+    }
+    for (const id of Object.keys(titlesProgress)) {
+      const p = titlesProgress[id];
+      const title = libraries.find((l) => l.id === id)?.title ?? id;
+      const pct = Math.min(100, Math.floor((100 * (p.done || 0)) / Math.max(1, p.total || 1)));
+      list.push({ id: `ttl:${id}`, title: `${title} · 更新标题列表`, detail: `${p.done || 0} / ${p.total || 1}`, pct });
+    }
+    for (const id of Object.keys(gitUpdating)) {
+      const title = libraries.find((l) => l.id === id)?.title ?? id;
+      list.push({ id: `git:${id}`, title: `${title} · 拉取远程更新`, detail: "同步中…", pct: null });
+    }
+    if (status.text) {
+      list.push({ id: "status", title: status.text, detail: "处理中…", pct: null });
+    }
+    return list;
   });
+  const taskOverallPct = $derived.by(() => {
+    const known = activeTasks.filter((t) => t.pct != null);
+    if (!known.length) return null;
+    return Math.round(known.reduce((s, t) => s + t.pct, 0) / known.length);
+  });
+  let showTasks = $state(false);
+  let tasksDismissed = $state(false);
+  $effect(() => {
+    if (!activeTasks.length) {
+      showTasks = false;
+      tasksDismissed = false;
+    } else if (!tasksDismissed) {
+      showTasks = true;
+    }
+  });
+  const RING_R = 7.5;
+  const RING_C = 2 * Math.PI * RING_R;
 
   // the full-text search pages are tabs of the workspace (lib/SearchPage.svelte)
 
@@ -619,6 +687,11 @@
     dailyTimer = setTimeout(hide, 12000);
   }
   async function openDaily() {
+    if (dailyShown) {
+      clearTimeout(dailyTimer);
+      dailyShown = false;
+      return;
+    }
     if (!daily.item) {
       await checkDaily(libraries);
       if (!daily.item) {
@@ -655,6 +728,7 @@
   onMount(() => {
     checkUpdates();
     refresh().then(() => st?.libraries.length && api.prepareTitles().catch(() => {}));
+    refreshMcpStatus();
     const offKeys = installShortcuts((type) => shortcut(type, readerSelection()));
     api.appInfo().then((i) => (appInfo = i)).catch(() => {});
     const focusMain = async () => {
@@ -717,6 +791,14 @@
   });
 
   $effect(() => {
+    workspace.setStartState({
+      libraryCount: libraries.length,
+      aiConfigured,
+      mcpRunning: mcpState.running,
+    });
+  });
+
+  $effect(() => {
     if (wsEl && st && !wsReady) {
       wsReady = true;
       workspace.init(wsEl, {
@@ -733,9 +815,33 @@
         oncopypath: copyTabPath,
         ontreepath: (d) => libPanel?.treePath(d),
         onnodepath: (v) => libPanel?.nodePath(v.lib, { bookId: v.book_id ?? null, path: v.path }) || "",
+        startActions: {
+          onbind: (kind = "") => (binding = { path: "", kind }),
+          onsearch: () => openSearch(),
+          onquick: () => openQuickSearch(),
+          onai: () => {
+            if (!settings.aiOn) updateSettings({ aiOn: true });
+            setAiOpen(true);
+          },
+          onsettings: (tab) => openSettings(tab),
+          onnewnote: () => libPanel?.newNote(),
+          onnewmindmap: () => libPanel?.newMindMap(),
+          onnewwhiteboard: () => libPanel?.newWhiteboard(),
+          ondiary: () => libPanel?.openDiary(),
+        },
       }).catch((e) => (error = String(e)));
     }
   });
+
+  /** Update library status and auto-start indexing for any newly created library (e.g. default diary/notes). */
+  function applyLibrariesStatus(nextStatus) {
+    const before = new Set(libraries.map((l) => l.id));
+    st = nextStatus;
+    const added = (nextStatus?.libraries ?? []).filter((l) => !before.has(l.id));
+    for (const l of added) {
+      if (!l.index_ready && !l.building && !l.error) startIndex(l.id);
+    }
+  }
 
   async function refresh() {
     try {
@@ -904,26 +1010,114 @@
 <div class="app">
 
   <div class="body">
-    <nav class="side" aria-label="知识库目录" style="width: {sideWidth}px">
-      <div class="side-head">
-        <span class="tools">
-          <button class="icon" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加" aria-label="添加"><Icon name="plus" size={18} /></button>
-          <button class="icon" onclick={openQuickSearch} title={`标题快搜（双击 Shift${formatShortcut("quick", settings.shortcuts) ? ` 或 ${formatShortcut("quick", settings.shortcuts)}` : ""}）`} aria-label="标题快搜"><Icon name="plane" size={18} /></button>
-          <button class="icon" onclick={openSearch} title={formatShortcut("search", settings.shortcuts) ? `全文搜索（${formatShortcut("search", settings.shortcuts)}）` : "全文搜索"} aria-label="全文搜索"><Icon name="search" size={18} /></button>
-          <button class="icon" onclick={() => openDictWindow("")} title={formatShortcut("dict", settings.shortcuts) ? `查词典（${formatShortcut("dict", settings.shortcuts)}）` : "查词典"} aria-label="查词典"><Icon name="dict" size={18} /></button>
-          <button class="icon" onclick={openMarks} title={formatShortcut("marks", settings.shortcuts) ? `收藏与标签（${formatShortcut("marks", settings.shortcuts)}）` : "收藏与标签"} aria-label="收藏与标签"><Icon name="bookmark" size={18} /></button>
-          <button class="icon" onclick={openRecent} title={formatShortcut("recent", settings.shortcuts) ? `最近访问（${formatShortcut("recent", settings.shortcuts)}）` : "最近访问"} aria-label="最近访问"><Icon name="clock" size={18} /></button>
-          {#if settings.aiOn}
-            <button class="icon" class:on={aiOpen} onclick={() => setAiOpen(!aiOpen)} title={formatShortcut("ai", settings.shortcuts) ? `打开 / 收起右侧 AI 助手栏（${formatShortcut("ai", settings.shortcuts)}）` : "打开 / 收起右侧 AI 助手栏"} aria-label="AI 助手"><Icon name="sparkles" size={18} /></button>
-          {/if}
-        </span>
-        <span class="tools nav">
-          <button class="icon" class:off={!workspace.ws.canBack} aria-disabled={!workspace.ws.canBack}
+    <aside class="rail" aria-label="主功能栏">
+      <div class="rail-top">
+        <button class="rail-btn" class:on={sideOpen} onclick={() => setSideOpen(!sideOpen)}
+          title={sideOpen ? "收起知识库目录" : "展开知识库目录"} aria-label="知识库目录" aria-pressed={sideOpen}>
+          <Icon name="library" size={18} /><span>目录</span>
+        </button>
+        <button class="rail-btn" onclick={openSearch}
+          title={formatShortcut("search", settings.shortcuts) ? `全文搜索（${formatShortcut("search", settings.shortcuts)}）` : "全文搜索"} aria-label="全文搜索">
+          <Icon name="search" size={18} /><span>搜索</span>
+        </button>
+        <button class="rail-btn" onclick={openQuickSearch}
+          title={`标题快搜（双击 Shift${formatShortcut("quick", settings.shortcuts) ? ` 或 ${formatShortcut("quick", settings.shortcuts)}` : ""}）`} aria-label="标题快搜">
+          <Icon name="plane" size={18} /><span>快搜</span>
+        </button>
+        <button class="rail-btn" onclick={() => openDictWindow("")}
+          title={formatShortcut("dict", settings.shortcuts) ? `查词典（${formatShortcut("dict", settings.shortcuts)}）` : "查词典"} aria-label="查词典">
+          <Icon name="dict" size={18} /><span>词典</span>
+        </button>
+        <button class="rail-btn" onclick={openMarks}
+          title={formatShortcut("marks", settings.shortcuts) ? `收藏与标签（${formatShortcut("marks", settings.shortcuts)}）` : "收藏与标签"} aria-label="收藏与标签">
+          <Icon name="bookmark" size={18} /><span>收藏</span>
+        </button>
+        <button class="rail-btn" onclick={openRecent}
+          title={formatShortcut("recent", settings.shortcuts) ? `最近访问（${formatShortcut("recent", settings.shortcuts)}）` : "最近访问"} aria-label="最近访问">
+          <Icon name="clock" size={18} /><span>最近</span>
+        </button>
+        {#if settings.aiOn}
+          <button class="rail-btn ai-rail" class:on={aiOpen} onclick={() => setAiOpen(!aiOpen)}
+            title={formatShortcut("ai", settings.shortcuts) ? `打开 / 收起右侧 AI 助手栏（${formatShortcut("ai", settings.shortcuts)}）` : "打开 / 收起右侧 AI 助手栏"}
+            aria-label="AI 助手" aria-pressed={aiOpen}>
+            <Icon name="sparkles" size={18} /><span>AI</span>
+            {#if !aiConfigured}<span class="rail-dot warn" title="待配置模型"></span>{/if}
+          </button>
+        {/if}
+      </div>
+      {#if !sideOpen}
+        <div class="rail-mid" aria-label="视图切换">
+          <button class="rail-nav-btn" class:off={!workspace.ws.canBack} aria-disabled={!workspace.ws.canBack}
             onclick={() => workspace.ws.canBack && workspace.navigateHistory(-1)} oncontextmenu={openViewHistory}
-            title={`上一个视图（${formatShortcut("nav-back", settings.shortcuts) ? `${formatShortcut("nav-back", settings.shortcuts)}；` : ""}右键：视图历史）`} aria-label="上一个视图"><Icon name="arrow-left" size={18} /></button>
-          <button class="icon" class:off={!workspace.ws.canForward} aria-disabled={!workspace.ws.canForward}
+            title={`上一个视图（${formatShortcut("nav-back", settings.shortcuts) ? `${formatShortcut("nav-back", settings.shortcuts)}；` : ""}右键：视图历史）`} aria-label="上一个视图">
+            <Icon name="arrow-left" size={18} />
+          </button>
+          <button class="rail-nav-btn" class:off={!workspace.ws.canForward} aria-disabled={!workspace.ws.canForward}
             onclick={() => workspace.ws.canForward && workspace.navigateHistory(1)} oncontextmenu={openViewHistory}
-            title={`下一个视图（${formatShortcut("nav-forward", settings.shortcuts) ? `${formatShortcut("nav-forward", settings.shortcuts)}；` : ""}右键：视图历史）`} aria-label="下一个视图"><Icon name="arrow-right" size={18} /></button>
+            title={`下一个视图（${formatShortcut("nav-forward", settings.shortcuts) ? `${formatShortcut("nav-forward", settings.shortcuts)}；` : ""}右键：视图历史）`} aria-label="下一个视图">
+            <Icon name="arrow-right" size={18} />
+          </button>
+        </div>
+      {/if}
+      <div class="rail-foot">
+        {#if activeTasks.length}
+          <button class="rail-btn task-rail" class:on={showTasks}
+            onclick={() => { showTasks = !showTasks; if (!showTasks) tasksDismissed = true; }}
+            title={`进行中的后台任务（${activeTasks.length} 项）— 点击查看详情`} aria-label="后台任务进度">
+            <svg class="ring" class:spin={taskOverallPct == null} viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+              <circle class="ring-bg" cx="10" cy="10" r={RING_R} />
+              <circle class="ring-fg" cx="10" cy="10" r={RING_R}
+                stroke-dasharray={RING_C}
+                stroke-dashoffset={taskOverallPct == null ? RING_C * 0.72 : RING_C * (1 - taskOverallPct / 100)} />
+            </svg>
+            <span>{taskOverallPct == null ? "进度" : `${taskOverallPct}%`}</span>
+          </button>
+        {/if}
+        <button class="rail-btn" class:mcp-on={mcpState.running} onclick={() => openSettings("mcp")}
+          title={mcpState.running ? `本地 Agent (MCP) 运行中：${mcpState.url}（点击查看接入配置）` : "本地 Agent (MCP) 未开启（点击配置外部 AI 客户端接入）"}
+          aria-label="本地 Agent (MCP)">
+          <Icon name="sliders" size={17} /><span>MCP</span>
+          <span class="rail-dot" class:ok={mcpState.running}></span>
+        </button>
+        {#if settings.dailyOn}
+          <button class="rail-btn" class:on={dailyShown} onclick={openDaily} title="每日一句" aria-label="每日一句">
+            <Icon name="speaker" size={17} /><span>一句</span>
+            {#if daily.item && !daily.seen}<span class="badge">1</span>{/if}
+          </button>
+        {/if}
+        <button class="rail-btn" class:on={showLog} onclick={toggleLog} title="本次运行期间的消息" aria-label="消息">
+          <Icon name="message" size={17} /><span>消息</span>
+          {#if unreadLog}<span class="badge">{unreadLog}</span>{/if}
+        </button>
+        <button class="rail-btn" onclick={() => openSettings("appearance")}
+          title={formatShortcut("settings", settings.shortcuts) ? `设置（${formatShortcut("settings", settings.shortcuts)}）` : "设置"} aria-label="设置">
+          <Icon name="gear" size={17} /><span>设置</span>
+        </button>
+        <button class="rail-btn" onclick={() => (aboutBox = true)} title="关于" aria-label="关于">
+          <Icon name="info" size={17} /><span>关于</span>
+        </button>
+      </div>
+    </aside>
+
+    <nav class="side" class:collapsed={!sideOpen} aria-label="知识库目录" style="width: {sideWidth}px">
+      <div class="side-head">
+        <span class="side-title">知识库</span>
+        <span class="side-head-actions">
+          <button class="add-btn" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加知识库、笔记、脑图或白板" aria-label="添加">
+            <Icon name="plus" size={14} /><span>添加</span>
+          </button>
+          <span class="side-nav">
+            <button class="icon" class:off={!workspace.ws.canBack} aria-disabled={!workspace.ws.canBack}
+              onclick={() => workspace.ws.canBack && workspace.navigateHistory(-1)} oncontextmenu={openViewHistory}
+              title={`上一个视图（${formatShortcut("nav-back", settings.shortcuts) ? `${formatShortcut("nav-back", settings.shortcuts)}；` : ""}右键：视图历史）`} aria-label="上一个视图">
+              <Icon name="arrow-left" size={16} />
+            </button>
+            <button class="icon" class:off={!workspace.ws.canForward} aria-disabled={!workspace.ws.canForward}
+              onclick={() => workspace.ws.canForward && workspace.navigateHistory(1)} oncontextmenu={openViewHistory}
+              title={`下一个视图（${formatShortcut("nav-forward", settings.shortcuts) ? `${formatShortcut("nav-forward", settings.shortcuts)}；` : ""}右键：视图历史）`} aria-label="下一个视图">
+              <Icon name="arrow-right" size={16} />
+            </button>
+          </span>
         </span>
       </div>
       <div class="tree">
@@ -948,33 +1142,20 @@
             oncopy={copyPath}
             onexport={(lib, sel, label, name, nodePath = "") => (exportDlg = { lib, sel, label, name, nodePath })}
             onimport={importLibrary}
-            onlibs={async () => (st = await api.status())}
+            onlibs={async () => applyLibrariesStatus(await api.status())}
             onnotice={(msg) => (notice = msg)}
             onerror={(e) => (error = e)} />
         {:else}
           <p class="muted">载入中…</p>
         {/if}
       </div>
-      <div class="side-foot">
-        <span class="status" class:muted={!sideStatus} title={sideStatus || status.idle}>{sideStatus || status.idle}</span>
-        <span class="tools">
-          {#if settings.dailyOn}
-            <button class="icon" onclick={openDaily} title="每日一句" aria-label="每日一句">
-              <Icon name="speaker" size={18} />{#if daily.item && !daily.seen}<span class="badge">1</span>{/if}
-            </button>
-          {/if}
-          <button class="icon" onclick={() => (settingsBox = true)} title={formatShortcut("settings", settings.shortcuts) ? `设置（${formatShortcut("settings", settings.shortcuts)}）` : "设置"} aria-label="设置"><Icon name="gear" size={18} /></button>
-          <button class="icon" onclick={() => (showLog = !showLog)} title="本次运行期间的消息" aria-label="消息">
-            <Icon name="message" size={18} />{#if log.length}<span class="badge">{log.length}</span>{/if}
-          </button>
-          <button class="icon" onclick={() => (aboutBox = true)} title="关于" aria-label="关于"><Icon name="info" size={18} /></button>
-        </span>
-      </div>
     </nav>
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-    <div class="splitter" class:dragging role="separator" aria-orientation="vertical" aria-label="调整目录宽度"
-      aria-valuenow={sideWidth} tabindex="0" onpointerdown={startDrag} onkeydown={splitterKey}
-      ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
+    {#if sideOpen}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+      <div class="splitter" class:dragging role="separator" aria-orientation="vertical" aria-label="调整目录宽度"
+        aria-valuenow={sideWidth} tabindex="0" onpointerdown={startDrag} onkeydown={splitterKey}
+        ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
+    {/if}
     <main class="content" bind:this={wsEl}></main>
     {#if settings.aiOn && aiOpen}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -999,22 +1180,72 @@
             setAiOpen(false);
             workspace.openAiWindow({ sessionId: aiSessionId });
           }}
+          onOpenSettings={(tab) => openSettings(tab)}
           onClose={() => setAiOpen(false)} />
       </div>
     {/if}
   </div>
 </div>
 
-{#if dailyShown && daily.item}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="daily" role="status" onmouseenter={() => (dailyHover = true)} onmouseleave={() => (dailyHover = false)}>
-    <p class="sentence">{daily.item.sentence}</p>
-    <div class="src muted">
-      《{daily.item.title}》{daily.item.subtitle}{daily.item.lb ? ` · ${daily.item.lb}` : ""}
-      <button class="link" onclick={openDailySource}>打开原文</button>
-      <button class="link" onclick={anotherDaily}>换一句</button>
-      <button class="link" onclick={() => (dailyShown = false)} aria-label="关闭">×</button>
-    </div>
+{#if (dailyShown && daily.item) || (showTasks && activeTasks.length) || showLog}
+  <div class="dock-popups">
+    {#if dailyShown && daily.item}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="daily" role="status" onmouseenter={() => (dailyHover = true)} onmouseleave={() => (dailyHover = false)}>
+        <div class="log-head">
+          <strong>每日一句</strong>
+          <span class="grow"></span>
+          <button class="link" onclick={openDailySource}>打开原文</button>
+          <button class="link" onclick={anotherDaily}>换一句</button>
+          <button class="link" onclick={() => (dailyShown = false)}>关闭</button>
+        </div>
+        <p class="sentence">{daily.item.sentence}</p>
+        <div class="src muted">
+          《{daily.item.title}》{daily.item.subtitle}{daily.item.lb ? ` · ${daily.item.lb}` : ""}
+        </div>
+      </div>
+    {/if}
+
+    {#if showTasks && activeTasks.length}
+      <div class="task-pop" role="status" aria-label="后台任务进度">
+        <div class="log-head">
+          <strong>后台任务（{activeTasks.length}）</strong>
+          <span class="grow"></span>
+          <button class="link" onclick={() => { showTasks = false; tasksDismissed = true; }}>收起</button>
+        </div>
+        <div class="task-list">
+          {#each activeTasks as t (t.id)}
+            <div class="task-item">
+              <div class="task-row">
+                <span class="task-title">{t.title}</span>
+                <span class="muted task-meta">{t.pct != null ? `${t.pct}%（${t.detail}）` : t.detail}</span>
+              </div>
+              {#if t.pct != null}
+                <progress value={t.pct} max="100"></progress>
+              {:else}
+                <progress></progress>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    {#if showLog}
+      <div class="log" role="dialog" aria-label="消息列表">
+        <div class="log-head">
+          <strong>消息</strong>
+          <span class="grow"></span>
+          <button class="link" onclick={() => { log = []; unreadLog = 0; }}>清空</button>
+          <button class="link" onclick={() => (showLog = false)}>关闭</button>
+        </div>
+        {#each log as m (m.id)}
+          <div class="log-item" class:error={m.kind === "error"}><time>{m.time}</time> {m.text}</div>
+        {:else}
+          <p class="muted">还没有消息。</p>
+        {/each}
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -1024,22 +1255,6 @@
     onmouseenter={() => (toastHover = true)} onmouseleave={() => (toastHover = false)}>
     <span>{toast.text}</span>
     <button class="link" onclick={() => ((toast = null), (toastHover = false))} aria-label="关闭">×</button>
-  </div>
-{/if}
-
-{#if showLog}
-  <div class="log" role="dialog" aria-label="消息列表">
-    <div class="log-head">
-      <strong>消息</strong>
-      <span class="grow"></span>
-      <button class="link" onclick={() => (log = [])}>清空</button>
-      <button class="link" onclick={() => (showLog = false)}>关闭</button>
-    </div>
-    {#each log as m (m.id)}
-      <div class="log-item" class:error={m.kind === "error"}><time>{m.time}</time> {m.text}</div>
-    {:else}
-      <p class="muted">还没有消息。</p>
-    {/each}
   </div>
 {/if}
 
@@ -1088,7 +1303,11 @@
 {/if}
 
 {#if settingsBox}
-  <SettingsDialog dataDir={appInfo?.data_dir ?? ""} onclose={() => (settingsBox = false)} />
+  <SettingsDialog
+    dataDir={appInfo?.data_dir ?? ""}
+    initialTab={settingsTab}
+    onmcpchange={(next) => (mcpState = { ...mcpState, ...next })}
+    onclose={() => { settingsBox = false; refreshMcpStatus(); }} />
 {/if}
 
 {#if recentBox}
@@ -1113,31 +1332,23 @@
 
 <style>
   .app { display: flex; flex-direction: column; height: 100%; }
-  .tools { display: flex; gap: 2px; }
-  .icon {
-    display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px;
-    border: none; background: none; padding: 0; color: var(--accent); border-radius: 6px; font-size: 16px;
-  }
-  .icon:hover { background: var(--accent-soft); }
-  .icon.on { background: var(--accent-soft); }
-  .icon.off, .icon:disabled { color: var(--muted); opacity: 0.45; cursor: default; background: none; }
-  .icon { position: relative; }
   .badge {
     position: absolute; top: -2px; right: -4px; min-width: 14px; padding: 0 3px; border-radius: 7px;
     background: var(--accent); color: var(--paper); font-size: 10px; line-height: 14px; text-align: center;
   }
-  .side-foot {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px 8px;
-    border-top: 1px solid var(--line); font-size: 12px; min-height: 32px;
+  .dock-popups {
+    position: fixed; left: 64px; bottom: 16px; z-index: 995;
+    display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
+    max-height: calc(100vh - 32px); pointer-events: none;
   }
-  .status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .dock-popups > * { pointer-events: auto; }
   .daily {
-    position: fixed; left: 12px; bottom: 44px; z-index: 995; width: min(460px, calc(100vw - 32px));
-    padding: 12px 16px; border-radius: 8px; background: var(--paper); border: 1px solid var(--accent);
+    width: min(460px, calc(100vw - 80px));
+    padding: 10px 14px; border-radius: 8px; background: var(--paper); border: 1px solid var(--accent);
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
   }
-  .daily .sentence { margin: 0 0 6px; font-size: 18px; line-height: 1.8; }
-  .daily .src { font-size: 13px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .daily .sentence { margin: 2px 0 6px; font-size: 17px; line-height: 1.75; }
+  .daily .src { font-size: 12.5px; }
   .toast {
     position: fixed; right: 16px; bottom: 16px; z-index: 1000; max-width: min(520px, calc(100vw - 32px));
     display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 8px;
@@ -1146,7 +1357,7 @@
   }
   .toast.error { background: var(--hl-bg); color: var(--hl); border-color: var(--hl); }
   .log {
-    position: fixed; left: 12px; bottom: 44px; z-index: 990; width: min(520px, calc(100vw - 32px)); max-height: 60vh;
+    width: min(460px, calc(100vw - 80px)); max-height: 45vh;
     overflow: auto; padding: 10px 14px; border-radius: 8px; background: var(--paper);
     border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
   }
@@ -1156,10 +1367,72 @@
   .log-item.error { color: var(--hl); }
   .log-item time { color: var(--muted); margin-right: 6px; }
   .body { flex: 1; display: flex; min-height: 0; }
+  .rail {
+    flex: none; width: 54px; display: flex; flex-direction: column; justify-content: space-between;
+    background: color-mix(in srgb, var(--panel) 72%, var(--bg));
+    border-right: 1px solid var(--line); padding: 6px 4px; gap: 6px; min-height: 0;
+  }
+  .rail-top, .rail-mid, .rail-foot {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+  }
+  .rail-top { overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+  .rail-mid { flex: none; margin: auto 0; gap: 4px; }
+  .rail-foot { flex: none; padding-top: 8px; border-top: 1px solid var(--line); }
+  .rail-top > .rail-btn + .rail-btn::before,
+  .rail-foot > .rail-btn + .rail-btn::before {
+    content: ""; position: absolute; top: -5px; left: 50%; transform: translateX(-50%);
+    width: 8px; height: 2px; border-radius: 999px;
+    background: color-mix(in srgb, var(--line) 75%, var(--muted));
+    opacity: 0.25; pointer-events: none;
+  }
+  .rail-nav-btn {
+    display: inline-flex; align-items: center; justify-content: center; width: 46px; height: 30px;
+    border: none; border-radius: 7px; background: transparent; color: var(--accent); padding: 0;
+    opacity: 0.55; transition: opacity 0.15s ease, background 0.15s ease;
+  }
+  .rail-nav-btn:hover { opacity: 1; background: var(--accent-soft); }
+  .rail-nav-btn.off, .rail-nav-btn.off:hover { color: var(--muted); opacity: 0.22; cursor: default; background: transparent; }
+  .rail-btn {
+    position: relative; width: 46px; padding: 5px 2px 4px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    border: none; border-radius: 7px; background: transparent; color: var(--muted);
+    font-size: 10.5px; line-height: 1.15; white-space: nowrap;
+  }
+  .rail-btn:hover { background: var(--accent-soft); color: var(--accent); }
+  .rail-btn.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .rail-btn.ai-rail { color: var(--accent); }
+  .rail-btn.ai-rail.on { background: var(--accent); color: var(--paper); }
+  .rail-btn.mcp-on { color: var(--note); }
+  .rail-btn.task-rail { color: var(--accent); }
+  .ring { transform: rotate(-90deg); display: block; }
+  .ring.spin { animation: rail-spin 1.1s linear infinite; }
+  @keyframes rail-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+  .ring-bg { fill: none; stroke: var(--line); stroke-width: 2.2; }
+  .ring-fg { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; transition: stroke-dashoffset 0.2s ease; }
+  .task-pop {
+    width: min(460px, calc(100vw - 80px));
+    padding: 10px 14px; border-radius: 8px; background: var(--paper);
+    border: 1px solid var(--accent); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+  }
+  .task-list { display: flex; flex-direction: column; gap: 8px; }
+  .task-item { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+  .task-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .task-meta { flex: none; font-size: 11.5px; }
+  .task-item progress { width: 100%; height: 6px; accent-color: var(--accent); }
+  .rail-btn .badge { top: 1px; right: 2px; }
+  .rail-dot {
+    position: absolute; top: 5px; right: 7px; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--muted); opacity: 0.45;
+  }
+  .rail-dot.ok { background: var(--note); opacity: 1; }
+  .rail-dot.warn { background: var(--accent); opacity: 0.85; }
+  .rail-btn.ai-rail.on .rail-dot.warn { background: var(--paper); }
   .side {
     flex: none; display: flex; flex-direction: column; gap: 0; padding: 0;
     background: var(--panel); min-height: 0;
   }
+  .side.collapsed { display: none; }
   .splitter {
     flex: none; width: 5px; cursor: col-resize; background: var(--panel);
     border-right: 1px solid var(--line); touch-action: none;
@@ -1172,11 +1445,24 @@
   .import-busy { width: min(380px, calc(100vw - 32px)); }
   .body:has(.splitter.dragging) { user-select: none; cursor: col-resize; }
   .side-head {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; padding: 4px 8px;
-    border-bottom: 1px solid var(--line); font-size: 13px;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); font-size: 13px;
   }
-  .side-head .tools { flex-wrap: wrap; }
-  .side-head .tools.nav { margin-left: auto; flex-wrap: nowrap; }
+  .side-title { font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .side-head-actions { display: flex; align-items: center; gap: 4px; }
+  .side-nav { display: inline-flex; align-items: center; gap: 2px; }
+  .icon {
+    display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px;
+    border: none; background: none; padding: 0; color: var(--accent); border-radius: 6px;
+  }
+  .icon:hover { background: var(--accent-soft); }
+  .icon.off, .icon:disabled { color: var(--muted); opacity: 0.4; cursor: default; background: none; }
+  .add-btn {
+    display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--paper);
+    color: var(--accent); font-size: 12px; line-height: 1.3; white-space: nowrap;
+  }
+  .add-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
   .tree { flex: 1; overflow: auto; font-size: 15px; padding: 6px 8px; }
   .content { flex: 1; min-width: 0; min-height: 0; position: relative; }
   .ai-splitter { border-right: none; border-left: 1px solid var(--line); }

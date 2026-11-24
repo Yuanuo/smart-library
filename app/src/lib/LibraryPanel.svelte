@@ -270,7 +270,7 @@
       } else {
         r = await api.createNoteAt(lib, key ? pathOf(lib, key) : "", null, kind);
       }
-      onlibs?.(); // a first note makes its library
+      await onlibs?.(); // a first note makes its library
       await tick();
       await showNew(r);
       await workspace.openVolume({ lib: r.lib, path: r.id });
@@ -326,7 +326,7 @@
   export async function openDiary() {
     try {
       const r = await api.diaryToday(localDate());
-      onlibs?.();
+      await onlibs?.();
       await tick();
       await showNew(r.note);
       await workspace.openVolume({ lib: r.note.lib, path: r.note.id });
@@ -1343,12 +1343,8 @@
     </div>
   {:else}
     <div class="empty">
-      <p>还没有知识库。</p>
-      <div class="empty-actions">
-        <button class="primary" onclick={() => onbind()}>添加知识库…</button>
-        <button onclick={() => onbind("import")}>导入知识库…</button>
-      </div>
-      <p class="muted small">也可以在这里点右键添加。</p>
+      <p class="muted">暂无知识库</p>
+      <p class="muted small">点击上方「+ 添加」或在此右键创建</p>
     </div>
   {/each}
 </div>
@@ -1381,9 +1377,10 @@
 
 <style>
   .panel { min-height: 100%; padding-bottom: 40px; }
-  .lib { margin-bottom: 4px; }
+  .lib { margin-bottom: 0; }
   .root {
-    display: flex; align-items: center; gap: 2px; min-height: 30px; border-radius: 6px; padding-right: 2px;
+    display: flex; align-items: center; gap: 2px; min-height: 30px; border-radius: 4px; padding-right: 2px;
+    border-bottom: 1px dashed var(--line);
   }
   .root:hover, .root:focus-visible { background: var(--accent-soft); outline: none; }
   .root.marked { background: color-mix(in srgb, var(--accent) 14%, transparent); }
@@ -1403,7 +1400,7 @@
   .badge.link:hover { background: var(--accent-soft); text-decoration: underline; }
   .note { font-size: 13px; padding-left: 24px; }
   .error { color: var(--hl); }
-  .empty { padding: 24px 12px; text-align: center; }
-  .empty-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-  .small { font-size: 13px; }
+  .empty { padding: 28px 12px; text-align: center; }
+  .empty p { margin: 0 0 6px; }
+  .small { font-size: 12px; }
 </style>
