@@ -3,20 +3,14 @@
 // every window (the main one and the pop-out readers) looks the same; a
 // change in one window reaches the others through the `storage` event.
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { PLATFORM, MOD_KEY } from "./platform.js";
 
 // Font presets. `default` means "the face the platform itself uses", and that
 // differs by OS: Segoe UI + 微软雅黑 on Windows, San Francisco + 苹方 on macOS,
 // Cantarell + Noto Sans CJK on Linux. The interface and the reader both start
 // there; 宋体 / 明体 is a preset of its own for whoever wants a book serif.
-// `navigator.userAgent` is enough to tell the three apart inside the webview;
-// app.css carries a broad stack as the fallback for the moment before this
+// `app.css` carries a broad stack as the fallback for the moment before this
 // module runs.
-const PLATFORM = (() => {
-  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
-  if (/Mac|iPhone|iPad/i.test(ua)) return "mac";
-  if (/Linux|X11/i.test(ua) && !/Android/i.test(ua)) return "linux";
-  return "windows";
-})();
 
 const DEFAULT_SANS = {
   windows: 'system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif',
@@ -76,7 +70,7 @@ export const WEIGHT_LEVELS = [
 // copying). `off` turns the feature off. Editors never use it: selecting text
 // there is a constant part of editing.
 export const SELECT_LOOKUP_MODES = [
-  ["ctrl", "按住 Ctrl / Cmd 选字"],
+  ["ctrl", `按住 ${MOD_KEY} 选字`],
   ["auto", "选中即查"],
   ["off", "关闭"],
 ];

@@ -21,6 +21,7 @@
   import AiHistoryDialog from "./AiHistoryDialog.svelte";
   import AiSaveNoteDialog from "./AiSaveNoteDialog.svelte";
   import { settings, update as updateSettings, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
+  import { formatShortcut, formatCombo } from "./shortcuts.js";
 
   let {
     // "doc" | "search" | "chat"
@@ -584,7 +585,7 @@
     const text = (customText ?? input).trim();
     if (!text || busy) return;
     if (!curPreset?.baseUrl?.trim() || !curPreset?.model?.trim()) {
-      errorMsg = "请先在「设置（Ctrl+,）› AI 助手」中配置模型接口地址与模型名称。";
+      errorMsg = `请先在「设置（${formatShortcut("settings", settings.shortcuts) || formatCombo("Ctrl+,")}）› AI 助手」中配置模型接口地址与模型名称。`;
       return;
     }
     errorMsg = "";

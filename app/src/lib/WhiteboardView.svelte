@@ -7,7 +7,7 @@
   import * as api from "./api.js";
   import TitleLink from "./TitleLink.svelte";
   import Icon from "./Icon.svelte";
-  import { matchesShortcut } from "./shortcuts.js";
+  import { matchesShortcut, formatShortcut } from "./shortcuts.js";
   import { settings } from "./settings.svelte.js";
 
   let { vol, title = vol.title, lib, path, readonly = false, onsaved = null, onlocate = null, ontag = null, onprops = null, extra = null } = $props();
@@ -387,8 +387,8 @@
 <div class="board" onkeydown={key}>
   <div class="view-bar">
     <TitleLink {title} {onlocate} />
-    {#if ontag}<button type="button" class="tool-btn" onclick={ontag} title="为本篇加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>{/if}
-    {#if onprops}<button type="button" class="tool-btn" onclick={onprops} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>{/if}
+    {#if ontag}<button type="button" class="tool-btn" onclick={ontag} title={formatShortcut("tag", settings.shortcuts) ? `为本篇加标签（${formatShortcut("tag", settings.shortcuts)}）` : "为本篇加标签"} aria-label="加标签"><Icon name="tag" size={16} /></button>{/if}
+    {#if onprops}<button type="button" class="tool-btn" onclick={onprops} title={formatShortcut("props", settings.shortcuts) ? `属性（${formatShortcut("props", settings.shortcuts)}）` : "属性"} aria-label="属性"><Icon name="sliders" size={16} /></button>{/if}
     {@render extra?.()}
     {#if readonly}<span class="muted status">白板（只读）</span>{:else}<span class="muted status">{status}</span>{/if}
     {#if error}<span class="error">{error}</span>{/if}

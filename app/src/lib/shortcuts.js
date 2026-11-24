@@ -1,6 +1,7 @@
 // Keyboard shortcuts shared by the main window and the pop-out readers.
 // User overrides are stored in `settings.shortcuts` (`{ [id]: comboString }`).
 import { settings } from "./settings.svelte.js";
+import { IS_MAC } from "./platform.js";
 
 export const SHORTCUT_DEFS = [
   { id: "quick", label: "标题快搜", defaultKey: "Ctrl+G", note: "也可双击 Shift" },
@@ -48,6 +49,8 @@ const CODE_KEY_MAP = {
 const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta", "CapsLock", "NumLock", "ScrollLock"]);
 
 const DISPLAY_KEY_MAP = {
+  Ctrl: IS_MAC ? "Cmd" : "Ctrl",
+  Alt: IS_MAC ? "Option" : "Alt",
   ArrowUp: "↑",
   ArrowDown: "↓",
   ArrowLeft: "←",
@@ -69,10 +72,20 @@ export function getShortcut(id, overrides = settings.shortcuts) {
   return DEF_MAP.get(id)?.defaultKey ?? "";
 }
 
-/** Split a combo string into displayable keycap labels. */
+/** Split a combo string into displayable keycap labels (platform-aware). */
 export function comboParts(combo) {
   if (!combo) return [];
   return combo.split("+").filter(Boolean).map((k) => DISPLAY_KEY_MAP[k] ?? k);
+}
+
+/** Format a canonical combo string for display on the current platform (e.g. `"Cmd+G"` on macOS, `"Ctrl+G"` on Windows/Linux). */
+export function formatCombo(combo) {
+  return comboParts(combo).join("+");
+}
+
+/** Format the active shortcut for `id` on the current platform (may be `""` if cleared). */
+export function formatShortcut(id, overrides = settings.shortcuts) {
+  return formatCombo(getShortcut(id, overrides));
 }
 
 function normalizeEventKey(e) {

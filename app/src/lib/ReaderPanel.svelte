@@ -17,7 +17,7 @@
   import { localDate } from "./diary.js";
   import Icon from "./Icon.svelte";
   import SnapshotDialog from "./SnapshotDialog.svelte";
-  import { matchesShortcut } from "./shortcuts.js";
+  import { matchesShortcut, formatShortcut } from "./shortcuts.js";
 
   const loadMindMap = () => import("./MindMapView.svelte");
   const loadWhiteboard = () => import("./WhiteboardView.svelte");
@@ -455,8 +455,8 @@
       <div class="view-bar">
         <TitleLink title={p.retitled ?? vol.title} {onlocate} />
         {#if onaction}
-          <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title="为本篇加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>
-          <button type="button" class="tool-btn" onclick={() => onaction({ type: "props", vol })} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>
+          <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title={formatShortcut("tag", settings.shortcuts) ? `为本篇加标签（${formatShortcut("tag", settings.shortcuts)}）` : "为本篇加标签"} aria-label="加标签"><Icon name="tag" size={16} /></button>
+          <button type="button" class="tool-btn" onclick={() => onaction({ type: "props", vol })} title={formatShortcut("props", settings.shortcuts) ? `属性（${formatShortcut("props", settings.shortcuts)}）` : "属性"} aria-label="属性"><Icon name="sliders" size={16} /></button>
         {/if}
         {@render aiBtn()}
         <span class="muted status">{status}</span>

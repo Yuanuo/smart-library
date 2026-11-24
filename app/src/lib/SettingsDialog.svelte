@@ -6,6 +6,7 @@
   import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { settings, update, reset, UI_FONTS, READER_FONTS, WEIGHT_LEVELS, SELECT_LOOKUP_MODES, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
   import { SHORTCUT_DEFS, getShortcut, comboParts, eventToCombo, setShortcutRecording } from "./shortcuts.js";
+  import { MOD_KEY } from "./platform.js";
   import DialogHeader from "./DialogHeader.svelte";
 
   let { onclose, dataDir = "" } = $props();
@@ -776,7 +777,7 @@
                 {/each}
               </div>
             </div>
-            <p class="muted hint card-note">只在只读阅读器中生效，笔记、脑图和白板里选中文字不会查词。「按住 Ctrl / Cmd 选字」时，普通选字与复制不受影响；「选中即查」时按住 Ctrl / Cmd 不查。选中超过 10 个字或带标点时也不查。查词结果显示在同一个词典窗口里。</p>
+            <p class="muted hint card-note">只在只读阅读器中生效，笔记、脑图和白板里选中文字不会查词。「按住 {MOD_KEY} 选字」时，普通选字与复制不受影响；「选中即查」时按住 {MOD_KEY} 不查。选中超过 10 个字或带标点时也不查。查词结果显示在同一个词典窗口里。</p>
           </div>
 
         {:else if activeTab === "search"}
@@ -1238,7 +1239,7 @@
               <div class="row-plain">
                 <button onclick={clean} disabled={cleaning}>{cleaning ? "清理中…" : "清理缓存"}</button>
               </div>
-              <p class="muted hint">清空本地文件夹（读写模式）里的回收站 .smart-library/trash，并删除没有笔记引用的图片（内部知识库也一样；被笔记回收站里的笔记引用的图片会保留）。要找回删除的文件或笔记，先在目录树右键知识库 →「回收站…」恢复。</p>
+              <p class="muted hint">清空本地文件夹（读写模式）里的回收站 .smart-library/trash，并删除没有笔记引用的图片（默认知识库也一样；被笔记回收站里的笔记引用的图片会保留）。要找回删除的文件或笔记，先在目录树右键知识库 →「回收站…」恢复。</p>
               {#if cleanMsg}<p class="hint" style="white-space: pre-line">{cleanMsg}</p>{/if}
             </div>
           </div>

@@ -41,6 +41,7 @@
   import { parseSource, sourceUrl } from "./clip.js";
   import { openDictWindow } from "./dictWindow.js";
   import { settings, update } from "./settings.svelte.js";
+  import { formatShortcut } from "./shortcuts.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
 
   let {
@@ -521,8 +522,8 @@
           </select>
         {/if}
         {#if onaction}
-          <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title="为当前文档加标签（Ctrl+T）" aria-label="加标签"><Icon name="tag" size={16} /></button>
-          <button type="button" class="tool-btn" onclick={() => onaction({ type: "props", vol })} title="属性（Ctrl+P）" aria-label="属性"><Icon name="sliders" size={16} /></button>
+          <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title={formatShortcut("tag", settings.shortcuts) ? `为当前文档加标签（${formatShortcut("tag", settings.shortcuts)}）` : "为当前文档加标签"} aria-label="加标签"><Icon name="tag" size={16} /></button>
+          <button type="button" class="tool-btn" onclick={() => onaction({ type: "props", vol })} title={formatShortcut("props", settings.shortcuts) ? `属性（${formatShortcut("props", settings.shortcuts)}）` : "属性"} aria-label="属性"><Icon name="sliders" size={16} /></button>
         {/if}
         {@render extra?.()}
         <span class="grow"></span>

@@ -19,6 +19,7 @@ import * as api from "./api.js";
 import ReaderPanel from "./ReaderPanel.svelte";
 import SearchPage from "./SearchPage.svelte";
 import AiPanel from "./AiPanel.svelte";
+import { formatShortcut, formatCombo } from "./shortcuts.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // 2: tabs are `<library>|<path>` (version 1 had CBETA paths only)
@@ -384,7 +385,7 @@ function watermark() {
   const element = document.createElement("div");
   element.className = "dock-watermark";
   element.innerHTML =
-    "<p>从左侧目录打开一篇文章，或按 Ctrl+H 全文搜索、双击 Shift 标题快搜。</p>" +
+    `<p>从左侧目录打开一篇文章，或按 ${formatShortcut("search") || formatCombo("Ctrl+H")} 全文搜索、双击 Shift 标题快搜。</p>` +
     "<p class='muted'>标签可拖到边缘分栏停靠；右键标签可分栏、浮动或在新窗口打开。</p>";
   return { element, init() {} };
 }
@@ -395,7 +396,7 @@ function tabMenu({ panel, group }) {
   const isReader = !isSearch && !isAiChat && panel.id !== "search";
   const where = group.api.location.type;
   const items = [
-    { label: "关闭（Ctrl+W）", action: () => panel.api.close() },
+    { label: formatShortcut("close") ? `关闭（${formatShortcut("close")}）` : "关闭", action: () => panel.api.close() },
     {
       label: "关闭其他标签",
       action: () => group.panels.filter((x) => x !== panel).forEach((x) => x.api.close()),
