@@ -418,21 +418,54 @@ pub struct PackageInfo {
     files: usize,
     exts: Vec<String>,
     max_mb: u64,
+    default_dest: String,
+}
+
+fn default_import_dir(data_dir: &Path, title: &str) -> String {
+    let raw: String = title
+        .trim()
+        .chars()
+        .map(|c| {
+            if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = raw.trim().trim_end_matches(['.', ' ']);
+    let base_name = if trimmed.is_empty() || folder::check_name(trimmed).is_err() {
+        "imported"
+    } else {
+        trimmed
+    };
+    let root = data_dir.join("folders");
+    let mut cand = root.join(base_name);
+    let mut n = 2usize;
+    while cand.exists() {
+        cand = root.join(format!("{}-{}", base_name, n));
+        n += 1;
+    }
+    cand.to_string_lossy().into_owned()
 }
 
 #[tauri::command]
-pub async fn inspect_package(path: String) -> Result<PackageInfo, String> {
+pub async fn inspect_package(path: String, state: State<'_, AppState>) -> Result<PackageInfo, String> {
+    let data_dir = state.data_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let pkg = smart_library_core::exchange::Package::open(Path::new(&path))?;
         let is_dir = pkg.is_dir_package();
         let filter = pkg.dir_filter();
+        let title = pkg.title();
+        let default_dest = if is_dir { default_import_dir(&data_dir, &title) } else { String::new() };
         Ok(PackageInfo {
             kind: if is_dir { "smartdir".into() } else { "smartlib".into() },
-            title: pkg.title(),
+            title,
             scope: pkg.manifest["scope"].as_str().unwrap_or("library").to_string(),
             files: if is_dir { pkg.data_file_count() } else { 0 },
             exts: filter.exts,
             max_mb: filter.max_mb,
+            default_dest,
         })
     })
     .await
@@ -465,6 +498,7 @@ pub async fn import_package(
     lib: Option<String>,
     parent: Option<String>,
     title: Option<String>,
+    library_id: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ImportDone, String> {
@@ -521,7 +555,7 @@ pub async fn import_package(
     }
     let base = title.filter(|t| !t.trim().is_empty()).map(|t| t.trim().to_string()).unwrap_or_else(|| pkg.title());
     let title = unique_library_title(&state, &base);
-    let _ = create_notes_library(title.clone(), None, state.clone()).await?;
+    let _ = create_notes_library(title.clone(), library_id, state.clone()).await?;
     let lib = state
         .libraries
         .read()
@@ -573,17 +607,43 @@ pub async fn import_dir_as_folder(
     dest: String,
     title: Option<String>,
     writable: Option<bool>,
+    library_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ImportDone, String> {
-    let canon = folder::canonical(&dest)?;
-    {
+    let dest_trimmed = dest.trim().trim_matches('"');
+    if dest_trimmed.is_empty() {
+        return Err("请指定目标空文件夹".into());
+    }
+    let dest_path = Path::new(dest_trimmed);
+    let created = !dest_path.exists();
+    if created {
+        std::fs::create_dir_all(dest_path).map_err(|e| format!("无法创建目标文件夹 {}：{}", dest_trimmed, e))?;
+    }
+    let canon = match folder::canonical(dest_trimmed) {
+        Ok(c) => c,
+        Err(e) => {
+            if created {
+                let _ = std::fs::remove_dir(dest_path);
+            }
+            return Err(e);
+        }
+    };
+    let check_res: Result<(), String> = {
         let libs = state.libraries.read().unwrap();
         let existing: Vec<&str> = libs.iter().filter(|l| l.kind == "folder").map(|l| l.source.as_str()).collect();
         if let Some(c) = folder::conflict(&existing, &canon) {
-            return Err(c);
+            Err(c)
+        } else {
+            super::library_id(library_id.as_deref(), "folder", &libs).map(|_| ())
         }
+    };
+    if let Err(e) = check_res {
+        if created {
+            let _ = std::fs::remove_dir(&canon);
+        }
+        return Err(e);
     }
-    let (count, pkg_title, filter) = tauri::async_runtime::spawn_blocking({
+    let extracted = tauri::async_runtime::spawn_blocking({
         let path = path.clone();
         let canon = canon.clone();
         move || {
@@ -598,12 +658,21 @@ pub async fn import_dir_as_folder(
         }
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(|e| e.to_string())?;
+    let (count, pkg_title, filter) = match extracted {
+        Ok(v) => v,
+        Err(e) => {
+            if created {
+                let _ = std::fs::remove_dir_all(&canon);
+            }
+            return Err(e);
+        }
+    };
     let base = title.filter(|t| !t.trim().is_empty()).map(|t| t.trim().to_string()).unwrap_or(pkg_title);
     let lib_title = unique_library_title(&state, &base);
     let exts = filter.exts.join(" ");
     let want_writable = writable.unwrap_or(false);
-    let _ = add_folder(canon.clone(), Some(lib_title.clone()), exts, filter.max_mb, Some(want_writable), None, state.clone()).await?;
+    let _ = add_folder(canon.clone(), Some(lib_title.clone()), exts, filter.max_mb, Some(want_writable), library_id, state.clone()).await?;
     if want_writable {
         let added = state.libraries.read().unwrap().iter().find(|l| l.source == canon).cloned();
         if let Some(l) = added {

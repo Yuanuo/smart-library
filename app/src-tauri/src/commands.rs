@@ -65,6 +65,9 @@ pub struct Library {
     /// folder must accept the rules again (design-spec 6.5).
     #[serde(default)]
     pub writable: bool,
+    /// remote git URL when this folder library is a read-only git clone
+    #[serde(default)]
+    pub remote: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -633,6 +636,7 @@ fn load_registry(config_dir: &Path) -> Vec<Library> {
             exts: Vec::new(),
             max_mb: 0,
             writable: false,
+            remote: String::new(),
         }],
         None => Vec::new(),
     }
@@ -784,6 +788,8 @@ pub struct LibraryDto {
     max_mb: u64,
     /// the library can be edited in the program (internal libraries; folders in read-write mode)
     writable: bool,
+    /// remote git URL (non-empty for read-only git remote libraries)
+    remote: String,
     /// the source cannot be opened (moved, deleted …)
     error: Option<String>,
     data_version: Option<String>,
@@ -825,6 +831,7 @@ fn status_of(state: &AppState) -> StatusDto {
             let index_ready = state.index(&l.id).is_some() && (l.kind != "zim" || data_version.is_some() && data_version == index_data_version);
             LibraryDto {
                 writable,
+                remote: l.remote,
                 error,
                 data_version,
                 index_ready,
@@ -917,7 +924,7 @@ pub async fn add_zim(
         if libs.iter().any(|l| l.kind == "zim" && same_path(&l.source, &path)) { return Err("这个 ZIM 数据包已经绑定".into()); }
         let title = Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "ZIM".into());
         let id = self::library_id(library_id.as_deref(), "zim", &libs)?;
-        libs.push(Library { id: id.clone(), kind: "zim".into(), title, source: path, tree: String::new(), exts: vec![], max_mb: 0, writable: false });
+        libs.push(Library { id: id.clone(), kind: "zim".into(), title, source: path, tree: String::new(), exts: vec![], max_mb: 0, writable: false, remote: String::new() });
         id
     };
     // Keep what was just read: a big archive takes minutes to open, and
@@ -1044,6 +1051,7 @@ pub async fn bind_libraries(
                         exts: Vec::new(),
                         max_mb: 0,
                         writable: false,
+                        remote: String::new(),
                     });
                 }
             }
@@ -1070,6 +1078,7 @@ pub async fn bind_libraries(
                 exts: Vec::new(),
                 max_mb: 0,
                 writable: false,
+                remote: String::new(),
             });
         }
         *guard = libs;
@@ -1093,12 +1102,22 @@ pub async fn bind_libraries(
 }
 
 /// Remove a library; its index is derived data and is deleted.
+/// For remote git libraries, `delete_local` can optionally remove the cloned local directory.
 #[tauri::command]
-pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<StatusDto, String> {
+pub async fn unbind_library(id: String, delete_local: Option<bool>, state: State<'_, AppState>) -> Result<StatusDto, String> {
     if state.building.lock().unwrap().contains(&id) {
         return Err("正在建立这个知识库的索引，请稍后再解除绑定".into());
     }
-    let own_lib = state.library(&id).map(|l| l.kind == "notes").unwrap_or(false);
+    let removed = state.library(&id).ok();
+    let own_lib = removed.as_ref().map(|l| l.kind == "notes").unwrap_or(false);
+    let remote_dir = if delete_local.unwrap_or(false) {
+        removed
+            .as_ref()
+            .filter(|l| l.kind == "folder" && !l.remote.is_empty() && !l.source.is_empty())
+            .map(|l| PathBuf::from(&l.source))
+    } else {
+        None
+    };
     state.libraries.write().unwrap().retain(|l| l.id != id);
     state.indexes.write().unwrap().remove(&id);
     state.html.write().unwrap().remove(&id);
@@ -1117,6 +1136,11 @@ pub async fn unbind_library(id: String, state: State<'_, AppState>) -> Result<St
     let dir = state.data_dir.join("repos").join(&id);
     if dir.exists() {
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    if let Some(local_dir) = remote_dir {
+        if local_dir.is_dir() {
+            std::fs::remove_dir_all(&local_dir).map_err(|e| format!("已解除绑定，但删除本地数据失败：{}", e))?;
+        }
     }
     Ok(status_of(&state))
 }
@@ -1177,6 +1201,7 @@ pub async fn add_folder(
             exts,
             max_mb,
             writable: writable.unwrap_or(false),
+            remote: String::new(),
         });
     }
     state.save_registry()?;
@@ -1192,6 +1217,9 @@ pub async fn set_folder_writable(id: String, writable: bool, state: State<'_, Ap
         let l = libs.iter_mut().find(|l| l.id == id).ok_or("找不到这个知识库")?;
         if l.kind != "folder" {
             return Err("只有外部文件夹可以切换读写模式".into());
+        }
+        if !l.remote.is_empty() {
+            return Err("远程知识库（Git）目前仅支持只读模式".into());
         }
         l.writable = writable;
     }
@@ -1221,7 +1249,7 @@ fn add_notes_library(state: &AppState, title: &str, requested_id: Option<&str>) 
             return Err("已经有同名的知识库".into());
         }
         let id = library_id(requested_id, "notes", &libs)?;
-        let lib = Library { id, kind: "notes".into(), title, source: String::new(), tree: String::new(), exts: Vec::new(), max_mb: 0, writable: true };
+        let lib = Library { id, kind: "notes".into(), title, source: String::new(), tree: String::new(), exts: Vec::new(), max_mb: 0, writable: true, remote: String::new() };
         libs.push(lib.clone());
         lib
     };
@@ -1962,7 +1990,7 @@ pub struct RestoredNoteDto {
 pub async fn list_deleted_notes(lib: String, state: State<'_, AppState>) -> Result<Vec<DeletedNoteDto>, String> {
     let l = state.library(&lib)?;
     if l.kind != "notes" {
-        return Err("只有内部知识库有笔记回收站".into());
+        return Err("只有默认知识库有笔记回收站".into());
     }
     let mut out = Vec::new();
     for m in state.snapshots.list_deleted(&lib)? {
@@ -1982,7 +2010,7 @@ pub async fn list_deleted_notes(lib: String, state: State<'_, AppState>) -> Resu
 pub async fn restore_deleted_note(lib: String, id: i64, state: State<'_, AppState>) -> Result<RestoredNoteDto, String> {
     let l = state.library(&lib)?;
     if l.kind != "notes" {
-        return Err("只有内部知识库有笔记回收站".into());
+        return Err("只有默认知识库有笔记回收站".into());
     }
     let rec = state.snapshots.get(id)?.ok_or("回收站里没有这一项")?;
     if rec.kind != "deleted" || rec.lib != lib {
@@ -2038,7 +2066,7 @@ pub async fn restore_deleted_note(lib: String, id: i64, state: State<'_, AppStat
 pub async fn purge_deleted_notes(lib: String, state: State<'_, AppState>) -> Result<usize, String> {
     let l = state.library(&lib)?;
     if l.kind != "notes" {
-        return Err("只有内部知识库有笔记回收站".into());
+        return Err("只有默认知识库有笔记回收站".into());
     }
     let store = state.notes(&l)?;
     for m in state.snapshots.list_deleted(&lib)? {
@@ -4811,6 +4839,10 @@ pub async fn find_in_page(window: tauri::WebviewWindow) -> Result<(), String> {
 mod export_cmds;
 pub use export_cmds::*;
 
+#[path = "commands/git_cmds.rs"]
+mod git_cmds;
+pub use git_cmds::*;
+
 #[path = "commands/ai_cmds.rs"]
 mod ai_cmds;
 pub use ai_cmds::*;
@@ -4931,7 +4963,7 @@ mod library_id_tests {
 
     #[test]
     fn validates_unique_immutable_ids_and_safe_defaults() {
-        let libs = vec![Library { id: "wikiquote".into(), kind: "zim".into(), title: "test".into(), source: String::new(), tree: String::new(), exts: vec![], max_mb: 0, writable: false }];
+        let libs = vec![Library { id: "wikiquote".into(), kind: "zim".into(), title: "test".into(), source: String::new(), tree: String::new(), exts: vec![], max_mb: 0, writable: false, remote: String::new() }];
         assert_eq!(library_id(Some("wikipedia"), "zim", &libs).unwrap(), "wikipedia");
         assert!(library_id(Some("wikiquote"), "zim", &libs).is_err());
         assert!(library_id(Some("../private"), "zim", &libs).is_err());
@@ -4986,6 +5018,7 @@ mod library_id_tests {
             exts: vec![],
             max_mb: 0,
             writable: true,
+            remote: String::new(),
         };
         // Simulate an existing index directory and an in-flight build
         let idx_dir = state.index_dir(&lib.id);
@@ -5029,6 +5062,7 @@ mod library_id_tests {
             exts: vec!["md".into()],
             max_mb: 0,
             writable: true,
+            remote: String::new(),
         };
         state.libraries.write().unwrap().push(lib.clone());
         state.sidecar_sync();
