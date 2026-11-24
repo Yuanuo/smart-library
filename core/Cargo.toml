@@ -1,6 +1,6 @@
 [package]
 name = "smart-library-core"
-version = "26.11.21"
+version = "26.11.24"
 edition = "2021"
 
 [dependencies]

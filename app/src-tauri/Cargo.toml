@@ -1,6 +1,6 @@
 [package]
 name = "smart-library-app"
-version = "26.11.21"
+version = "26.11.24"
 description = "Smart Library desktop app (Tauri 2)"
 edition = "2021"
 

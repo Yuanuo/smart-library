@@ -3751,7 +3751,7 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 
 [[package]]
 name = "smart-library-app"
-version = "26.11.21"
+version = "26.11.24"
 dependencies = [
  "futures-util",
  "httparse",
@@ -3772,7 +3772,7 @@ dependencies = [
 
 [[package]]
 name = "smart-library-cli"
-version = "26.11.21"
+version = "26.11.24"
 dependencies = [
  "serde_json",
  "smart-library-core",
@@ -3780,7 +3780,7 @@ dependencies = [
 
 [[package]]
 name = "smart-library-core"
-version = "26.11.21"
+version = "26.11.24"
 dependencies = [
  "base64 0.23.1",
  "encoding_rs",
