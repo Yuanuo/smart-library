@@ -49,6 +49,9 @@
   {:else if name === "folder-edit"}
     <!-- a local folder, read-write -->
     <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" /><path d="m9.5 17.8.6-2.6 5.2-5.2 2 2-5.2 5.2z" fill="currentColor" fill-opacity="0.3" />
+  {:else if name === "cloud"}
+    <!-- a remote git library (read-only) -->
+    <path d="M7.5 18.5h9.5a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7 9.3a4 4 0 0 0 .5 9.2z" fill="currentColor" fill-opacity="0.22" />
   {:else if name === "database"}
     <!-- an internal library (database) -->
     <ellipse cx="12" cy="6" rx="7" ry="2.8" fill="currentColor" fill-opacity="0.25" /><path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6" /><path d="M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8" />

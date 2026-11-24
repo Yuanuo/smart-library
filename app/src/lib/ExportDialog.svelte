@@ -91,14 +91,14 @@
           <input type="radio" name="export-fmt" value="smartdir" bind:group={format} disabled={busy} />
           <div>
             <div class="fmt-title">文件夹数据包（<code>.smartdir</code>）</div>
-            <div class="muted small">原样保留目录结构、原始文件、<code>.meta.json</code> 与引用的图片附件（不含回收站）。导入时可还原为本地文件夹知识库，也可导入为内部知识库。</div>
+            <div class="muted small">原样保留目录结构、原始文件、<code>.meta.json</code> 与引用的图片附件（不含回收站）。导入时可还原为本地文件夹知识库，也可导入为默认知识库。</div>
           </div>
         </label>
         <label class="fmt-opt" class:active={format === "smartlib"} class:disabled={busy}>
           <input type="radio" name="export-fmt" value="smartlib" bind:group={format} disabled={busy} />
           <div>
             <div class="fmt-title">通用数据包（<code>.smartlib</code>）</div>
-            <div class="muted small">转换为 Markdown 与 <code>manifest.json</code>。导入时成为内部知识库。</div>
+            <div class="muted small">转换为 Markdown 与 <code>manifest.json</code>。导入时成为默认知识库。</div>
           </div>
         </label>
       </div>

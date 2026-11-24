@@ -18,7 +18,7 @@
   import UpdateDialog from "./lib/UpdateDialog.svelte";
   import PinyinDialog from "./lib/PinyinDialog.svelte";
   import { checkUpdates } from "./lib/updater.svelte.js";
-  import { installShortcuts, readerSelection } from "./lib/shortcuts.js";
+  import { installShortcuts, readerSelection, formatShortcut } from "./lib/shortcuts.js";
   import { localDate, localTime } from "./lib/diary.js";
   import { settings, update as updateSettings } from "./lib/settings.svelte.js";
   import { daily, check as checkDaily, again as dailyAgain, markSeen as dailySeen } from "./lib/daily.svelte.js";
@@ -27,7 +27,7 @@
   import { fullPath } from "./lib/paths.js";
   import ClipDialog from "./lib/ClipDialog.svelte";
   import ExportDialog from "./lib/ExportDialog.svelte";
-  import ImportDirDialog from "./lib/ImportDirDialog.svelte";
+  import UnbindRemoteDialog from "./lib/UnbindRemoteDialog.svelte";
   import AiPanel from "./lib/AiPanel.svelte";
   import { open as openFile } from "@tauri-apps/plugin-dialog";
   import { clipMarkdown, clipNode } from "./lib/clip.js";
@@ -199,12 +199,11 @@
 
   // ---- export and import of libraries
   let exportDlg = $state(null); // { lib, sel, label }
-  let importDirDlg = $state(null); // { path, info }
   let importing = $state(false);
 
-  /** `target`: { lib, parent, key } to import below a place of an internal library; none: as a new library. */
-  async function importLibrary(target = null) {
-    if (importing) return;
+  /** `target`: { lib, parent, key } to import below a place of an internal library. */
+  async function importLibrary(target) {
+    if (importing || !target) return;
     try {
       const path = await openFile({
         multiple: false,
@@ -216,49 +215,18 @@
         ],
       });
       if (!path) return;
-      if (!target) {
-        const info = await api.inspectPackage(path);
-        if (info.kind === "smartdir") {
-          importDirDlg = { path, info };
-          return;
-        }
-      }
       importing = true;
       notice = "正在导入…";
-      const before = new Set(libraries.map((l) => l.id));
-      const r = await api.importPackage(path, target?.lib ?? null, target?.parent ?? null);
+      const r = await api.importPackage(path, target.lib, target.parent ?? null);
       st = r.status;
-      if (target) {
-        await libPanel?.reloadNode(target.lib, target.key);
-        notice = `已导入到「${r.title}」：${r.notes} 篇笔记。`;
-      } else {
-        const added = (r.status?.libraries || []).filter((l) => !before.has(l.id));
-        const toIndex = added.filter((l) => !l.index_ready && !l.building && !l.error);
-        for (const l of toIndex) startIndex(l.id);
-        notice = toIndex.length
-          ? `已导入「${r.title}」：${r.notes} 篇笔记，正在后台建立索引…`
-          : `已导入「${r.title}」：${r.notes} 篇笔记。`;
-      }
+      await libPanel?.reloadNode(target.lib, target.key);
+      notice = `已导入到「${r.title}」：${r.notes} 篇笔记。`;
       api.prepareTitles().catch(() => {});
     } catch (e) {
       error = String(e);
     } finally {
       importing = false;
     }
-  }
-
-  function onImportDirDone(r, mode) {
-    const before = new Set(libraries.map((l) => l.id));
-    st = r.status;
-    importDirDlg = null;
-    const added = (r.status?.libraries || []).filter((l) => !before.has(l.id));
-    const toIndex = added.filter((l) => !l.index_ready && !l.building && !l.error);
-    for (const l of toIndex) startIndex(l.id);
-    const unit = mode === "folder" ? "个文件" : "篇笔记";
-    notice = toIndex.length
-      ? `已导入「${r.title}」：${r.notes} ${unit}，正在后台建立索引…`
-      : `已导入「${r.title}」：${r.notes} ${unit}。`;
-    api.prepareTitles().catch(() => {});
   }
 
   // ---- clippings: selected text into a note
@@ -806,22 +774,100 @@
     }
   }
 
-  function bound(newStatus) {
+  function bound(newStatus, meta = null) {
     const before = new Set(libraries.map((l) => l.id));
     st = newStatus;
     binding = null;
     const added = newStatus.libraries.filter((l) => !before.has(l.id));
     const toIndex = added.filter((l) => !l.index_ready && !l.building && !l.error);
     for (const l of toIndex) startIndex(l.id);
-    notice = added.length
-      ? toIndex.length
-        ? `已添加：${added.map((l) => l.title).join("、")}，正在后台建立索引…`
-        : `已添加：${added.map((l) => l.title).join("、")}。`
-      : "目录树已更新。";
+    if (meta?.imported) {
+      notice = toIndex.length
+        ? `已导入「${meta.title}」：${meta.count} ${meta.unit}，正在后台建立索引…`
+        : `已导入「${meta.title}」：${meta.count} ${meta.unit}。`;
+    } else {
+      notice = added.length
+        ? toIndex.length
+          ? `已添加：${added.map((l) => l.title).join("、")}，正在后台建立索引…`
+          : `已添加：${added.map((l) => l.title).join("、")}。`
+        : "目录树已更新。";
+    }
     api.prepareTitles().catch(() => {});
   }
 
+  let unbindRemoteDlg = $state(null);
+  let gitStatus = $state({}); // lib id -> { dirty, has_update, error }
+  let gitUpdating = $state({}); // lib id -> true
+  let gitNotified = new Set();
+
+  async function checkGitStatus(fetch = false, notifyUpdates = false) {
+    if (!libraries.some((l) => l.remote)) return;
+    try {
+      const list = await api.gitStatusAll(fetch);
+      const newlyAvailable = [];
+      for (const item of list || []) {
+        gitStatus[item.lib] = item;
+        if (notifyUpdates && item.has_update && !item.dirty && !gitNotified.has(item.lib)) {
+          gitNotified.add(item.lib);
+          const l = libraries.find((x) => x.id === item.lib);
+          if (l) newlyAvailable.push(l.title);
+        }
+        if (!item.has_update) gitNotified.delete(item.lib);
+      }
+      if (newlyAvailable.length) {
+        notice = `远程知识库「${newlyAvailable.join("、")}」有可用更新，可在目录树点击「有更新」或右键更新。`;
+      }
+    } catch {}
+  }
+
+  $effect(() => {
+    const hasRemotes = libraries.some((l) => l.remote);
+    if (!hasRemotes) return;
+    const first = setTimeout(() => checkGitStatus(true, true), 20000);
+    const every = setInterval(() => checkGitStatus(true, true), 30 * 60 * 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  });
+
+  async function updateRemoteLibrary(l) {
+    if (gitUpdating[l.id]) return;
+    gitUpdating[l.id] = true;
+    try {
+      const r = await api.gitPullLibrary(l.id);
+      gitStatus[l.id] = { lib: l.id, dirty: false, has_update: false, error: null };
+      gitNotified.delete(l.id);
+      if (r.updated) {
+        await libPanel?.reloadNode(l.id, null);
+        startIndex(l.id);
+        notice = `已更新「${r.title}」，正在后台更新索引…`;
+        api.prepareTitles().catch(() => {});
+      } else {
+        notice = `「${r.title}」已是最新版本。`;
+      }
+    } catch (e) {
+      error = String(e);
+      checkGitStatus(false, false);
+    } finally {
+      delete gitUpdating[l.id];
+    }
+  }
+
+  async function confirmUnbindRemote(l, deleteLocal) {
+    await workspace.closeLibrary(l.id);
+    st = await api.unbindLibrary(l.id, deleteLocal);
+    delete gitStatus[l.id];
+    gitNotified.delete(l.id);
+    unbindRemoteDlg = null;
+    notice = deleteLocal ? `已解除绑定并删除本地数据：${l.title}` : `已解除绑定：${l.title}`;
+  }
+
   async function unbind(l) {
+    if (l.remote) {
+      unbindRemoteDlg = l;
+      return;
+    }
     const own = l.kind === "notes";
     const ok = await ask(
       own
@@ -862,22 +908,22 @@
       <div class="side-head">
         <span class="tools">
           <button class="icon" onclick={(e) => { const r = e.currentTarget.getBoundingClientRect(); libPanel?.addMenu(r.left, r.bottom + 2); }} title="添加" aria-label="添加"><Icon name="plus" size={18} /></button>
-          <button class="icon" onclick={openQuickSearch} title="标题快搜（双击 Shift 或 Ctrl+G）" aria-label="标题快搜"><Icon name="plane" size={18} /></button>
-          <button class="icon" onclick={openSearch} title="全文搜索（Ctrl+H）" aria-label="全文搜索"><Icon name="search" size={18} /></button>
-          <button class="icon" onclick={() => openDictWindow("")} title="查词典（Ctrl+K）" aria-label="查词典"><Icon name="dict" size={18} /></button>
-          <button class="icon" onclick={openMarks} title="收藏与标签（Ctrl+B）" aria-label="收藏与标签"><Icon name="bookmark" size={18} /></button>
-          <button class="icon" onclick={openRecent} title="最近访问（Ctrl+E）" aria-label="最近访问"><Icon name="clock" size={18} /></button>
+          <button class="icon" onclick={openQuickSearch} title={`标题快搜（双击 Shift${formatShortcut("quick", settings.shortcuts) ? ` 或 ${formatShortcut("quick", settings.shortcuts)}` : ""}）`} aria-label="标题快搜"><Icon name="plane" size={18} /></button>
+          <button class="icon" onclick={openSearch} title={formatShortcut("search", settings.shortcuts) ? `全文搜索（${formatShortcut("search", settings.shortcuts)}）` : "全文搜索"} aria-label="全文搜索"><Icon name="search" size={18} /></button>
+          <button class="icon" onclick={() => openDictWindow("")} title={formatShortcut("dict", settings.shortcuts) ? `查词典（${formatShortcut("dict", settings.shortcuts)}）` : "查词典"} aria-label="查词典"><Icon name="dict" size={18} /></button>
+          <button class="icon" onclick={openMarks} title={formatShortcut("marks", settings.shortcuts) ? `收藏与标签（${formatShortcut("marks", settings.shortcuts)}）` : "收藏与标签"} aria-label="收藏与标签"><Icon name="bookmark" size={18} /></button>
+          <button class="icon" onclick={openRecent} title={formatShortcut("recent", settings.shortcuts) ? `最近访问（${formatShortcut("recent", settings.shortcuts)}）` : "最近访问"} aria-label="最近访问"><Icon name="clock" size={18} /></button>
           {#if settings.aiOn}
-            <button class="icon" class:on={aiOpen} onclick={() => setAiOpen(!aiOpen)} title="打开 / 收起右侧 AI 助手栏（F1）" aria-label="AI 助手"><Icon name="sparkles" size={18} /></button>
+            <button class="icon" class:on={aiOpen} onclick={() => setAiOpen(!aiOpen)} title={formatShortcut("ai", settings.shortcuts) ? `打开 / 收起右侧 AI 助手栏（${formatShortcut("ai", settings.shortcuts)}）` : "打开 / 收起右侧 AI 助手栏"} aria-label="AI 助手"><Icon name="sparkles" size={18} /></button>
           {/if}
         </span>
         <span class="tools nav">
           <button class="icon" class:off={!workspace.ws.canBack} aria-disabled={!workspace.ws.canBack}
             onclick={() => workspace.ws.canBack && workspace.navigateHistory(-1)} oncontextmenu={openViewHistory}
-            title="上一个视图（Ctrl+Shift+←；右键：视图历史）" aria-label="上一个视图"><Icon name="arrow-left" size={18} /></button>
+            title={`上一个视图（${formatShortcut("nav-back", settings.shortcuts) ? `${formatShortcut("nav-back", settings.shortcuts)}；` : ""}右键：视图历史）`} aria-label="上一个视图"><Icon name="arrow-left" size={18} /></button>
           <button class="icon" class:off={!workspace.ws.canForward} aria-disabled={!workspace.ws.canForward}
             onclick={() => workspace.ws.canForward && workspace.navigateHistory(1)} oncontextmenu={openViewHistory}
-            title="下一个视图（Ctrl+Shift+→；右键：视图历史）" aria-label="下一个视图"><Icon name="arrow-right" size={18} /></button>
+            title={`下一个视图（${formatShortcut("nav-forward", settings.shortcuts) ? `${formatShortcut("nav-forward", settings.shortcuts)}；` : ""}右键：视图历史）`} aria-label="下一个视图"><Icon name="arrow-right" size={18} /></button>
         </span>
       </div>
       <div class="tree">
@@ -887,11 +933,15 @@
             {libraries}
             {progress}
             titles={titlesProgress}
+            {gitStatus}
+            {gitUpdating}
             onopen={openNode}
-            onbind={() => (binding = { path: "" })}
-            onrebind={(l) => (binding = { path: l.source })}
+            onbind={(kind = "") => (binding = { path: "", kind: typeof kind === "string" ? kind : "" })}
+            onrebind={(l) => (binding = { path: l.source, kind: "" })}
             onunbind={unbind}
             onindex={startIndex}
+            onupdate={updateRemoteLibrary}
+            ongitstatus={(fetch) => checkGitStatus(fetch, false)}
             onsearchfrom={searchFrom}
             ontag={tagFromTree}
             onprops={propsFromTree}
@@ -913,7 +963,7 @@
               <Icon name="speaker" size={18} />{#if daily.item && !daily.seen}<span class="badge">1</span>{/if}
             </button>
           {/if}
-          <button class="icon" onclick={() => (settingsBox = true)} title="设置（Ctrl+,）" aria-label="设置"><Icon name="gear" size={18} /></button>
+          <button class="icon" onclick={() => (settingsBox = true)} title={formatShortcut("settings", settings.shortcuts) ? `设置（${formatShortcut("settings", settings.shortcuts)}）` : "设置"} aria-label="设置"><Icon name="gear" size={18} /></button>
           <button class="icon" onclick={() => (showLog = !showLog)} title="本次运行期间的消息" aria-label="消息">
             <Icon name="message" size={18} />{#if log.length}<span class="badge">{log.length}</span>{/if}
           </button>
@@ -998,11 +1048,6 @@
     ondone={(r) => (notice = `已导出 ${r.docs} 项：${r.path}`)} onclose={() => (exportDlg = null)} />
 {/if}
 
-{#if importDirDlg}
-  <ImportDirDialog path={importDirDlg.path} info={importDirDlg.info}
-    ondone={onImportDirDone} onclose={() => (importDirDlg = null)} />
-{/if}
-
 {#if importing}
   <div class="import-mask" role="dialog" aria-modal="true" aria-label="正在导入">
     <div class="dialog dialog-shell import-busy">
@@ -1059,7 +1104,11 @@
 {/if}
 
 {#if binding}
-  <BindDialog initialPath={binding.path} onclose={() => (binding = null)} onbound={bound} />
+  <BindDialog initialPath={binding.path} initialKind={binding.kind} existingTitles={libraries.map((l) => l.title)} onclose={() => (binding = null)} onbound={bound} />
+{/if}
+
+{#if unbindRemoteDlg}
+  <UnbindRemoteDialog lib={unbindRemoteDlg} onconfirm={confirmUnbindRemote} onclose={() => (unbindRemoteDlg = null)} />
 {/if}
 
 <style>

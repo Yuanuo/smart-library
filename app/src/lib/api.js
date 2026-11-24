@@ -80,9 +80,16 @@ export const findInPage = () => invoke("find_in_page");
 export const onExportProgress = (cb) => listen("export-progress", (e) => cb(e.payload));
 export const exportLibrary = (req) => invoke("export_library", { req });
 export const inspectPackage = (path) => invoke("inspect_package", { path });
-export const importPackage = (path, lib = null, parent = null, title = null) => invoke("import_package", { path, lib, parent, title });
-export const importDirAsFolder = (path, dest, title = null, writable = false) =>
-  invoke("import_dir_as_folder", { path, dest, title, writable });
+export const importPackage = (path, lib = null, parent = null, title = null, libraryId = "") =>
+  invoke("import_package", { path, lib, parent, title, libraryId });
+export const importDirAsFolder = (path, dest, title = null, writable = false, libraryId = "") =>
+  invoke("import_dir_as_folder", { path, dest, title, writable, libraryId });
+export const gitCheck = (customPath = null) => invoke("git_check", { customPath });
+export const gitDefaultDir = (url) => invoke("git_default_dir", { url });
+export const addGitLibrary = (url, dest, title, branch, exts, maxMb, libraryId = "") =>
+  invoke("add_git_library", { url, dest, title, branch, exts, maxMb, libraryId });
+export const gitStatusAll = (fetch = false) => invoke("git_status_all", { fetch });
+export const gitPullLibrary = (id) => invoke("git_pull_library", { id });
 export const renameNote = (lib, id, title) => invoke("rename_note", { lib, id, title });
 /** Keep a picture (an ArrayBuffer) for the notes of a library; resolves to its name. */
 /** Keep a picture for a note; `path`: the note (a file of a local folder keeps its pictures beside it). */
@@ -96,7 +103,7 @@ export const saveNote = (lib, id, content) => invoke("save_note", { lib, id, con
 export const deleteNote = (lib, id) => invoke("delete_note", { lib, id });
 export const noteMoveTargets = (lib, id) => invoke("note_move_targets", { lib, id });
 export const moveNote = (lib, id, parent, index) => invoke("move_note", { lib, id, parent, index });
-export const unbindLibrary = (id) => invoke("unbind_library", { id });
+export const unbindLibrary = (id, deleteLocal = false) => invoke("unbind_library", { id, deleteLocal });
 export const tree = (lib) => invoke("tree", { lib });
 export const openNode = (lib, bookId, path, query = null, phrase = false) =>
   invoke("open_node", { lib, bookId, path, query, phrase });

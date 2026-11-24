@@ -19,9 +19,10 @@
   import { installTextDrag } from "./textDrag.js";
   import { confirmWritable, isEditableName } from "./writable.js";
   import { isAiReady, toBackendAiConfig } from "./settings.svelte.js";
-  import { matchesShortcut } from "./shortcuts.js";
+  import { matchesShortcut, formatShortcut, formatCombo } from "./shortcuts.js";
+  import { IS_MAC, IS_WIN } from "./platform.js";
 
-  let { libraries, progress, titles = {}, onopen, onbind, onrebind, onunbind, onindex, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onnotice = null, onerror = null } = $props();
+  let { libraries, progress, titles = {}, gitStatus = {}, gitUpdating = {}, onopen, onbind, onrebind, onunbind, onindex, onupdate = null, ongitstatus = null, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onnotice = null, onerror = null } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -133,10 +134,18 @@
   };
   const parentKey = (key) => key.slice(0, key.lastIndexOf("/"));
 
-  /** The icon and the name of the kind of a library: data package, local folder (read-only / read-write), internal. */
-  const kindIcon = (l) => (l.kind === "notes" ? "database" : l.kind === "folder" ? (l.writable ? "folder-edit" : "folder-lock") : "archive");
+  /** The icon and the name of the kind of a library: data package, local folder (read-only / read-write), remote git, internal. */
+  const kindIcon = (l) => (l.kind === "notes" ? "database" : l.kind === "folder" ? (l.remote ? "cloud" : l.writable ? "folder-edit" : "folder-lock") : "archive");
   const kindLabel = (l) =>
-    l.kind === "notes" ? "内部知识库（数据库，可编辑）" : l.kind === "folder" ? (l.writable ? "本地文件夹（读写）" : "本地文件夹（只读）") : "数据包（只读）";
+    l.kind === "notes"
+      ? "默认知识库（数据库，可编辑）"
+      : l.kind === "folder"
+        ? l.remote
+          ? "远程知识库（Git，只读）"
+          : l.writable
+            ? "本地文件夹（读写）"
+            : "本地文件夹（只读）"
+        : "数据包（只读）";
 
   /** The folder a new file or folder goes into for the node at `key`: the node itself when it is a folder, else its folder. */
   function dirOf(lib, key) {
@@ -799,6 +808,7 @@
       }
     }
     api.sidecarRefresh().catch(() => {}); // the file that travels with a folder may have been changed by git
+    ongitstatus?.(false); // re-check local uncommitted changes in remote git folders on focus
     try {
       const changed = await api.checkFolderChanges();
       for (const c of changed || []) {
@@ -933,12 +943,7 @@
     );
   }
 
-  const openFolderLabel =
-    typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")
-      ? "在 Finder 中打开"
-      : typeof navigator !== "undefined" && /Win/i.test(navigator.platform || navigator.userAgent || "")
-        ? "在资源管理器中打开"
-        : "打开本地位置";
+  const openFolderLabel = IS_MAC ? "在 Finder 中打开" : IS_WIN ? "在资源管理器中打开" : "打开本地位置";
 
   async function openInFileManager(lib, rel = null) {
     try {
@@ -960,15 +965,16 @@
   export function addMenu(x, y) {
     menu = { x, y, items: addItems() };
   }
+  const withKey = (label, key) => (key ? `${label}（${key}）` : label);
   function addItems() {
     return [
-      { label: "新建笔记（Ctrl+Shift+1）", action: () => addNoteHere("md") },
-      { label: "新建脑图（Ctrl+Shift+2）", action: () => addNoteHere("mindmap") },
-      { label: "新建白板（Ctrl+Shift+3）", action: () => addNoteHere("whiteboard") },
-      { label: "今日日记（Ctrl+J）", action: openDiary },
+      { label: withKey("新建笔记", formatCombo("Ctrl+Shift+1")), action: () => addNoteHere("md") },
+      { label: withKey("新建脑图", formatShortcut("new-mindmap")), action: () => addNoteHere("mindmap") },
+      { label: withKey("新建白板", formatShortcut("new-whiteboard")), action: () => addNoteHere("whiteboard") },
+      { label: withKey("今日日记", formatShortcut("diary")), action: openDiary },
       "separator",
-      { label: "新建知识库…", action: onbind },
-      { label: "导入知识库…", action: () => onimport(null) },
+      { label: "添加知识库…", action: () => onbind() },
+      { label: "导入知识库…", action: () => onbind("import") },
     ];
   }
 
@@ -1177,6 +1183,7 @@
 
   function badge(l) {
     if (l.error) return { text: "数据不可用", warn: true };
+    if (gitUpdating[l.id]) return { text: "更新中…" };
     const p = progress[l.id];
     if (l.building || p) return { text: p ? `建索引 ${Math.floor((100 * p.done) / Math.max(1, p.total))}%` : "建索引…" };
     // the title list is being built (a big ZIM is read entry by entry);
@@ -1186,6 +1193,11 @@
     if (!l.index_ready) return { text: "未建索引", warn: true, index: true };
     if (l.index_data_version && l.data_version && l.index_data_version !== l.data_version)
       return { text: "索引过期", warn: true, index: true };
+    if (l.remote) {
+      const gs = gitStatus[l.id];
+      if (gs?.dirty) return { text: "有本地修改", warn: true, gitDirty: true };
+      if (gs?.has_update) return { text: "有更新", warn: true, gitUpdate: true };
+    }
     return null;
   }
 
@@ -1222,15 +1234,16 @@
           { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
         ],
         [
+          ...(l.kind === "folder" || l.kind === "zim" ? [] : [{ label: "添加知识库…", action: () => onrebind(l) }]),
           ...(notes ? [{ label: "导入到此知识库…", action: () => onimport({ lib: l.id, parent: null, key: null }) }] : []),
+          ...(l.remote ? [{ label: "更新（拉取远程最新）", action: () => onupdate?.(l), disabled: building || !!gitUpdating[l.id] || !!l.error }] : []),
           { label: "导出知识库…", action: () => onexport(l, { whole: true, keys: [], rels: [] }, l.title, l.title, l.title) },
-          ...(l.kind === "folder" && l.writable ? [{ label: "回收站…", action: () => (trashDlg = { lib: l.id, title: l.title }) }] : []),
-          ...(notes ? [{ label: "回收站…", action: () => (notesTrashDlg = { lib: l.id, title: l.title }) }] : []),
-          ...(l.kind === "folder"
+          ...(l.kind === "folder" && !l.remote
             ? [l.writable ? { label: "锁定知识库（改为只读）", action: () => setWritable(l, false), disabled: building } : { label: "解锁知识库（可读写）…", action: () => setWritable(l, true), disabled: building }]
             : []),
-          ...(l.kind === "folder" || l.kind === "zim" ? [] : [{ label: "绑定知识库…", action: () => onrebind(l) }]),
-          { label: notes ? "删除知识库…" : "解除绑定", action: () => onunbind(l), disabled: building },
+          ...(l.kind === "folder" && l.writable ? [{ label: "回收站…", action: () => (trashDlg = { lib: l.id, title: l.title }) }] : []),
+          ...(notes ? [{ label: "回收站…", action: () => (notesTrashDlg = { lib: l.id, title: l.title }) }] : []),
+          { label: "删除知识库…", action: () => onunbind(l), disabled: building || !!gitUpdating[l.id] },
         ],
       ),
     };
@@ -1291,9 +1304,13 @@
           <Icon name={open[l.id] ? "chevron-down" : "chevron-right"} size={14} />
         </button>
         <span class="libicon" title={kindLabel(l)}><Icon name={kindIcon(l)} size={18} /></span>
-        <button class="title" onclick={() => toggle(l)} tabindex="-1" title={`${l.title}\n${l.source}${l.kind === "folder" && l.writable ? "\n读写模式" : ""}`}>{l.title}</button>
+        <button class="title" onclick={() => toggle(l)} tabindex="-1" title={`${l.title}\n${l.remote ? `${l.remote}\n` : ""}${l.source}${l.kind === "folder" && l.writable ? "\n读写模式" : ""}`}>{l.title}</button>
         {#if b?.index}
           <button class="badge warn link" tabindex="-1" title="点击建立索引" onclick={(e) => (e.stopPropagation(), onindex(l.id))}>{b.text}</button>
+        {:else if b?.gitUpdate}
+          <button class="badge warn link" tabindex="-1" title="远程有可用更新，点击拉取最新内容" onclick={(e) => (e.stopPropagation(), onupdate?.(l))}>{b.text}</button>
+        {:else if b?.gitDirty}
+          <button class="badge warn link" tabindex="-1" title="本地文件夹存在未提交的修改，点击打开本地文件夹手动处理后再更新" onclick={(e) => (e.stopPropagation(), openInFileManager(l.id, null))}>{b.text}</button>
         {:else if b}<span class="badge" class:warn={b.warn}>{b.text}</span>{/if}
       </div>
       {#if open[l.id]}
@@ -1327,7 +1344,10 @@
   {:else}
     <div class="empty">
       <p>还没有知识库。</p>
-      <button class="primary" onclick={onbind}>添加知识库…</button>
+      <div class="empty-actions">
+        <button class="primary" onclick={() => onbind()}>添加知识库…</button>
+        <button onclick={() => onbind("import")}>导入知识库…</button>
+      </div>
       <p class="muted small">也可以在这里点右键添加。</p>
     </div>
   {/each}
@@ -1384,5 +1404,6 @@
   .note { font-size: 13px; padding-left: 24px; }
   .error { color: var(--hl); }
   .empty { padding: 24px 12px; text-align: center; }
+  .empty-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
   .small { font-size: 13px; }
 </style>
