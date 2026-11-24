@@ -39,6 +39,7 @@ pub fn is_write_tool(name: &str) -> bool {
             | "delete_node"
             | "set_node_tags"
             | "add_bookmark"
+            | "update_remote_library"
     )
 }
 
@@ -124,7 +125,7 @@ pub fn tool_definitions_for(allow_write: bool) -> Vec<Value> {
     let mut defs = vec![
         json!({
             "name": "list_libraries",
-            "description": "列出当前程序已绑定的所有可访问知识库（包括库 id、标题、类型 notes/folder/cbeta/html/zim、是否可写 writable、索引是否就绪 index_ready）。在检索或写入特定库前，应先调用此工具获取库 id 并检查 writable 字段。",
+            "description": "列出当前程序已绑定的所有可访问知识库（包括库 id、标题、类型 notes/folder/cbeta/html/zim、是否可写 writable、索引是否就绪 index_ready，以及远程 Git 知识库的仓库地址 remote）。在检索或写入特定库前，应先调用此工具获取库 id 并检查 writable 字段。",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -363,6 +364,17 @@ pub fn tool_definitions_for(allow_write: bool) -> Vec<Value> {
                 "required": ["lib", "id"]
             }
         }),
+        json!({
+            "name": "update_remote_library",
+            "description": "拉取更新指定的远程 Git 知识库（list_libraries 中包含 remote 字段的库），底层执行 git pull --ff-only。若本地目录存在未提交修改会自动中止并返回提示。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lib": { "type": "string", "description": "远程 Git 知识库 id" }
+                },
+                "required": ["lib"]
+            }
+        }),
     ];
     if !allow_write {
         defs.retain(|d| {
@@ -461,6 +473,9 @@ pub async fn exec_tool_with_policy(
                                             obj.insert(k.into(), val.clone());
                                         }
                                     }
+                                }
+                                if let Some(rem) = item.get("remote").and_then(|r| r.as_str()).filter(|s| !s.is_empty()) {
+                                    obj.insert("remote".into(), json!(rem));
                                 }
                                 if let Some(err) = item.get("error").filter(|e| !e.is_null()) {
                                     obj.insert("error".into(), err.clone());
@@ -1033,6 +1048,26 @@ pub async fn exec_tool_with_policy(
             };
             match commands::delete_note(lib.clone(), id.clone(), state).await {
                 Ok(n) => ok_mutated(json!({ "deleted": n, "lib": lib, "id": id }), lib, None),
+                Err(e) => err_res(e),
+            }
+        }
+
+        "update_remote_library" => {
+            let Some(lib) = arg_nonempty(&args, "lib") else {
+                return err_res("缺少必填参数 lib");
+            };
+            if let Err(e) = check_lib_allowed(policy, &lib) {
+                return err_res(e);
+            }
+            match commands::git_pull_library(lib.clone(), state).await {
+                Ok(r) => {
+                    let payload = serde_json::to_value(&r).unwrap_or_else(|_| json!({ "updated": true }));
+                    if payload.get("updated").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        ok_mutated(payload, lib, None)
+                    } else {
+                        ok_json(payload)
+                    }
+                }
                 Err(e) => err_res(e),
             }
         }
