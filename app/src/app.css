@@ -195,7 +195,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 .dv-tabs-overflow-container .dv-tab.dv-active-tab { background: var(--accent-soft); color: var(--accent); }
 
 .panel-host { height: 100%; overflow: hidden; }
-.dock-watermark { padding: 48px; color: var(--muted); font-size: 16px; }
+.dock-watermark { height: 100%; width: 100%; overflow: hidden; }
 
 /* thinner, quieter scrollbars (Chromium: scrollbar-color replaces ::-webkit-scrollbar) */
 * {

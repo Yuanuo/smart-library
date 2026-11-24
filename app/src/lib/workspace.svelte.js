@@ -19,6 +19,7 @@ import * as api from "./api.js";
 import ReaderPanel from "./ReaderPanel.svelte";
 import SearchPage from "./SearchPage.svelte";
 import AiPanel from "./AiPanel.svelte";
+import StartPage from "./StartPage.svelte";
 import { formatShortcut, formatCombo } from "./shortcuts.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -62,6 +63,16 @@ export const ws = $state({
   canBack: false, // a previous view is in the history
   canForward: false, // a later view is in the history
 }); // current: { title, lib } of the active reading tab
+
+export const startState = $state({
+  libraryCount: 0,
+  aiConfigured: false,
+  mcpRunning: false,
+});
+
+export function setStartState(patch) {
+  Object.assign(startState, patch);
+}
 
 function labelFor(tab) {
   return "reader-" + tab.replace(/[^A-Za-z0-9]/g, "_");
@@ -384,10 +395,25 @@ function oldResultsRenderer() {
 function watermark() {
   const element = document.createElement("div");
   element.className = "dock-watermark";
-  element.innerHTML =
-    `<p>从左侧目录打开一篇文章，或按 ${formatShortcut("search") || formatCombo("Ctrl+H")} 全文搜索、双击 Shift 标题快搜。</p>` +
-    "<p class='muted'>标签可拖到边缘分栏停靠；右键标签可分栏、浮动或在新窗口打开。</p>";
-  return { element, init() {} };
+  let instance = null;
+  return {
+    element,
+    init() {
+      instance = mount(StartPage, {
+        target: element,
+        props: {
+          state: startState,
+          actions: hooks.startActions || {},
+        },
+      });
+    },
+    dispose() {
+      if (instance) {
+        unmount(instance);
+        instance = null;
+      }
+    },
+  };
 }
 
 function tabMenu({ panel, group }) {
