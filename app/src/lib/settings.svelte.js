@@ -141,6 +141,7 @@ const DEFAULTS = {
   externalLink: "window", // window | ask | browser
   quickLimit: 200, // title quick search: results per batch
   quickPinyin: false, // title quick search: allow matching by pinyin (full or initials)
+  gitAutoPull: false, // auto git pull --ff-only when a remote Git library has updates and local tree is clean
   dailyOn: true, // the sentence of the day
   dailySources: [], // its sources (search range items); none = every library
   aiOn: true, // AI assistant master switch (visible by default for discoverability)

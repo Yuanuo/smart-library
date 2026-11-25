@@ -873,6 +873,18 @@
             </div>
           </div>
 
+          <div class="card">
+            <div class="card-block">
+              <div class="block-title">远程知识库（Git）</div>
+              <label class="row row-top" title="定时检查远程知识库时，若检测到新提交且本地文件夹没有未提交修改，自动执行拉取合并并更新索引；若本地存在修改则仅提示，避免冲突">
+                <input type="checkbox" checked={settings.gitAutoPull}
+                  onchange={(e) => update({ gitAutoPull: e.currentTarget.checked })} />
+                <span class="wide">检测到远程更新且本地无修改时，自动拉取并合并</span>
+              </label>
+              <p class="muted hint card-note">远程更新检查始终自动执行（启动后及每 30 分钟）。关闭此项时，检测到更新会在右下角弹窗提示并可一键更新；开启后，本地无改动时自动拉取并增量更新索引，若本地存在未提交修改仍只提示而不自动合并，避免覆盖或冲突。</p>
+            </div>
+          </div>
+
         {:else if activeTab === "dict"}
           <div class="sec-head">
             <h3>词典配置</h3>

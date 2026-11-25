@@ -559,7 +559,7 @@ impl AppState {
             let result = (|| -> Result<(), String> {
                 let overlay = self.props.overlay(&l.id).unwrap_or_default();
                 let mut removed = Vec::new();
-                let (docs, version, folder_snap): (Vec<_>, Option<String>, Option<HashMap<String, (u64, u64)>>) = if l.kind == "folder" {
+                let (docs, version, folder_snap): (Vec<_>, Option<String>, Option<FolderSnapshot>) = if l.kind == "folder" {
                     let f = self.folder(l)?;
                     let mut files = Vec::new();
                     for p in &paths {
@@ -4235,8 +4235,17 @@ struct IndexDoneDto {
 
 const FOLDER_SNAPSHOT_FILE: &str = "folder-snapshot.json";
 
-fn folder_snapshot_map(f: &folder::FolderLibrary, files: &[folder::FolderFile]) -> HashMap<String, (u64, u64)> {
-    let mut map = HashMap::with_capacity(files.len());
+#[derive(Serialize, Deserialize, Default)]
+struct FolderSnapshot {
+    files: HashMap<String, (u64, u64)>,
+    /// Directory relative path ("" for library root) -> (size, mtime) of its `.meta.json`.
+    metas: HashMap<String, (u64, u64)>,
+}
+
+fn folder_snapshot_map(f: &folder::FolderLibrary, files: &[folder::FolderFile]) -> FolderSnapshot {
+    let mut file_map = HashMap::with_capacity(files.len());
+    let mut dirs = std::collections::BTreeSet::new();
+    dirs.insert(String::new());
     for file in files {
         let mtime = f
             .abs(&file.rel)
@@ -4246,18 +4255,67 @@ fn folder_snapshot_map(f: &folder::FolderLibrary, files: &[folder::FolderFile]) 
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        map.insert(file.rel.clone(), (file.size, mtime));
+        file_map.insert(file.rel.clone(), (file.size, mtime));
+        let mut cur = file.rel.as_str();
+        while let Some((dir, _)) = cur.rsplit_once('/') {
+            if !dirs.insert(dir.to_string()) {
+                break;
+            }
+            cur = dir;
+        }
     }
-    map
+    let mut meta_map = HashMap::new();
+    for dir in dirs {
+        let meta_path = if dir.is_empty() {
+            f.root.join(folder::DIR_META_FILE)
+        } else {
+            f.root.join(&dir).join(folder::DIR_META_FILE)
+        };
+        if let Ok(m) = std::fs::metadata(&meta_path) {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            meta_map.insert(dir, (m.len(), mtime));
+        }
+    }
+    FolderSnapshot {
+        files: file_map,
+        metas: meta_map,
+    }
 }
 
-fn save_folder_snapshot(index_dir: &Path, snap: &HashMap<String, (u64, u64)>) {
+fn changed_meta_dirs(old: &FolderSnapshot, cur: &FolderSnapshot) -> Vec<String> {
+    let mut dirs = Vec::new();
+    for (dir, stamp) in &cur.metas {
+        if old.metas.get(dir) != Some(stamp) {
+            dirs.push(dir.clone());
+        }
+    }
+    for dir in old.metas.keys() {
+        if !cur.metas.contains_key(dir) {
+            dirs.push(dir.clone());
+        }
+    }
+    dirs
+}
+
+fn file_in_dir(file_rel: &str, dir: &str) -> bool {
+    if dir.is_empty() {
+        return true;
+    }
+    file_rel.starts_with(dir) && file_rel.as_bytes().get(dir.len()) == Some(&b'/')
+}
+
+fn save_folder_snapshot(index_dir: &Path, snap: &FolderSnapshot) {
     if let Ok(bytes) = serde_json::to_vec(snap) {
         let _ = std::fs::write(index_dir.join(FOLDER_SNAPSHOT_FILE), bytes);
     }
 }
 
-fn load_folder_snapshot(index_dir: &Path) -> Option<HashMap<String, (u64, u64)>> {
+fn load_folder_snapshot(index_dir: &Path) -> Option<FolderSnapshot> {
     let bytes = std::fs::read(index_dir.join(FOLDER_SNAPSHOT_FILE)).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
@@ -4306,18 +4364,20 @@ pub async fn check_folder_changes(app: AppHandle) -> Result<Vec<FolderChangeDto>
                 let (added, modified, removed, has_snapshot) = match load_folder_snapshot(&dir) {
                     Some(old) => {
                         let cur = folder_snapshot_map(&f, &files);
+                        let meta_dirs = changed_meta_dirs(&old, &cur);
                         let mut a = 0usize;
                         let mut m = 0usize;
                         let mut r = 0usize;
-                        for (rel, stamp) in &cur {
-                            match old.get(rel) {
+                        for (rel, stamp) in &cur.files {
+                            match old.files.get(rel) {
                                 None => a += 1,
                                 Some(prev) if prev != stamp => m += 1,
+                                _ if meta_dirs.iter().any(|d| file_in_dir(rel, d)) => m += 1,
                                 _ => {}
                             }
                         }
-                        for rel in old.keys() {
-                            if !cur.contains_key(rel) {
+                        for rel in old.files.keys() {
+                            if !cur.files.contains_key(rel) {
                                 r += 1;
                             }
                         }
@@ -4343,10 +4403,15 @@ pub async fn check_folder_changes(app: AppHandle) -> Result<Vec<FolderChangeDto>
     .map_err(|e| e.to_string())?
 }
 
+const INCREMENTAL_INDEX_MAX_CHANGES: usize = 200;
+
 /// Build (or rebuild) the index of a library on a background thread. Emits
 /// `index-progress` {lib, done, total} and finally `index-done` {lib, ok, message}.
+/// When `incremental` is true for a folder library that already has an index and snapshot,
+/// updates only the added/modified/removed documents if the change count is within
+/// `INCREMENTAL_INDEX_MAX_CHANGES`, otherwise falls back to a full rebuild.
 #[tauri::command]
-pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn build_index(lib: String, incremental: Option<bool>, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let l = state.library(&lib)?;
     // the open archive (or, for a fresh start, one opened now: that validates
     // it too); indexing reads it through the same handle instead of opening a
@@ -4371,19 +4436,100 @@ pub async fn build_index(lib: String, app: AppHandle, state: State<'_, AppState>
     }
     let dir = state.index_dir(&lib);
     let overlay = index_overlay(&state, &l)?;
+    let try_incremental = incremental.unwrap_or(false);
     state.dirty.lock().unwrap().remove(&lib); // the build reads everything
-    // drop the open index before deleting its files
+    // drop the open index before deleting or updating its files
     state.indexes.write().unwrap().remove(&lib);
     std::thread::spawn(move || {
         let result = (|| -> Result<String, String> {
-            if dir.exists() {
-                std::fs::remove_dir_all(&dir).map_err(|e| format!("无法删除旧索引：{}", e))?;
-            }
             let app2 = app.clone();
             let lib2 = lib.clone();
             let progress = move |done, total| {
                 let _ = app2.emit("index-progress", ProgressDto { lib: lib2.clone(), done, total, stage: None });
             };
+            if try_incremental {
+                if let Some(f) = &folder {
+                    if dir.join("smart-library-index.json").exists() {
+                        if let Some(old_snap) = load_folder_snapshot(&dir) {
+                            let files = f.files();
+                            let cur_snap = folder_snapshot_map(f, &files);
+                            let cur_ver = f.fingerprint(&files);
+                            let meta_dirs = changed_meta_dirs(&old_snap, &cur_snap);
+                            let mut changed_files = Vec::new();
+                            let mut added_count = 0usize;
+                            let mut modified_count = 0usize;
+                            let mut meta_affected_count = 0usize;
+                            for file in &files {
+                                match old_snap.files.get(&file.rel) {
+                                    None => {
+                                        added_count += 1;
+                                        changed_files.push(file.clone());
+                                    }
+                                    Some(prev) if cur_snap.files.get(&file.rel) != Some(prev) => {
+                                        modified_count += 1;
+                                        changed_files.push(file.clone());
+                                    }
+                                    _ if meta_dirs.iter().any(|d| file_in_dir(&file.rel, d)) => {
+                                        meta_affected_count += 1;
+                                        changed_files.push(file.clone());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            let removed: Vec<String> = old_snap
+                                .files
+                                .keys()
+                                .filter(|rel| !cur_snap.files.contains_key(*rel))
+                                .cloned()
+                                .collect();
+                            let total_changes = changed_files.len() + removed.len();
+                            if total_changes == 0 {
+                                if SearchIndex::data_version(&dir).as_deref() == Some(cur_ver.as_str()) {
+                                    return Ok("索引已是最新".into());
+                                }
+                                // Fingerprint changed with no affected files; fall through to full rebuild.
+                            } else if total_changes <= INCREMENTAL_INDEX_MAX_CHANGES {
+                                progress(0, total_changes);
+                                let start = std::time::Instant::now();
+                                if smart_library_core::search::sync_docs(
+                                    &dir,
+                                    f.docs(&changed_files),
+                                    &removed,
+                                    Some(&cur_ver),
+                                    &overlay,
+                                )
+                                .is_ok()
+                                {
+                                    save_folder_snapshot(&dir, &cur_snap);
+                                    progress(total_changes, total_changes);
+                                    let mut parts = Vec::new();
+                                    if added_count > 0 {
+                                        parts.push(format!("新增 {} 篇", added_count));
+                                    }
+                                    if modified_count > 0 {
+                                        parts.push(format!("修改 {} 篇", modified_count));
+                                    }
+                                    if meta_affected_count > 0 {
+                                        parts.push(format!("元数据更新 {} 篇", meta_affected_count));
+                                    }
+                                    if !removed.is_empty() {
+                                        parts.push(format!("删除 {} 篇", removed.len()));
+                                    }
+                                    return Ok(format!(
+                                        "已增量更新索引（{}），用时 {:.1} 秒",
+                                        parts.join("、"),
+                                        start.elapsed().as_secs_f64()
+                                    ));
+                                }
+                                // Incremental sync failed (e.g. old index version); fall through to full rebuild.
+                            }
+                        }
+                    }
+                }
+            }
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| format!("无法删除旧索引：{}", e))?;
+            }
             let stats = match (&folder, &bc, &html) {
                 _ if zim.is_some() => {
                     let mut z = zim.as_ref().unwrap().lock().unwrap();

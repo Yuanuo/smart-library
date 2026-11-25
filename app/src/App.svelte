@@ -58,12 +58,12 @@
     if (showLog) unreadLog = 0;
   }
 
-  function push(kind, text) {
-    const m = { id: ++toastSeq, time: new Date().toLocaleTimeString("zh-CN", { hour12: false }), kind, text };
+  function push(kind, text, actions = null) {
+    const m = { id: ++toastSeq, time: new Date().toLocaleTimeString("zh-CN", { hour12: false }), kind, text, actions };
     log = [m, ...log].slice(0, 200);
     if (!showLog) unreadLog += 1;
     toast = m;
-    scheduleHide(m.id, Date.now(), kind === "error" ? 10000 : 5000);
+    scheduleHide(m.id, Date.now(), actions?.length ? 15000 : kind === "error" ? 10000 : 5000);
   }
 
   function scheduleHide(id, shownAt, ms) {
@@ -912,22 +912,76 @@
   let gitUpdating = $state({}); // lib id -> true
   let gitNotified = new Set();
 
+  async function pullRemoteLibraries(targets, opts = {}) {
+    for (const l of targets) {
+      await updateRemoteLibrary(l, opts);
+    }
+  }
+
   async function checkGitStatus(fetch = false, notifyUpdates = false) {
     if (!libraries.some((l) => l.remote)) return;
     try {
       const list = await api.gitStatusAll(fetch);
-      const newlyAvailable = [];
+      const autoPullTargets = [];
+      const promptCleanTargets = [];
+      const promptDirtyTargets = [];
       for (const item of list || []) {
         gitStatus[item.lib] = item;
-        if (notifyUpdates && item.has_update && !item.dirty && !gitNotified.has(item.lib)) {
-          gitNotified.add(item.lib);
-          const l = libraries.find((x) => x.id === item.lib);
-          if (l) newlyAvailable.push(l.title);
+        const l = libraries.find((x) => x.id === item.lib);
+        if (!item.has_update) {
+          gitNotified.delete(item.lib);
+          continue;
         }
-        if (!item.has_update) gitNotified.delete(item.lib);
+        if (!notifyUpdates || !l) continue;
+        if (item.dirty) {
+          if (!gitNotified.has(item.lib)) {
+            gitNotified.add(item.lib);
+            promptDirtyTargets.push(l);
+          }
+        } else if (settings.gitAutoPull) {
+          if (!gitUpdating[l.id] && !l.building && !progress[l.id] && !gitNotified.has(item.lib)) {
+            autoPullTargets.push(l);
+          }
+        } else if (!gitNotified.has(item.lib)) {
+          gitNotified.add(item.lib);
+          promptCleanTargets.push(l);
+        }
       }
-      if (newlyAvailable.length) {
-        notice = `远程知识库「${newlyAvailable.join("、")}」有可用更新，可在目录树点击「有更新」或右键更新。`;
+      if (autoPullTargets.length) {
+        pullRemoteLibraries(autoPullTargets, { auto: true });
+      }
+      if (promptCleanTargets.length) {
+        const names = promptCleanTargets.map((l) => l.title).join("、");
+        push("notice", `远程知识库「${names}」有可用更新。`, [
+          {
+            label: "更新",
+            primary: true,
+            title: "立即拉取并合并远程最新内容，并更新索引",
+            onClick: () => pullRemoteLibraries(promptCleanTargets),
+          },
+          {
+            label: "更新并开启自动更新",
+            title: "立即拉取更新，并开启自动更新：以后检测到更新且本地无修改时自动拉取合并；若本地有修改仍只提示，避免冲突",
+            onClick: () => {
+              updateSettings({ gitAutoPull: true });
+              pullRemoteLibraries(promptCleanTargets);
+            },
+          },
+        ]);
+      }
+      if (promptDirtyTargets.length) {
+        const names = promptDirtyTargets.map((l) => l.title).join("、");
+        push("notice", `远程知识库「${names}」有可用更新，但本地存在未提交修改，为避免冲突未自动合并。`, [
+          {
+            label: "打开本地文件夹",
+            title: "打开本地 Git 文件夹手动处理修改，处理完成后可点击目录树中的「有更新」或右键更新",
+            onClick: () => {
+              for (const l of promptDirtyTargets) {
+                api.openInFileManager(l.id, null).catch((e) => (error = String(e)));
+              }
+            },
+          },
+        ]);
       }
     } catch {}
   }
@@ -943,7 +997,7 @@
     };
   });
 
-  async function updateRemoteLibrary(l) {
+  async function updateRemoteLibrary(l, opts = {}) {
     if (gitUpdating[l.id]) return;
     gitUpdating[l.id] = true;
     try {
@@ -952,14 +1006,17 @@
       gitNotified.delete(l.id);
       if (r.updated) {
         await libPanel?.reloadNode(l.id, null);
-        startIndex(l.id);
-        notice = `已更新「${r.title}」，正在后台更新索引…`;
+        startIndex(l.id, true);
+        notice = opts.auto
+          ? `已自动拉取并合并「${r.title}」，正在后台更新索引…`
+          : `已更新「${r.title}」，正在后台更新索引…`;
         api.prepareTitles().catch(() => {});
-      } else {
+      } else if (!opts.auto) {
         notice = `「${r.title}」已是最新版本。`;
       }
     } catch (e) {
-      error = String(e);
+      if (opts.auto) gitNotified.add(l.id);
+      error = opts.auto ? `自动更新「${l.title}」失败：${String(e)}` : String(e);
       checkGitStatus(false, false);
     } finally {
       delete gitUpdating[l.id];
@@ -1002,10 +1059,10 @@
     }
   }
 
-  async function startIndex(id) {
+  async function startIndex(id, incremental = false) {
     try {
       progress[id] = { lib: id, done: 0, total: 1 };
-      await api.buildIndex(id);
+      await api.buildIndex(id, incremental);
     } catch (e) {
       delete progress[id];
       error = String(e);
@@ -1259,7 +1316,25 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="toast" class:error={toast.kind === "error"} role={toast.kind === "error" ? "alert" : "status"}
     onmouseenter={() => (toastHover = true)} onmouseleave={() => (toastHover = false)}>
-    <span>{toast.text}</span>
+    <div class="toast-body">
+      <span>{toast.text}</span>
+      {#if toast.actions?.length}
+        <div class="toast-actions">
+          {#each toast.actions as act}
+            <button
+              type="button"
+              class:primary={act.primary}
+              title={act.title || ""}
+              onclick={() => {
+                toast = null;
+                toastHover = false;
+                act.onClick?.();
+              }}
+            >{act.label}</button>
+          {/each}
+        </div>
+      {/if}
+    </div>
     <button class="link" onclick={() => ((toast = null), (toastHover = false))} aria-label="关闭">×</button>
   </div>
 {/if}
@@ -1361,6 +1436,9 @@
     background: var(--paper); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
+  .toast-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .toast-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .toast-actions button { padding: 3px 10px; font-size: 12.5px; }
   .toast.error { background: var(--hl-bg); color: var(--hl); border-color: var(--hl); }
   .log {
     width: min(460px, calc(100vw - 80px)); max-height: 45vh;

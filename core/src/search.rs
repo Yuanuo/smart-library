@@ -545,6 +545,9 @@ pub fn sync_docs(
         all.entry(k).or_default().extend(v);
     }
     meta["facet_tops"] = serde_json::json!(all);
+    if let Ok(reader) = index.reader() {
+        meta["documents"] = serde_json::json!(reader.searcher().num_docs());
+    }
     if let Some(v) = data_version {
         meta["data_version"] = serde_json::json!(v);
     }

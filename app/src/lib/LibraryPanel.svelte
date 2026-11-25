@@ -861,8 +861,8 @@
           c.has_snapshot && (c.added > 0 || c.modified > 0 || c.removed > 0)
             ? `（新增 ${c.added} 篇、修改 ${c.modified} 篇、删除 ${c.removed} 篇）`
             : "";
-        onnotice?.(`检测到「${c.title}」外部更新${detail}，正在重新索引…`);
-        onindex?.(c.lib);
+        onnotice?.(`检测到「${c.title}」外部更新${detail}，正在更新索引…`);
+        onindex?.(c.lib, true);
       }
     } catch {}
   }
@@ -1240,7 +1240,7 @@
       return { text: "索引过期", warn: true, index: true };
     if (l.remote) {
       const gs = gitStatus[l.id];
-      if (gs?.dirty) return { text: "有本地修改", warn: true, gitDirty: true };
+      if (gs?.dirty) return { text: gs.has_update ? "有更新(本地有修改)" : "有本地修改", warn: true, gitDirty: true, hasUpdate: !!gs.has_update };
       if (gs?.has_update) return { text: "有更新", warn: true, gitUpdate: true };
     }
     return null;
@@ -1361,7 +1361,7 @@
         {:else if b?.gitUpdate}
           <button class="badge warn link" tabindex="-1" title="远程有可用更新，点击拉取最新内容" onclick={(e) => (e.stopPropagation(), onupdate?.(l))}>{b.text}</button>
         {:else if b?.gitDirty}
-          <button class="badge warn link" tabindex="-1" title="本地文件夹存在未提交的修改，点击打开本地文件夹手动处理后再更新" onclick={(e) => (e.stopPropagation(), openInFileManager(l.id, null))}>{b.text}</button>
+          <button class="badge warn link" tabindex="-1" title={b.hasUpdate ? "远程有可用更新，但本地存在未提交修改，为避免冲突未自动合并；点击打开本地文件夹手动处理后再更新" : "本地文件夹存在未提交的修改，点击打开本地文件夹手动处理后再更新"} onclick={(e) => (e.stopPropagation(), openInFileManager(l.id, null))}>{b.text}</button>
         {:else if b}<span class="badge" class:warn={b.warn}>{b.text}</span>{/if}
       </div>
       {#if open[l.id]}
