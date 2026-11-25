@@ -43,6 +43,7 @@
   import { settings, update } from "./settings.svelte.js";
   import { formatShortcut } from "./shortcuts.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
+  import { annotateBookRefs, bookRefTooltip, onBookRefsRefresh } from "./bookRefs.js";
 
   let {
     vol,
@@ -63,6 +64,16 @@
     onai = null,
   } = $props();
   let scroller = $state();
+  let docEl = $state();
+  let bookRefEpoch = $state(0);
+  let bookRefMatches = new Map();
+  let bookRefPending = false;
+
+  $effect(() =>
+    onBookRefsRefresh(() => {
+      if (bookRefPending || bookRefMatches.size > 0) bookRefEpoch += 1;
+    }),
+  );
 
   const load = (k, d) => {
     try {
@@ -106,6 +117,42 @@
         n.classList.toggle("lone", !n.dataset.n || !changed.has(n.dataset.n));
       }
     });
+  });
+
+  // Auto-link `《…》` book references asynchronously after the document renders.
+  $effect(() => {
+    const v = vol;
+    const _h = html;
+    const _m = mode;
+    const isSimp = simp;
+    const _epoch = bookRefEpoch;
+    if (!v) return;
+    const ctrl = new AbortController();
+    tick().then(() => {
+      if (ctrl.signal.aborted || !docEl) return;
+      annotateBookRefs(docEl, {
+        lib: v.lib,
+        path: v.path ?? null,
+        bookId: v.book_id ?? null,
+        stamp: v.stamp ?? null,
+        simp: isSimp,
+        allowFuzzy: Boolean(onaction),
+        signal: ctrl.signal,
+      }).then((res) => {
+        if (!res || ctrl.signal.aborted) return;
+        bookRefMatches = res.matches;
+        bookRefPending = res.pending;
+        if (docEl) {
+          for (const a of docEl.querySelectorAll("a.book-ref")) {
+            const raw = a.dataset.bookRef || "";
+            const targets = bookRefMatches.get(raw);
+            a.classList.toggle("book-ref-fuzzy", !targets?.length);
+            a.title = bookRefTooltip(raw, targets);
+          }
+        }
+      });
+    });
+    return () => ctrl.abort();
   });
 
   let restoring = false;
@@ -452,8 +499,52 @@
     return vol.lines.map((l) => l.parts.map((p) => p.t).join("")).join("\n");
   }
 
+  function jumpToBookRef(t) {
+    if (!t || !onjump) return;
+    const req = {
+      lib: t.lib,
+      bookId: t.book_id ?? null,
+      path: t.path ?? null,
+      lb: t.lb ?? null,
+      kind: t.kind,
+      folderPath: t.folder_path ?? null,
+    };
+    Promise.resolve(onjump(req)).catch((err) => onaction?.({ type: "error", text: String(err) }));
+  }
+
   /** A click on the source link of a clipping goes to the place it came from. */
   function docClick(e) {
+    const bookRef = e.target.closest?.("a.book-ref");
+    if (bookRef) {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+      e.preventDefault();
+      const raw = bookRef.dataset.bookRef || "";
+      const targets = bookRefMatches.get(raw);
+      closeTip();
+      if (!targets?.length) {
+        if (raw && onaction) onaction({ type: "quick", text: raw, vol });
+        return;
+      }
+      if (targets.length === 1) {
+        jumpToBookRef(targets[0]);
+      } else {
+        const r = bookRef.getBoundingClientRect();
+        const items = targets.map((t) => {
+          const meta = [t.is_current_lib ? "" : t.lib_title, t.kind === "folder" ? "文件夹" : "", t.author || t.context]
+            .filter(Boolean)
+            .join(" · ");
+          return {
+            label: t.title,
+            badge: t.is_current_lib ? "本库" : null,
+            sub: meta || t.lib_title,
+            action: () => jumpToBookRef(t),
+          };
+        });
+        menu = { x: r.left, y: r.bottom + 4, items };
+      }
+      return;
+    }
     const zimLink = e.target.closest?.("a.zim-link");
     if (zimLink && vol?.kind === "zim") {
       e.preventDefault();
@@ -563,10 +654,10 @@
       onmousedown={selectionDown} onmouseup={selectionUp}
       onmouseover={overDoc} onmouseout={outDoc}>
       {#if mode === "para" || canWrap}
-        <article class="doc notes-{noteMode}" class:show-lb={showLb && mode === "para"} class:base-text={baseText}
+        <article class="doc notes-{noteMode}" bind:this={docEl} class:show-lb={showLb && mode === "para"} class:base-text={baseText}
           class:wrap-lines={mode === "lines"} class:wrap-pages={mode === "pages"}>{@html html}</article>
       {:else}
-        <div class="lines">
+        <div class="lines" bind:this={docEl}>
           {#each vol.lines as line}
             <div class="line" data-lb={line.lb}>
               <span class="lbn">{line.lb}</span>
@@ -678,6 +769,17 @@
   .doc :global(p.quote) { margin: 0.2em 0; padding: 0.1em 0 0.1em 14px; border-left: 3px solid var(--accent-soft); color: var(--muted); }
   .doc :global(a.src) { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
   .doc :global(a.zim-link), .doc :global(a.ext-link) { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .doc :global(a.book-ref), .lines :global(a.book-ref) {
+    color: inherit; cursor: pointer; text-decoration: none;
+    border-bottom: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+    border-radius: 2px; transition: color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
+  }
+  .doc :global(a.book-ref.book-ref-fuzzy), .lines :global(a.book-ref.book-ref-fuzzy) {
+    border-bottom: 1px dotted color-mix(in srgb, var(--muted) 45%, transparent);
+  }
+  .doc :global(a.book-ref:hover), .lines :global(a.book-ref:hover) {
+    color: var(--accent); background: var(--accent-soft); border-bottom-color: var(--accent);
+  }
   .doc :global(p.r-text-right) { text-align: right; }
   .doc :global(p.t-pre) { white-space: pre; line-height: 1.5; overflow-x: auto; font-size: 0.9em; }
   .doc :global(p.t-dharani) { color: var(--ink); }

@@ -53,6 +53,32 @@ let defaultMode = "para";
 let viewHistory = []; // [{ tab, lib, bookId, path }]
 let viewIndex = -1;
 let navigatingHistory = false;
+let activationOrder = []; // panel ids in MRU order (most recently active last)
+let lastActiveId = null;
+let pendingCloseTarget = null; // panel id to activate after Dockview's own close fallback
+
+function touchActivation(id) {
+  if (!id) return;
+  const idx = activationOrder.indexOf(id);
+  if (idx >= 0) activationOrder.splice(idx, 1);
+  activationOrder.push(id);
+}
+
+function dropActivation(id) {
+  const idx = activationOrder.indexOf(id);
+  if (idx >= 0) activationOrder.splice(idx, 1);
+}
+
+function pickNextActiveAfterClose(closedGroupId) {
+  let fallback = null;
+  for (let i = activationOrder.length - 1; i >= 0; i--) {
+    const p = dv?.getPanel(activationOrder[i]);
+    if (!p) continue;
+    if (closedGroupId && p.group?.id === closedGroupId) return p;
+    if (!fallback) fallback = p;
+  }
+  return fallback;
+}
 
 export const ws = $state({
   empty: true,
@@ -195,7 +221,12 @@ function readerRenderer() {
         props: {
           p,
           getNodePath: hooks.onnodepath,
-          onopen: (req) => openVolume(req),
+          onopen: (req) => {
+            if (req?.kind === "folder" && !req.path && req.folderPath) {
+              return hooks.onlocate?.({ lib: req.lib, path: req.folderPath });
+            }
+            return openVolume(req);
+          },
           onlocate: () => hooks.onlocate?.({ lib: state.lib, bookId: state.bookId, path: state.path }),
           onaction: (a) => hooks.onaction?.(a),
           onai: (req) => hooks.onai?.(req),
@@ -654,6 +685,16 @@ export async function init(element, h) {
   // an empty workspace keep / clear it)
   dv.onDidActivePanelChange((e) => {
     const panel = e?.panel; // the event is { panel, origin }; panel is undefined when nothing is active
+    // Ignore Dockview's intermediate auto-activation while we are redirecting
+    // a closed active tab back to the previous MRU tab.
+    if (pendingCloseTarget && panel?.id !== pendingCloseTarget) {
+      return;
+    }
+    if (panel?.id === pendingCloseTarget) {
+      pendingCloseTarget = null;
+    }
+    lastActiveId = panel?.id ?? null;
+    if (!restoring && panel) touchActivation(panel.id);
     if (panel && isSearchTab(panel.id)) lastSearchId = panel.id;
     recordViewHistory(panel);
     // a restored tab that was never shown has no document info yet: its parameters have it
@@ -685,12 +726,38 @@ export async function init(element, h) {
   });
   dv.onDidAddPanel(refreshEmpty);
   dv.onDidRemovePanel((panel) => {
+    const wasActive = panel?.id != null && panel.id === lastActiveId;
+    const closedGroupId = panel?.group?.id ?? null;
+    if (panel?.id) dropActivation(panel.id);
+    if (wasActive) lastActiveId = null;
+
     refreshEmpty();
     if (ws.current && panel.id === `${ws.current.lib}|${ws.current.path}`) ws.current = null;
     if (dv.panels.length === 0) {
+      pendingCloseTarget = null;
       ws.activeTab = null;
       ws.activeDoc = null;
       ws.activeSearch = null;
+    } else if (!restoring && wasActive) {
+      const next = pickNextActiveAfterClose(closedGroupId);
+      if (next) {
+        const targetId = next.id;
+        pendingCloseTarget = targetId;
+        queueMicrotask(() => {
+          const target = dv?.getPanel(targetId);
+          if (!target) {
+            if (pendingCloseTarget === targetId) pendingCloseTarget = null;
+            return;
+          }
+          if (dv.activePanel?.id === targetId) {
+            if (pendingCloseTarget === targetId) pendingCloseTarget = null;
+            lastActiveId = targetId;
+            touchActivation(targetId);
+            return;
+          }
+          target.api.setActive();
+        });
+      }
     }
     if (!restoring && panel?.params?.lib && panel?.params?.path != null) {
       const { lib, path } = panel.params;
@@ -746,7 +813,11 @@ export async function init(element, h) {
   }
   refreshEmpty();
   syncHistoryButtons();
-  if (dv.activePanel) recordViewHistory(dv.activePanel);
+  if (dv.activePanel) {
+    lastActiveId = dv.activePanel.id;
+    touchActivation(dv.activePanel.id);
+    recordViewHistory(dv.activePanel);
+  }
 }
 
 /**

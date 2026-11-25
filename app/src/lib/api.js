@@ -118,6 +118,8 @@ export const quickSearch = (query, lib = null, limit = 200, quote = null, within
   invoke("quick_search", { query, lib, limit, quote, within, pinyin });
 export const citationCommand = (text) => invoke("citation_command", { text });
 export const prepareTitles = () => invoke("prepare_titles");
+export const resolveBookRefs = (lib, path = null, bookId = null, titles = []) =>
+  invoke("resolve_book_refs", { lib, path, bookId, titles });
 export const toPinyin = (text) => invoke("to_pinyin", { text });
 export const pinyinConvert = (text) => invoke("pinyin_convert", { text });
 export const pinyinText = () => invoke("pinyin_text");

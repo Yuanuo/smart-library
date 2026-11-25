@@ -236,6 +236,7 @@ fn main() {
             commands::random_sentence,
             commands::quick_search,
             commands::prepare_titles,
+            commands::resolve_book_refs,
             commands::to_pinyin,
             commands::pinyin_convert,
             commands::pinyin_text,

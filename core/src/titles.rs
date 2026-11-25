@@ -100,6 +100,8 @@ pub struct TitleIndex {
     aliases: HashMap<usize, Vec<String>>,
     /// lazily built pinyin keys (`full`, `initials`) when pinyin search is enabled
     pinyin: RwLock<Option<Arc<PinyinTitleIndex>>>,
+    /// lazily built exact-match map (`folded title` -> `(entry index, is_alias)`) for book-reference linking
+    exact: RwLock<Option<Arc<HashMap<String, Vec<(usize, bool)>>>>>,
 }
 
 /// Quality of a match, smaller is better; ties keep the tree order.
@@ -151,6 +153,7 @@ impl TitleIndex {
             extras: Vec::new(),
             aliases: HashMap::new(),
             pinyin: RwLock::new(None),
+            exact: RwLock::new(None),
         }
     }
 
@@ -161,6 +164,7 @@ impl TitleIndex {
         if map.is_empty() {
             return;
         }
+        *self.exact.write().unwrap() = None;
         for (i, e) in self.entries.iter().enumerate() {
             let k = match (e.kind, &e.path) {
                 (TitleKind::Book, None) => (self.groups[e.group as usize].book_id.clone().unwrap_or_default(), String::new()),
@@ -772,8 +776,115 @@ impl TitleIndex {
             extras,
             aliases: HashMap::new(),
             pinyin: RwLock::new(None),
+            exact: RwLock::new(None),
         })
     }
+
+    fn exact_map(&self) -> Arc<HashMap<String, Vec<(usize, bool)>>> {
+        if let Some(m) = self.exact.read().unwrap().as_ref() {
+            return m.clone();
+        }
+        let mut map: HashMap<String, Vec<(usize, bool)>> = HashMap::new();
+        for (i, e) in self.entries.iter().enumerate() {
+            if !matches!(e.kind, TitleKind::Book | TitleKind::Article | TitleKind::Folder) {
+                continue;
+            }
+            let mut inserted: HashSet<String> = HashSet::new();
+            let name = &self.names[i];
+            if !name.is_empty() && inserted.insert(name.clone()) {
+                map.entry(name.clone()).or_default().push((i, false));
+            }
+            // Derived main-title variants: strip leading numeric prefix (e.g. `046 百业经`)
+            // and subtitle suffixes (e.g. `赞戒论浅释——智者走向解脱之教言`, `023 赞戒论浅释·...`).
+            let raw_base = if e.kind == TitleKind::Book {
+                // CBETA book titles look like `T0262 妙法蓮華經（7卷）`; drop the leading id token first.
+                e.title
+                    .split_once([' ', '　'])
+                    .filter(|(head, _)| head.chars().all(|c| c.is_ascii_alphanumeric()))
+                    .map(|(_, rest)| rest)
+                    .unwrap_or(&e.title)
+            } else {
+                &e.title
+            };
+            for variant in normalized_title_keys(raw_base) {
+                if inserted.insert(variant.clone()) {
+                    map.entry(variant).or_default().push((i, true));
+                }
+            }
+            if let Some(aliases) = self.aliases.get(&i) {
+                for a in aliases {
+                    if !a.is_empty() && inserted.insert(a.clone()) {
+                        map.entry(a.clone()).or_default().push((i, true));
+                    }
+                }
+            }
+        }
+        let built = Arc::new(map);
+        *self.exact.write().unwrap() = Some(built.clone());
+        built
+    }
+
+    /// Exact folded-key lookup over `Book`, `Article`, `Folder` entries, their
+    /// normalized main titles (without leading numbers / subtitles), and aliases.
+    /// Matching is insensitive to 简繁, variant forms, full/half width and punctuation.
+    pub fn exact_matches(&self, raw_title: &str) -> Vec<(usize, bool)> {
+        let k = key(raw_title);
+        if k.is_empty() {
+            return Vec::new();
+        }
+        self.exact_map().get(&k).cloned().unwrap_or_default()
+    }
+}
+
+/// Strip a leading numeric ordering prefix like `046 百业经`, `023.赞戒论`, `12、百业经`.
+fn strip_leading_number(s: &str) -> &str {
+    let s = s.trim();
+    let digits = s.bytes().take_while(|b| b.is_ascii_digit()).count();
+    if digits == 0 || digits > 5 {
+        return s;
+    }
+    let after = &s[digits..];
+    let Some(first) = after.chars().next() else {
+        return s;
+    };
+    if matches!(first, ' ' | '\t' | '　' | '.' | '、' | '_' | '-' | '－') {
+        let rest = after[first.len_utf8()..].trim_start_matches([' ', '\t', '　', '.', '、', '_', '-', '－']);
+        if !rest.is_empty() {
+            return rest;
+        }
+    }
+    s
+}
+
+/// Extract the main title before a subtitle delimiter (`——`, `—`, `--`, `·`, `：`, `:`, `（`, `(`, `【`).
+fn strip_subtitle(s: &str) -> Option<&str> {
+    const SEPS: &[&str] = &["——", "--", "—", "·", "：", ":", "（", "(", "【"];
+    let earliest = SEPS.iter().filter_map(|sep| s.find(sep)).min()?;
+    let head = s[..earliest].trim();
+    if head.is_empty() {
+        None
+    } else {
+        Some(head)
+    }
+}
+
+/// Folded main-title keys derived from a raw title (requires at least 2 folded chars).
+fn normalized_title_keys(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let no_num = strip_leading_number(raw);
+    let mut push_if_valid = |s: &str| {
+        let k = key(s);
+        if k.chars().count() >= 2 && !out.contains(&k) {
+            out.push(k);
+        }
+    };
+    if no_num != raw.trim() {
+        push_if_valid(no_num);
+    }
+    if let Some(head) = strip_subtitle(no_num) {
+        push_if_valid(head);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -952,5 +1063,69 @@ mod tests {
         let (n, top) = t.top_with_pinyin("dabore", 5, true);
         assert!(n >= 1);
         assert!(top[0].title.contains("大般若"));
+    }
+
+    #[test]
+    fn exact_matches_support_script_folding_and_aliases() {
+        let bc = fixture();
+        let mut t = TitleIndex::cbeta(&bc, "bulei").unwrap();
+        // simplified query matches traditional CBETA book title
+        let hits = t.exact_matches("妙法莲华经");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].1, false);
+        assert_eq!(t.entries[hits[0].0].kind, TitleKind::Book);
+        assert_eq!(t.book_id(&t.entries[hits[0].0]), Some("T0262"));
+        // chapters and juan are not returned as book references
+        assert!(t.exact_matches("序品").is_empty());
+        assert!(t.exact_matches("卷三").is_empty());
+        // aliases are indexed and flagged as alias matches
+        let mut aliases = HashMap::new();
+        aliases.insert(("T0262".to_string(), String::new()), vec!["法华经".to_string()]);
+        t.add_aliases(&aliases);
+        let alias_hits = t.exact_matches("法華經");
+        assert_eq!(alias_hits.len(), 1);
+        assert_eq!(alias_hits[0].1, true);
+        assert_eq!(t.book_id(&t.entries[alias_hits[0].0]), Some("T0262"));
+    }
+
+    #[test]
+    fn exact_matches_strip_subtitles_numbers_and_resolve_folder_books() {
+        let files = vec![
+            crate::folder::FolderFile {
+                rel: "译作/023 赞戒论浅释·智者走向解脱之教言/赞戒论浅释——智者走向解脱之教言.md".into(),
+                name: "赞戒论浅释——智者走向解脱之教言.md".into(),
+                size: 1,
+            },
+            crate::folder::FolderFile {
+                rel: "译作/046 百业经/00 译序.md".into(),
+                name: "00 译序.md".into(),
+                size: 1,
+            },
+            crate::folder::FolderFile {
+                rel: "译作/046 百业经/01 财天比丘.md".into(),
+                name: "01 财天比丘.md".into(),
+                size: 1,
+            },
+        ];
+        let dirs = vec![
+            "译作".to_string(),
+            "译作/023 赞戒论浅释·智者走向解脱之教言".to_string(),
+            "译作/046 百业经".to_string(),
+        ];
+        let t = TitleIndex::folder(&files, &dirs, "库");
+
+        // Subtitle stripping matches both the article and its book folder
+        let hits = t.exact_matches("赞戒论浅释");
+        assert!(hits.iter().any(|(i, _)| t.entries[*i].kind == TitleKind::Article
+            && t.entries[*i].title == "赞戒论浅释——智者走向解脱之教言"));
+        assert!(hits.iter().any(|(i, _)| t.entries[*i].kind == TitleKind::Folder
+            && t.entries[*i].title == "023 赞戒论浅释·智者走向解脱之教言"));
+
+        // Numeric prefix stripping matches the book folder `046 百业经` (simplified & traditional)
+        let folder_hits = t.exact_matches("百業經");
+        assert_eq!(folder_hits.len(), 1);
+        let folder = &t.entries[folder_hits[0].0];
+        assert_eq!(folder.kind, TitleKind::Folder);
+        assert_eq!(folder.path.as_deref(), Some("译作/046 百业经"));
     }
 }

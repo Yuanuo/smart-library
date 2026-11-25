@@ -31,7 +31,7 @@ use smart_library_core::toc::TocItem;
 use smart_library_core::volume::VolumeText;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -106,6 +106,8 @@ pub struct AppState {
     indexes: RwLock<HashMap<String, Arc<SearchIndex>>>,
     /// title quick search, per library (built on first use)
     titles: RwLock<HashMap<String, Arc<TitleIndex>>>,
+    /// monotonically increases whenever `titles` changes (used to invalidate book-ref caches)
+    titles_version: AtomicU64,
     /// libraries whose title list is being built right now (the window shows
     /// progress on the library node; a second `prepare_titles` does not start
     /// the same work again)
@@ -177,6 +179,7 @@ impl AppState {
             sidecar_seen: Mutex::new(HashMap::new()),
             indexes: RwLock::new(HashMap::new()),
             titles: RwLock::new(HashMap::new()),
+            titles_version: AtomicU64::new(1),
             titles_building: Mutex::new(HashSet::new()),
             building: Mutex::new(HashSet::new()),
             bind_cancel: AtomicBool::new(false),
@@ -400,6 +403,7 @@ impl AppState {
                 t.add_aliases(&self.props.all_aliases(&lib.id).unwrap_or_default());
                 let t = Arc::new(t);
                 self.titles.write().unwrap().insert(lib.id.clone(), t.clone());
+                self.titles_version.fetch_add(1, Ordering::Relaxed);
                 return Ok(t);
             }
         }
@@ -429,6 +433,7 @@ impl AppState {
         built.add_aliases(&self.props.all_aliases(&lib.id).unwrap_or_default());
         let t = Arc::new(built);
         self.titles.write().unwrap().insert(lib.id.clone(), t.clone());
+        self.titles_version.fetch_add(1, Ordering::Relaxed);
         Ok(t)
     }
 
@@ -4048,6 +4053,166 @@ pub async fn prepare_titles(app: AppHandle) -> Result<(), String> {
         });
     });
     Ok(())
+}
+
+#[derive(Serialize)]
+pub struct BookRefTargetDto {
+    pub lib: String,
+    pub lib_title: String,
+    pub is_current_lib: bool,
+    pub kind: &'static str,
+    pub title: String,
+    pub context: String,
+    pub author: String,
+    pub book_id: Option<String>,
+    pub path: Option<String>,
+    pub folder_path: Option<String>,
+    pub lb: Option<String>,
+    pub is_alias: bool,
+}
+
+#[derive(Serialize)]
+pub struct ResolveBookRefsDto {
+    pub version: u64,
+    pub pending: bool,
+    pub matches: HashMap<String, Vec<BookRefTargetDto>>,
+}
+
+/// Resolve book titles mentioned inside an opened read-only document against
+/// already-loaded title indexes (current library first, then other libraries,
+/// script-folded via `TitleIndex::exact_matches`). Never blocks on large
+/// libraries still building in `prepare_titles`; sets `pending = true` so the
+/// reader can refresh once `titles-done` arrives.
+#[tauri::command]
+pub async fn resolve_book_refs(
+    lib: String,
+    path: Option<String>,
+    book_id: Option<String>,
+    titles: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<ResolveBookRefsDto, String> {
+    let libs = state.libraries.read().unwrap().clone();
+    let mut ready: Vec<(Library, Arc<TitleIndex>)> = Vec::with_capacity(libs.len());
+    let mut pending = false;
+
+    for l in &libs {
+        if let Some(t) = state.titles.read().unwrap().get(&l.id).cloned() {
+            ready.push((l.clone(), t));
+            continue;
+        }
+        let is_building = state.titles_building.lock().unwrap().contains(&l.id);
+        let is_fast = matches!(l.kind.as_str(), "notes" | "folder") || l.id == lib;
+        if !is_building && is_fast {
+            if let Ok(t) = state.titles(l) {
+                ready.push((l.clone(), t));
+                continue;
+            }
+        }
+        pending = true;
+    }
+
+    let version = state.titles_version.load(Ordering::Relaxed);
+    let mut matches: HashMap<String, Vec<BookRefTargetDto>> = HashMap::new();
+    let mut seen_queries: HashSet<String> = HashSet::new();
+
+    for raw in titles {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || !seen_queries.insert(trimmed.to_string()) {
+            continue;
+        }
+        // (is_other_lib, is_folder, is_alias, lib_order, entry_order, dto)
+        let mut hits: Vec<(u8, u8, u8, usize, usize, BookRefTargetDto)> = Vec::new();
+        let mut seen_targets: HashSet<(String, Option<String>, Option<String>)> = HashSet::new();
+
+        for (lib_order, (l, idx)) in ready.iter().enumerate() {
+            let is_current_lib = l.id == lib;
+            let raw_hits = idx.exact_matches(trimmed);
+
+            // Collect matched article paths in this library first so a book folder that
+            // already has a matched document directly inside it is not shown twice.
+            let matched_article_paths: Vec<&str> = raw_hits
+                .iter()
+                .filter_map(|&(entry_idx, _)| {
+                    let e = &idx.entries[entry_idx];
+                    (e.kind == smart_library_core::titles::TitleKind::Article)
+                        .then(|| e.path.as_deref())
+                        .flatten()
+                })
+                .collect();
+
+            for (entry_order, (entry_idx, is_alias)) in raw_hits.into_iter().enumerate() {
+                let e = &idx.entries[entry_idx];
+                let is_folder = e.kind == smart_library_core::titles::TitleKind::Folder;
+                let target_book_id = idx.book_id(e).map(|s| s.to_string());
+                let mut target_path = e.path.clone();
+                let mut folder_path: Option<String> = None;
+                let context = idx.context(e).to_string();
+
+                if is_folder {
+                    let Some(fp) = e.path.as_deref() else { continue };
+                    let prefix = format!("{}/", fp.trim_end_matches('/'));
+                    // Skip self-reference when the currently opened document is inside this book folder.
+                    if is_current_lib && path.as_deref().is_some_and(|p| p == fp || p.starts_with(&prefix)) {
+                        continue;
+                    }
+                    // Suppress redundant parent folder when a concrete document inside it already matched.
+                    if matched_article_paths.iter().any(|p| p.starts_with(&prefix)) {
+                        continue;
+                    }
+                    // Folders locate in the library tree rather than opening an arbitrary first file.
+                    folder_path = Some(fp.to_string());
+                    target_path = None;
+                } else if is_current_lib {
+                    // Skip self-reference to the currently opened document.
+                    let same_book = target_book_id.is_some()
+                        && target_book_id == book_id
+                        && (target_path.is_none() || target_path == path);
+                    let same_path = target_path.is_some() && target_path == path;
+                    if same_book || same_path {
+                        continue;
+                    }
+                }
+
+                let dedup_key = (
+                    l.id.clone(),
+                    target_book_id.clone(),
+                    target_path.clone().or_else(|| folder_path.clone()),
+                );
+                if !seen_targets.insert(dedup_key) {
+                    continue;
+                }
+
+                hits.push((
+                    if is_current_lib { 0 } else { 1 },
+                    if is_folder { 1 } else { 0 },
+                    if is_alias { 1 } else { 0 },
+                    lib_order,
+                    entry_order,
+                    BookRefTargetDto {
+                        lib: l.id.clone(),
+                        lib_title: l.title.clone(),
+                        is_current_lib,
+                        kind: e.kind.as_str(),
+                        title: e.title.clone(),
+                        context,
+                        author: idx.author(e).to_string(),
+                        book_id: target_book_id,
+                        path: target_path,
+                        folder_path,
+                        lb: e.lb.clone(),
+                        is_alias,
+                    },
+                ));
+            }
+        }
+
+        if !hits.is_empty() {
+            hits.sort_by(|a, b| (a.0, a.1, a.2, a.3, a.4).cmp(&(b.0, b.1, b.2, b.3, b.4)));
+            matches.insert(trimmed.to_string(), hits.into_iter().map(|h| h.5).collect());
+        }
+    }
+
+    Ok(ResolveBookRefsDto { version, pending, matches })
 }
 
 // ------------------------------------------------------------ index
