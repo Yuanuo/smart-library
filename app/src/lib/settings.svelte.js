@@ -102,6 +102,24 @@ export const AI_PROVIDER_TEMPLATES = [
   { id: "ollama", label: "本地 Ollama", format: "openai", baseUrl: "http://localhost:11434/v1", model: "qwen2.5", needsKey: false },
 ];
 
+export const READER_CUSTOM_CSS_TEMPLATE = `/* 科判（单项，如「乙一、宣说题目：」） */
+.doc p.kepan {
+  color: var(--accent);
+}
+
+/* 总分科判（如「此论分三：甲一、……」「甲一（……）分二：……」） */
+.doc p.kepan-split {
+  border-left-color: var(--accent);
+}
+
+/* 颂词 / 偈颂 */
+.doc p.verse {
+  font-family: "KaiTi", "Kaiti TC", "STKaiti", serif;
+}
+
+/* 深色模式单独微调（可选；若使用 var(--accent) 等内置变量则自动适配明暗模式） */
+/* [data-theme="dark"] .doc p.verse { color: #d8c8a8; } */`;
+
 const DEFAULTS = {
   theme: "auto", // auto | light | dark
   uiFont: "default",
@@ -117,6 +135,8 @@ const DEFAULTS = {
   readerFullWidth: false, // stretch the reading column to the visible area
   readerWeight: "std", // std | mid | bold
   readerScript: "orig", // orig: as the text is | simp: shown in simplified characters
+  readerStructureStyle: true, // highlight detected 科判 and 颂词 in read-only reader
+  readerCustomCss: "", // optional user CSS overrides for the read-only reader
   selectLookup: "ctrl", // reader selection opens the dictionary: ctrl | auto | off
   externalLink: "window", // window | ask | browser
   quickLimit: 200, // title quick search: results per batch
@@ -153,6 +173,10 @@ function load() {
     }
     if (raw.readerFont === "sans") {
       raw.readerFont = "default";
+    }
+    raw.readerStructureStyle = raw.readerStructureStyle !== false;
+    if (typeof raw.readerCustomCss !== "string") {
+      raw.readerCustomCss = "";
     }
     if (!SELECT_LOOKUP_MODES.some(([v]) => v === raw.selectLookup)) {
       raw.selectLookup = "ctrl";
@@ -244,6 +268,19 @@ export function apply() {
   set("--reader-strong-weight", String(weight.strong));
   set("--reader-stroke", `${weight.stroke}em`);
   set("--reader-strong-stroke", `${weight.strongStroke}em`);
+  const customStyleId = "sl-reader-custom-css";
+  const css = (settings.readerCustomCss || "").trim();
+  let styleEl = document.getElementById(customStyleId);
+  if (css) {
+    if (!styleEl) {
+      styleEl = document.createElement("style");
+      styleEl.id = customStyleId;
+      document.head.appendChild(styleEl);
+    }
+    if (styleEl.textContent !== css) styleEl.textContent = css;
+  } else if (styleEl) {
+    styleEl.remove();
+  }
   if (settings.uiZoom !== appliedZoom) {
     appliedZoom = settings.uiZoom;
     getCurrentWebview().setZoom(settings.uiZoom / 100).catch(() => {});

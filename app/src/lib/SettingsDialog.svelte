@@ -4,7 +4,7 @@
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import * as api from "./api.js";
   import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import { settings, update, reset, UI_FONTS, READER_FONTS, WEIGHT_LEVELS, SELECT_LOOKUP_MODES, DEFAULT_AI_PRESET, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
+  import { settings, update, reset, UI_FONTS, READER_FONTS, WEIGHT_LEVELS, SELECT_LOOKUP_MODES, DEFAULT_AI_PRESET, READER_CUSTOM_CSS_TEMPLATE, activeAiPreset, toBackendAiConfig } from "./settings.svelte.js";
   import { SHORTCUT_DEFS, getShortcut, comboParts, eventToCombo, setShortcutRecording } from "./shortcuts.js";
   import { MOD_KEY } from "./platform.js";
   import DialogHeader from "./DialogHeader.svelte";
@@ -752,11 +752,38 @@
                 onchange={(e) => update({ readerFullWidth: e.currentTarget.checked })} />
               <span class="wide">全宽（版心按可视区宽度自适应，不再限宽）</span>
             </label>
+            <label class="row">
+              <input type="checkbox" checked={settings.readerStructureStyle}
+                onchange={(e) => update({ readerStructureStyle: e.currentTarget.checked })} />
+              <span class="wide">科判与颂词样式增强（自动识别只读文档中的科判与偈颂并赋予独立样式）</span>
+            </label>
             <div class="preview-wrap">
-              <div class="sample" aria-label="预览">
-                <p>这是一段示例文字，用来预览字体、字号、字重、字间距、行间距和段间距的效果。<strong>这是着重强调的粗体文字</strong>。Sample 0123，ABCabc。</p>
-                <p>这是第二段，<strong>段间距</strong>在两段之间生效。</p>
+              <div class="sample doc" aria-label="预览">
+                <p class="p">这是一段示例文字，用来预览字体、字号、字重、字间距、行间距和段间距的效果。<strong>这是着重强调的粗体文字</strong>。Sample 0123，ABCabc。</p>
+                <p class="p">这是第二段，<strong>段间距</strong>在两段之间生效。</p>
               </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-block">
+              <div class="css-head">
+                <span class="block-title">自定义阅读器 CSS</span>
+                <div class="css-ops">
+                  <button type="button" onclick={() => update({ readerCustomCss: READER_CUSTOM_CSS_TEMPLATE })}>填入示例</button>
+                  <button type="button" disabled={!settings.readerCustomCss?.trim()} onclick={() => update({ readerCustomCss: "" })}>清空</button>
+                </div>
+              </div>
+              <p class="muted hint">
+                可覆盖默认样式，清空或语法无效时自动回退默认规则。常用选择器：<code>.doc p.kepan</code>（科判）、<code>.doc p.kepan-split</code>（总分科判）、<code>.doc p.verse</code>（颂词）；使用 <code>var(--accent)</code> / <code>var(--ink)</code> 自动适配明暗模式，也可加 <code>[data-theme="dark"]</code> 单独调整深色模式。
+              </p>
+              <textarea
+                class="custom-css"
+                rows="6"
+                spellcheck="false"
+                placeholder="留空则使用默认阅读器样式…"
+                value={settings.readerCustomCss}
+                oninput={(e) => update({ readerCustomCss: e.currentTarget.value })}
+              ></textarea>
             </div>
           </div>
           <div class="card">
@@ -1313,10 +1340,18 @@
     letter-spacing: var(--reader-spacing, 0.04em);
     font-weight: var(--reader-weight, 400); -webkit-text-stroke-width: var(--reader-stroke, 0);
   }
-  .sample p { margin: 0; }
-  .sample p + p { margin-top: var(--reader-para, 0.35em); }
+  .sample p.p:not(.kepan):not(.verse) { margin: 0; }
+  .sample p.p:not(.kepan):not(.verse) + p.p:not(.kepan):not(.verse) { margin-top: var(--reader-para, 0.35em); }
   .sample strong {
     font-weight: var(--reader-strong-weight, 700); -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
+  }
+  .css-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .css-ops { display: flex; gap: 6px; }
+  .custom-css {
+    width: 100%; box-sizing: border-box; resize: vertical;
+    padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink);
+    font-family: Consolas, "Courier New", monospace; font-size: 12.5px; line-height: 1.5;
   }
   .row > span.wide, .wide { width: auto; flex: 1 1 0%; min-width: 0; white-space: normal; line-height: 1.5; }
   .sources { flex: 1; min-width: 0; }

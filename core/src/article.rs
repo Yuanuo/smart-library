@@ -83,15 +83,27 @@ pub struct Rules {
     resolved_links: bool,
     /// drop wiki-style generic headings (语录 / 参考文献 / 参见) from search
     skip_generic_headings: bool,
+    /// detect 科判 and 颂词 paragraphs for display styling
+    detect_structure: bool,
 }
 
 /// Plain HTML: no anchors, no link resolution, no heading heuristics.
-pub const PLAIN_RULES: Rules = Rules { ids_as_anchors: false, resolved_links: false, skip_generic_headings: false };
+pub const PLAIN_RULES: Rules = Rules {
+    ids_as_anchors: false,
+    resolved_links: false,
+    skip_generic_headings: false,
+    detect_structure: true,
+};
 
 /// ZIM: the window resolves internal links in the archive, `id`s are the
 /// article's chapters, and Wikipedia-style dumps carry headings that are not
 /// part of the text.
-pub const ZIM_RULES: Rules = Rules { ids_as_anchors: true, resolved_links: true, skip_generic_headings: true };
+pub const ZIM_RULES: Rules = Rules {
+    ids_as_anchors: true,
+    resolved_links: true,
+    skip_generic_headings: true,
+    detect_structure: false,
+};
 
 /// Read an article. `path` is its path in the bookcase (for relative images);
 /// `render` asks for the structured HTML too.
@@ -109,6 +121,11 @@ fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, ru
     let meta = read_meta(&root);
     let body = root.find_descendant("body").unwrap_or(&root);
     let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("").to_string();
+    let block_kinds = if render.is_some() && rules.detect_structure {
+        classify_blocks(body)
+    } else {
+        std::collections::HashMap::new()
+    };
     let mut w = Walker {
         pieces: Vec::new(),
         lbs: Vec::new(),
@@ -121,6 +138,7 @@ fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, ru
         pending_anchors: Vec::new(),
         plain_len: 0,
         search_exclusions: Vec::new(),
+        block_kinds,
     };
     w.walk_children(body);
     let text = assemble(String::new(), &w.pieces, &w.lbs, &[]);
@@ -234,6 +252,330 @@ fn generic_heading(text: &str) -> bool {
     matches!(crate::analyzer::match_key(text).into_iter().collect::<String>().as_str(), "语录" | "参考文献" | "参见")
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BlockKind {
+    KepanHead,
+    KepanSplit,
+    Verse,
+    VerseQuote,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct VerseMetrics {
+    clause_len: usize,
+    clauses: usize,
+    ends_with_comma: bool,
+    has_punct: bool,
+    starts_with_quote: bool,
+}
+
+fn is_hanzi(c: char) -> bool {
+    matches!(
+        c,
+        '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{20000}'..='\u{2FA1F}'
+    )
+}
+
+fn is_ganzhi(c: char) -> bool {
+    "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥".contains(c)
+}
+
+fn is_kepan_num(c: char) -> bool {
+    "一二三四五六七八九十百千零〇廿卅".contains(c) || c.is_ascii_digit()
+}
+
+/// Strip leading `<天干/地支><中文或阿拉伯数字>`, returning the remainder.
+fn strip_ganzhi_num(s: &str) -> Option<&str> {
+    let mut it = s.chars();
+    let first = it.next()?;
+    if !is_ganzhi(first) {
+        return None;
+    }
+    let rest = it.as_str();
+    let num_bytes: usize = rest.chars().take_while(|&c| is_kepan_num(c)).map(char::len_utf8).sum();
+    if num_bytes == 0 {
+        return None;
+    }
+    Some(&rest[num_bytes..])
+}
+
+/// Find `分<数字>：` (or `:`) in `s`, returning `(before_分, after_colon)`.
+fn find_fen_colon(s: &str) -> Option<(&str, &str)> {
+    let mut offset = 0;
+    while let Some(pos) = s[offset..].find('分') {
+        let at = offset + pos;
+        let after_fen = &s[at + '分'.len_utf8()..];
+        let num_bytes: usize = after_fen.chars().take_while(|&c| is_kepan_num(c)).map(char::len_utf8).sum();
+        if num_bytes > 0 {
+            let after_num = &after_fen[num_bytes..];
+            if let Some(after_colon) = after_num.strip_prefix('：').or_else(|| after_num.strip_prefix(':')) {
+                return Some((&s[..at], after_colon));
+            }
+        }
+        offset = at + '分'.len_utf8();
+    }
+    None
+}
+
+fn detect_kepan(raw: &str) -> Option<BlockKind> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if let Some(after) = strip_ganzhi_num(t) {
+        if let Some((before, _)) = find_fen_colon(after) {
+            if before.chars().count() <= 32 && !before.chars().any(|c| matches!(c, '。' | '！' | '？')) {
+                return Some(BlockKind::KepanSplit);
+            }
+        }
+        if let Some(body) = after.strip_prefix('、') {
+            let body = body.trim();
+            if body.is_empty() {
+                return None;
+            }
+            let has_sent_end = body.chars().any(|c| matches!(c, '。' | '！' | '？'));
+            if !has_sent_end && (body.ends_with('：') || body.ends_with(':') || body.chars().count() <= 80) {
+                return Some(BlockKind::KepanHead);
+            }
+        }
+        return None;
+    }
+    if let Some((before, after_colon)) = find_fen_colon(t) {
+        if before.chars().count() <= 24 && !before.chars().any(|c| matches!(c, '。' | '！' | '？')) {
+            let tail = after_colon.trim_start();
+            if let Some(after_gz) = strip_ganzhi_num(tail) {
+                if after_gz.starts_with(['、', '（', '(', '分']) {
+                    return Some(BlockKind::KepanSplit);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Strip balanced inline parenthetical notes `（…）` / `(…)` (such as Tibetan
+/// seed syllables or variant readings inside a verse). Returns `None` if
+/// parentheses are unbalanced.
+fn strip_inline_parens(s: &str) -> Option<String> {
+    if !s.contains(['（', '）', '(', ')']) {
+        return Some(s.to_string());
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0usize;
+    for c in s.chars() {
+        match c {
+            '（' | '(' => depth += 1,
+            '）' | ')' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+            }
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    Some(out)
+}
+
+fn starts_with_open_quote(s: &str) -> bool {
+    s.trim_start().starts_with(['“', '‘', '「', '『'])
+}
+
+fn verse_metrics(raw: &str) -> Option<VerseMetrics> {
+    let stripped = strip_inline_parens(raw)?;
+    let t = stripped.trim();
+    if t.is_empty() {
+        return None;
+    }
+    // Allow a trailing colon (e.g. `欲令大众悦，即时说颂言：`), but reject internal colons (`答：…`).
+    let without_trailing_colon = t.strip_suffix('：').or_else(|| t.strip_suffix(':')).unwrap_or(t);
+    if without_trailing_colon.contains('：') || without_trailing_colon.contains(':') {
+        return None;
+    }
+    let mut clause_len: Option<usize> = None;
+    let mut clauses = 0usize;
+    for seg in without_trailing_colon
+        .split(|c: char| matches!(c, '，' | '。' | '！' | '？' | '；' | ',' | ';' | '!' | '?') || c.is_whitespace())
+    {
+        if seg.is_empty() {
+            continue;
+        }
+        let mut len = 0usize;
+        for c in seg.chars() {
+            if matches!(c, '“' | '”' | '‘' | '’' | '「' | '」' | '『' | '』') {
+                continue;
+            }
+            if !is_hanzi(c) {
+                return None;
+            }
+            len += 1;
+        }
+        if len == 0 {
+            continue;
+        }
+        if !(3..=17).contains(&len) {
+            return None;
+        }
+        match clause_len {
+            None => clause_len = Some(len),
+            Some(prev) if prev != len => return None,
+            Some(_) => {}
+        }
+        clauses += 1;
+    }
+    let clause_len = clause_len?;
+    let trimmed_end = t.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '”' | '’' | '」' | '』'));
+    let ends_with_comma = trimmed_end.ends_with('，') || trimmed_end.ends_with(',');
+    let has_punct = t.chars().any(|c| matches!(c, '，' | '。' | '！' | '？' | '；' | '：' | ',' | ';' | '!' | '?' | ':'));
+    let starts_with_quote = starts_with_open_quote(raw);
+    Some(VerseMetrics { clause_len, clauses, ends_with_comma, has_punct, starts_with_quote })
+}
+
+/// Extract visible text of a block element for structure classification,
+/// preserving `<br>` as a space separator and skipping hidden / footnote nodes.
+fn visible_text(el: &Element, out: &mut String) {
+    for n in &el.children {
+        match n {
+            Node::Text(t) => out.push_str(t),
+            Node::Element(e) => {
+                let name = e.name.as_str();
+                if SKIP.contains(&name) || e.attr("data-trilium-h1").is_some() || hidden(e) {
+                    continue;
+                }
+                if name == "br" {
+                    out.push(' ');
+                } else if name == "a" && e.attr("data-note").is_some() {
+                    continue;
+                } else {
+                    visible_text(e, out);
+                }
+            }
+        }
+    }
+}
+
+struct BlockSlot {
+    ptr: *const Element,
+    kind: Option<BlockKind>,
+    verse: Option<VerseMetrics>,
+}
+
+fn collect_blocks(el: &Element, out: &mut Vec<BlockSlot>) {
+    for n in &el.children {
+        let Node::Element(e) = n else { continue };
+        let name = e.name.as_str();
+        if SKIP.contains(&name) || e.attr("data-trilium-h1").is_some() || hidden(e) {
+            continue;
+        }
+        match name {
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                out.push(BlockSlot { ptr: e as *const Element, kind: None, verse: None });
+            }
+            n if BLOCKS.contains(&n) => {
+                let class_attr = e.attr("class").unwrap_or("");
+                let explicit_kepan = class_attr.contains("科判");
+                let explicit_verse = class_attr.contains("l-js") || class_attr.contains("颂");
+                let mut kind = None;
+                let mut verse = None;
+                if explicit_kepan {
+                    let mut txt = String::new();
+                    visible_text(e, &mut txt);
+                    kind = Some(match detect_kepan(&txt) {
+                        Some(BlockKind::KepanSplit) => BlockKind::KepanSplit,
+                        _ => BlockKind::KepanHead,
+                    });
+                } else if explicit_verse {
+                    let mut txt = String::new();
+                    visible_text(e, &mut txt);
+                    kind = Some(if starts_with_open_quote(&txt) {
+                        BlockKind::VerseQuote
+                    } else {
+                        BlockKind::Verse
+                    });
+                } else if matches!(n, "p" | "blockquote") {
+                    let mut txt = String::new();
+                    visible_text(e, &mut txt);
+                    if let Some(k) = detect_kepan(&txt) {
+                        kind = Some(k);
+                    } else {
+                        verse = verse_metrics(&txt);
+                    }
+                }
+                out.push(BlockSlot { ptr: e as *const Element, kind, verse });
+            }
+            n if CONTAINERS.contains(&n) => {
+                let has_text = e.children.iter().any(|c| matches!(c, Node::Text(t) if !t.trim().is_empty()));
+                if has_text {
+                    out.push(BlockSlot { ptr: e as *const Element, kind: None, verse: None });
+                } else {
+                    collect_blocks(e, out);
+                }
+            }
+            "ul" | "ol" | "table" | "tr" => {
+                collect_blocks(e, out);
+            }
+            _ => collect_blocks(e, out),
+        }
+    }
+}
+
+fn classify_blocks(body: &Element) -> std::collections::HashMap<*const Element, BlockKind> {
+    let mut slots = Vec::new();
+    collect_blocks(body, &mut slots);
+
+    // Resolve verse candidates in contiguous runs sharing the same clause length.
+    let mut i = 0;
+    while i < slots.len() {
+        let Some(first) = slots[i].verse else {
+            i += 1;
+            continue;
+        };
+        let len = first.clause_len;
+        let has_punct = first.has_punct;
+        let mut j = i + 1;
+        while j < slots.len()
+            && slots[j].verse.is_some_and(|v| v.clause_len == len && v.has_punct == has_punct)
+        {
+            j += 1;
+        }
+        let run_len = j - i;
+        let total_clauses: usize = slots[i..j].iter().filter_map(|s| s.verse).map(|v| v.clauses).sum();
+        let max_clauses: usize = slots[i..j].iter().filter_map(|s| s.verse).map(|v| v.clauses).max().unwrap_or(0);
+        let prev_is_kepan = i > 0
+            && matches!(slots[i - 1].kind, Some(BlockKind::KepanHead | BlockKind::KepanSplit));
+        let confirm = total_clauses >= 4
+            || (run_len >= 2 && (max_clauses >= 2 || len >= 5))
+            || (run_len == 1
+                && first.clauses >= 2
+                && (prev_is_kepan || first.ends_with_comma || !first.has_punct));
+        if confirm {
+            for s in &mut slots[i..j] {
+                s.kind = Some(if s.verse.is_some_and(|v| v.starts_with_quote) {
+                    BlockKind::VerseQuote
+                } else {
+                    BlockKind::Verse
+                });
+            }
+        }
+        i = j;
+    }
+
+    let mut map = std::collections::HashMap::new();
+    for s in slots {
+        if let Some(k) = s.kind {
+            map.insert(s.ptr, k);
+        }
+    }
+    map
+}
+
 struct Walker {
     pieces: Vec<(String, Option<usize>)>,
     lbs: Vec<String>,
@@ -246,6 +588,7 @@ struct Walker {
     pending_anchors: Vec<String>,
     plain_len: usize,
     search_exclusions: Vec<(usize, usize)>,
+    block_kinds: std::collections::HashMap<*const Element, BlockKind>,
 }
 
 impl Walker {
@@ -351,13 +694,26 @@ impl Walker {
             }
             n if BLOCKS.contains(&n) => {
                 let class_attr = el.attr("class").unwrap_or("");
-                let verse = class_attr.contains("l-js") || class_attr.contains("颂");
+                let detected = self.block_kinds.get(&(el as *const Element)).copied();
+                let verse_class = match detected {
+                    Some(BlockKind::VerseQuote) => Some("p verse verse-quote"),
+                    Some(BlockKind::Verse) => Some("p verse"),
+                    _ if class_attr.contains("l-js") || class_attr.contains("颂") => Some("p verse"),
+                    _ => None,
+                };
+                let kepan = match detected {
+                    Some(BlockKind::KepanSplit) => Some("p kepan kepan-split"),
+                    Some(BlockKind::KepanHead) => Some("p kepan kepan-head"),
+                    _ if class_attr.contains("科判") => Some("p kepan kepan-head"),
+                    _ => None,
+                };
                 let (tag, class) = match n {
                     "li" => ("li", "item"),
                     "td" | "th" => ("td", ""),
                     "pre" => ("p", "p t-pre"),
+                    _ if kepan.is_some() => ("p", kepan.unwrap()),
+                    _ if verse_class.is_some() => ("p", verse_class.unwrap()),
                     "blockquote" => ("p", "p quote"),
-                    _ if verse => ("p", "p verse"),
                     _ => ("p", "p"),
                 };
                 self.block(el, tag, class);
@@ -561,5 +917,100 @@ mod tests {
         assert_eq!(resolve_relative("a/ZB/x", "../y.jpg").as_deref(), Some("a/ZB/y.jpg"));
         assert_eq!(resolve_relative("a", "../../etc/passwd"), None);
         assert_eq!(resolve_relative("a", "http://x/y.jpg"), None);
+    }
+
+    #[test]
+    fn detects_kepan_and_verse_in_markdown_and_blockquotes() {
+        let md = "\
+此论分三：甲一、题目及造论分支——初善首义；甲二、着重赞颂二种福德与劝勉守戒——中善论义；甲三、祝愿祈请造论者暂时与究竟一切所愿称心如意——尾善末义。
+
+甲一（初善首义）分二：乙一、宣说题目；乙二、造论分支。
+
+> 乙一、宣说题目：
+
+> 如来密意持明表示传，补特伽罗人中成善缘，
+> 循胜士迹究竟二利者，三大传承上师前敬礼。
+
+丙二、思维利害颠倒、愚昧无知之众生而断除傲慢：
+
+具相师前已受利乐源，如同珍宝璎珞美饰戒，
+
+然换一碗豆粉许骤乐，如此严重愚昧诚可笑。
+
+这是普通的正文讲解段落，前面讲了甲一的内容，现在继续说明持戒、忍辱、精进、禅定的道理。
+
+> 这是一段普通的引用文字，不应被识别为颂词或科判。
+
+人之初，性本善。性相近，习相远。
+
+尤浊时衰雨云滚滚趋蔽佛教日尊容，
+
+不共成就士夫殊胜密宗自宗临匿迹，
+
+极乐世界怙主智悲本智舍（ཧྲཱི༔）字相，
+
+明点悉地海岛莲苞中出相好身，";
+        let html = crate::markdown::to_html(md);
+        let a = read_article(&html, "notes/test.md", Some(&RenderOptions::default()));
+        let out = a.html.unwrap();
+        assert!(out.contains(r#"<p class="p kepan kepan-split"><span class="lb" data-lb="¶1"></span>此论分三："#), "{out}");
+        assert!(out.contains(r#"<p class="p kepan kepan-split"><span class="lb" data-lb="¶2"></span>甲一（初善首义）分二："#), "{out}");
+        assert!(out.contains(r#"<p class="p kepan kepan-head"><span class="lb" data-lb="¶3"></span>乙一、宣说题目："#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶4"></span>如来密意持明表示传，"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶5"></span>循胜士迹究竟二利者，"#), "{out}");
+        assert!(out.contains(r#"<p class="p kepan kepan-head"><span class="lb" data-lb="¶6"></span>丙二、思维利害颠倒"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶7"></span>具相师前已受利乐源，"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶8"></span>然换一碗豆粉许骤乐，"#), "{out}");
+        assert!(out.contains(r#"<p class="p"><span class="lb" data-lb="¶9"></span>这是普通的正文讲解段落"#), "{out}");
+        assert!(out.contains(r#"<p class="p quote"><span class="lb" data-lb="¶10"></span>这是一段普通的引用文字"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶11"></span>人之初，性本善。"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶12"></span>尤浊时衰雨云滚滚趋蔽佛教日尊容，"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶13"></span>不共成就士夫殊胜密宗自宗临匿迹，"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶14"></span>极乐世界怙主智悲本智舍（ཧྲཱི༔）字相，"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶15"></span>明点悉地海岛莲苞中出相好身，"#), "{out}");
+    }
+
+    #[test]
+    fn explicit_kepan_and_verse_classes_work_and_zim_skips_heuristics() {
+        let a = read_article(ZB, "a/ZB/ZBkc006/ZBkc006_006.html", Some(&RenderOptions::default()));
+        let out = a.html.unwrap();
+        assert!(out.contains(r#"class="p kepan kepan-head""#), "{out}");
+        assert!(out.contains(r#"class="p verse""#), "{out}");
+
+        let zim = read_zim_html(
+            "<body><p>乙一、宣说题目：</p><p>人之初，性本善。性相近，习相远。</p></body>",
+            "A/条目",
+            Some(&RenderOptions::default()),
+        );
+        let zout = zim.html.unwrap();
+        assert!(!zout.contains("kepan") && !zout.contains("verse"), "{zout}");
+    }
+
+    #[test]
+    fn separates_space_and_punct_styles_so_prose_between_verses_is_not_merged() {
+        let md = "\
+无有障碍　　如焰如化　　是故我今
+
+稽首佛月
+
+尔时世尊。以偈答曰。
+
+此金光明　　诸经之王　　甚深最胜
+
+金刚藏菩萨，　　闻说是事已，
+
+欲令大众悦，　　即时说颂言：
+
+“诸菩萨所行，　　第一难思议，";
+        let html = crate::markdown::to_html(md);
+        let a = read_article(&html, "notes/test.md", Some(&RenderOptions::default()));
+        let out = a.html.unwrap();
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶1"></span>无有障碍"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶2"></span>稽首佛月"#), "{out}");
+        assert!(out.contains(r#"<p class="p"><span class="lb" data-lb="¶3"></span>尔时世尊。以偈答曰。"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶4"></span>此金光明"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶5"></span>金刚藏菩萨，"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶6"></span>欲令大众悦，"#), "{out}");
+        assert!(out.contains(r#"<p class="p verse verse-quote"><span class="lb" data-lb="¶7"></span>“诸菩萨所行，"#), "{out}");
     }
 }

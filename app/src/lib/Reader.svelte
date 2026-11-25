@@ -98,7 +98,10 @@
   $effect(() => {
     if (simp) ensureSimplifier();
   });
-  const html = $derived(simp ? simplifyHtml(vol?.html) : vol?.html);
+  const stripStructure = (s) =>
+    s ? s.replace(/\bclass="p (?:kepan(?: kepan-(?:head|split))?|verse(?: verse-quote)?)"/g, 'class="p"') : s;
+  const baseHtml = $derived(settings.readerStructureStyle ? vol?.html : stripStructure(vol?.html));
+  const html = $derived(simp ? simplifyHtml(baseHtml) : baseHtml);
   // 原书行 is the same structured HTML laid out one original line per visual
   // line (CSS); volumes whose HTML has no lb markers keep the plain line view
   const canWrap = $derived(!!vol?.html && vol.html.includes("data-lb="));
@@ -767,6 +770,37 @@
   .doc :global(.docnumber) { margin: 0; font-size: 0.75em; color: var(--muted); }
   .doc :global(p.p) { margin: var(--reader-para, 0.35em) 0; }
   .doc :global(p.quote) { margin: 0.2em 0; padding: 0.1em 0 0.1em 14px; border-left: 3px solid var(--accent-soft); color: var(--muted); }
+  /* Default 科判 / 颂词 styles use :where() so user custom CSS (`.doc p.kepan`,
+     `.doc p.verse`) overrides them cleanly without `!important`. */
+  :global(.doc :where(p.kepan)) {
+    margin: 0.9em 0 0.35em;
+    padding: 0.3em 0.75em;
+    border-left: 3px solid var(--accent);
+    background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+    border-radius: 0 4px 4px 0;
+    color: var(--accent);
+    font-weight: var(--reader-strong-weight, 700);
+    -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
+  }
+  :global(.doc :where(p.kepan.kepan-split)) {
+    font-weight: var(--reader-weight, 400);
+    -webkit-text-stroke-width: var(--reader-stroke, 0);
+    color: var(--ink);
+  }
+  :global(.doc :where(p.verse)) {
+    margin: var(--reader-para, 0.35em) 0 var(--reader-para, 0.35em) 1.5em;
+    padding: 0.08em 0 0.08em 1.1em;
+    border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    color: color-mix(in srgb, var(--ink) 88%, var(--accent));
+    font-weight: var(--reader-strong-weight, 700);
+    -webkit-text-stroke-width: var(--reader-strong-stroke, 0);
+  }
+  :global(.doc :where(p.verse.verse-quote)) {
+    text-indent: calc(-1em - var(--reader-spacing, 0.04em));
+  }
+  :global(.doc :where(p.verse + p.verse)) {
+    margin-top: 0.05em;
+  }
   .doc :global(a.src) { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
   .doc :global(a.zim-link), .doc :global(a.ext-link) { color: var(--accent); cursor: pointer; text-decoration: underline; }
   .doc :global(a.book-ref), .lines :global(a.book-ref) {
@@ -861,7 +895,7 @@
   .doc.wrap-lines :global(h4), .doc.wrap-pages :global(h4),
   .doc.wrap-lines :global(h5), .doc.wrap-pages :global(h5),
   .doc.wrap-lines :global(h6), .doc.wrap-pages :global(h6) {
-    display: inline; margin: 0; padding: 0; border: 0;
+    display: inline; margin: 0; padding: 0; border: 0; background: transparent;
   }
   .doc.wrap-lines :global(.list), .doc.wrap-pages :global(.list) { list-style: none; }
   .doc.wrap-lines :global(p.r-text-right), .doc.wrap-pages :global(p.r-text-right) { text-align: inherit; }
