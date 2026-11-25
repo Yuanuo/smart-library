@@ -17,6 +17,7 @@ import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api.js";
 import ReaderPanel from "./ReaderPanel.svelte";
+import FolderPanel from "./FolderPanel.svelte";
 import SearchPage from "./SearchPage.svelte";
 import AiPanel from "./AiPanel.svelte";
 import StartPage from "./StartPage.svelte";
@@ -27,6 +28,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 const WORKSPACE_VERSION = 2;
 const MAX_PROGRESS = 500;
 const MAX_VIEW_HISTORY = 100;
+const FOLDER_BROWSE_ID = "folder:browse";
 
 let dv = null; // DockviewApi
 let hostEl = null; // the element holding the dockview
@@ -44,6 +46,8 @@ let rawWinSeq = 0;
 let aiChatStates = {}; // tab -> { sessionId, title }
 let aiChatSeq = 0; // ai chat tabs are `aichat:<n>`
 let aiChatWinSeq = 0;
+let folderStates = {}; // tab -> { lib, rel, key, title, reload }
+let folderSeq = 0; // explicit new folder tabs are `folder:<n>`
 let infos = {}; // tab -> { title, lib, path, bookId, author } of its document
 let docStates = {}; // tab -> { lib, path, bookId, title, contentType, writable, getText, editDoc }
 let searchResults = {}; // tab -> { query, hits, totalVolumes, totalBooks }
@@ -222,8 +226,9 @@ function readerRenderer() {
           p,
           getNodePath: hooks.onnodepath,
           onopen: (req) => {
-            if (req?.kind === "folder" && !req.path && req.folderPath) {
-              return hooks.onlocate?.({ lib: req.lib, path: req.folderPath });
+            if (req?.kind === "folder" && !req.path && req.folderPath != null) {
+              const title = req.title || req.folderPath.split("/").filter(Boolean).pop() || "";
+              return openFolder({ lib: req.lib, rel: req.folderPath, title });
             }
             return openVolume(req);
           },
@@ -293,6 +298,79 @@ function applyTooltip(id) {
 
 const isSearchTab = (id) => typeof id === "string" && id.startsWith("search:");
 const isAiChatTab = (id) => typeof id === "string" && id.startsWith("aichat:");
+const isFolderTab = (id) => typeof id === "string" && id.startsWith("folder:");
+
+function folderHistoryKey(lib, rel = "", key = "") {
+  return `folder:${lib}|${rel || ""}|${key || ""}`;
+}
+
+function folderRenderer() {
+  const element = document.createElement("div");
+  element.className = "panel-host";
+  let instance = null;
+  let state = null;
+  let panelApi = null;
+  return {
+    element,
+    init(params) {
+      panelApi = params.api;
+      const prm = params.params || {};
+      const next = $state({
+        lib: prm.lib || "",
+        rel: prm.rel || "",
+        key: prm.key || "",
+        title: prm.title || params.title || "",
+        reload: 0,
+      });
+      state = next;
+      folderStates[panelApi.id] = state;
+      instance = mount(FolderPanel, {
+        target: element,
+        props: {
+          p: state,
+          getLibrary: (id) => (hooks.libraries || []).find((l) => l.id === id) || null,
+          onnavigate: (req, opts = {}) =>
+            openFolder(req, { ...opts, panelId: opts?.newTab ? null : panelApi.id }),
+          onopen: (req) => openVolume(req),
+          onlocate: () =>
+            hooks.onlocate?.({ lib: state.lib, rel: state.rel, key: state.key, isFolder: true }),
+          ontitle: (t, tooltip) => {
+            panelApi?.setTitle(t);
+            state.title = t;
+            tooltips[panelApi.id] = tooltip;
+            applyTooltip(panelApi.id);
+            if (panelApi?.isActive) ws.activeTab = { kind: "folder", title: t };
+          },
+        },
+      });
+    },
+    update(event) {
+      const q = event.params || {};
+      if (!state) return;
+      const nextLib = q.lib ?? state.lib;
+      const nextRel = q.rel ?? "";
+      const nextKey = q.key ?? "";
+      const nextTitle = q.title ?? "";
+      const same = nextLib === state.lib && nextRel === state.rel && nextKey === state.key;
+      state.lib = nextLib;
+      state.rel = nextRel;
+      state.key = nextKey;
+      if (nextTitle) {
+        state.title = nextTitle;
+        panelApi?.setTitle(nextTitle);
+      }
+      if (same || q.forceReload) state.reload += 1;
+      scheduleSave();
+    },
+    dispose() {
+      if (panelApi) {
+        delete folderStates[panelApi.id];
+        delete tooltips[panelApi.id];
+      }
+      if (instance) unmount(instance);
+    },
+  };
+}
 
 function aiChatRenderer() {
   const element = document.createElement("div");
@@ -455,7 +533,8 @@ function watermark() {
 function tabMenu({ panel, group }) {
   const isSearch = isSearchTab(panel.id);
   const isAiChat = isAiChatTab(panel.id);
-  const isReader = !isSearch && !isAiChat && panel.id !== "search";
+  const isFolder = isFolderTab(panel.id);
+  const isReader = !isSearch && !isAiChat && !isFolder && panel.id !== "search";
   const where = group.api.location.type;
   const items = [
     { label: formatShortcut("close") ? `关闭（${formatShortcut("close")}）` : "关闭", action: () => panel.api.close() },
@@ -476,6 +555,15 @@ function tabMenu({ panel, group }) {
   }
   if (isSearch) items.push({ label: "在新窗口打开", action: () => popOutSearch(panel.id) });
   if (isAiChat) items.push({ label: "在新窗口打开", action: () => popOutAiChat(panel.id) });
+  if (isFolder) {
+    items.push("separator", {
+      label: "在目录树中定位",
+      action: () => {
+        const st = folderStates[panel.id] || panel.params || {};
+        hooks.onlocate?.({ lib: st.lib, rel: st.rel || "", key: st.key || "", isFolder: true });
+      },
+    });
+  }
   if (isReader) {
     items.push({ label: "在新窗口打开", action: () => popOut(panel) });
     items.push("separator");
@@ -675,6 +763,10 @@ function listenToPopouts() {
 
 // ------------------------------------------------------------ public
 
+export function setLibraries(libs) {
+  hooks.libraries = libs || [];
+}
+
 /** Create the dockview in `element` and restore the saved workspace. */
 export async function init(element, h) {
   hooks = h;
@@ -686,9 +778,11 @@ export async function init(element, h) {
         ? searchRenderer()
         : opts.name === "aichat"
           ? aiChatRenderer()
-          : opts.name === "results"
-            ? oldResultsRenderer()
-            : readerRenderer(),
+          : opts.name === "folder"
+            ? folderRenderer()
+            : opts.name === "results"
+              ? oldResultsRenderer()
+              : readerRenderer(),
     createWatermarkComponent: watermark,
     getTabContextMenuItems: tabMenu,
   });
@@ -713,8 +807,11 @@ export async function init(element, h) {
     if (!restoring && panel) touchActivation(panel.id);
     if (panel && isSearchTab(panel.id)) lastSearchId = panel.id;
     recordViewHistory(panel);
+    const isReaderPanel = panel && !isSearchTab(panel.id) && !isAiChatTab(panel.id) && !isFolderTab(panel.id) && panel.id !== "search";
     // a restored tab that was never shown has no document info yet: its parameters have it
-    const i = panel && (infos[panel.id] || (panel.params?.lib ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null, author: "" } : null));
+    const i = isReaderPanel
+      ? infos[panel.id] || (panel.params?.lib ? { title: panel.title, lib: panel.params.lib, path: panel.params.path, bookId: panel.params.bookId ?? null, author: "" } : null)
+      : null;
     if (i) ws.current = { ...i, title: panel.title || i.title };
     else if (!panel || !dv.panels.some((x) => infos[x.id])) ws.current = null;
 
@@ -724,6 +821,10 @@ export async function init(element, h) {
       ws.activeSearch = searchResults[panel.id] || null;
     } else if (panel && isAiChatTab(panel.id)) {
       ws.activeTab = { kind: "aichat", title: panel.title || "AI 助手" };
+      ws.activeDoc = null;
+      ws.activeSearch = null;
+    } else if (panel && isFolderTab(panel.id)) {
+      ws.activeTab = { kind: "folder", title: panel.title || "目录" };
       ws.activeDoc = null;
       ws.activeSearch = null;
     } else if (panel && i) {
@@ -775,7 +876,7 @@ export async function init(element, h) {
         });
       }
     }
-    if (!restoring && panel?.params?.lib && panel?.params?.path != null) {
+    if (!restoring && !isFolderTab(panel?.id) && panel?.params?.lib && panel?.params?.path != null) {
       const { lib, path } = panel.params;
       const tabId = panel.id;
       queueMicrotask(() => {
@@ -799,8 +900,19 @@ export async function init(element, h) {
     const known = new Set((h.libraries || []).map((l) => l.id));
     if (Array.isArray(saved.viewHistory)) {
       viewHistory = saved.viewHistory
-        .filter((x) => x && typeof x.lib === "string" && x.path != null && known.has(x.lib))
-        .map((x) => ({ tab: `${x.lib}|${x.path}`, lib: x.lib, bookId: x.bookId ?? null, path: x.path, title: x.title || "" }))
+        .filter((x) => x && typeof x.lib === "string" && known.has(x.lib) && (x.kind === "folder" || x.path != null))
+        .map((x) =>
+          x.kind === "folder"
+            ? {
+                kind: "folder",
+                tab: folderHistoryKey(x.lib, x.rel || "", x.key || ""),
+                lib: x.lib,
+                rel: x.rel || "",
+                key: x.key || "",
+                title: x.title || "",
+              }
+            : { tab: `${x.lib}|${x.path}`, lib: x.lib, bookId: x.bookId ?? null, path: x.path, title: x.title || "" },
+        )
         .slice(-MAX_VIEW_HISTORY);
       const idx = Number.isInteger(saved.viewIndex) ? saved.viewIndex : viewHistory.length - 1;
       viewIndex = viewHistory.length ? Math.max(0, Math.min(idx, viewHistory.length - 1)) : -1;
@@ -817,6 +929,7 @@ export async function init(element, h) {
     for (const panel of dv.panels) {
       if (isSearchTab(panel.id)) searchSeq = Math.max(searchSeq, Number(panel.id.slice(7)) || 0);
       if (isAiChatTab(panel.id)) aiChatSeq = Math.max(aiChatSeq, Number(panel.id.slice(7)) || 0);
+      if (isFolderTab(panel.id) && panel.id !== FOLDER_BROWSE_ID) folderSeq = Math.max(folderSeq, Number(panel.id.slice(7)) || 0);
     }
     for (const panel of [...dv.panels]) {
       const lib = panel.params?.lib;
@@ -874,6 +987,48 @@ export async function openVolume({ lib, bookId = null, path = null, lb = null, q
 }
 
 /**
+ * Open a folder / library root in a directory card tab. By default reuses the
+ * active folder tab (or the shared `folder:browse` tab) so browsing folders
+ * does not flood the tab strip, while leaving standard document tabs untouched.
+ * Pass `newTab: true` (e.g. Ctrl/middle-click) to open an independent folder tab.
+ */
+export function openFolder({ lib, rel = "", key = "", title = "" }, { newTab = false, panelId = null, recordHistory = true } = {}) {
+  if (!dv || !lib) return null;
+  const libObj = (hooks.libraries || []).find((l) => l.id === lib);
+  const label = title || (rel ? rel.split("/").filter(Boolean).pop() : "") || libObj?.title || lib;
+  let target = null;
+  if (!newTab) {
+    if (panelId && isFolderTab(panelId)) target = dv.getPanel(panelId);
+    if (!target && isFolderTab(dv.activePanel?.id)) target = dv.activePanel;
+    if (!target) target = dv.getPanel(FOLDER_BROWSE_ID);
+  }
+  const params = { kind: "folder", lib, rel: rel || "", key: key || "", title: label };
+  if (target) {
+    target.api.setActive();
+    target.api.updateParameters(params);
+    target.api.setTitle(label);
+    if (recordHistory) recordFolderHistory({ lib, rel: rel || "", key: key || "", title: label });
+    return target.id;
+  }
+  const id = !newTab && !dv.getPanel(FOLDER_BROWSE_ID) ? FOLDER_BROWSE_ID : `folder:${++folderSeq}`;
+  dv.addPanel({
+    id,
+    component: "folder",
+    title: label,
+    params,
+  });
+  if (recordHistory) recordFolderHistory({ lib, rel: rel || "", key: key || "", title: label });
+  return id;
+}
+
+/** Reload all open folder tabs belonging to `lib` (e.g. after files change). */
+export function refreshFolderTabs(lib) {
+  for (const st of Object.values(folderStates)) {
+    if (!lib || st.lib === lib) st.reload += 1;
+  }
+}
+
+/**
  * Add text to a note that is being edited in a tab: it goes to the editor
  * (saving the editor later must not lose it). False when it is not edited.
  */
@@ -890,8 +1045,27 @@ export function cycleTab(delta) {
   list[(i + delta + list.length) % list.length].api.setActive();
 }
 
+function recordFolderHistory({ lib, rel = "", key = "", title = "" }) {
+  if (restoring || navigatingHistory || !lib) return;
+  const tab = folderHistoryKey(lib, rel, key);
+  if (viewIndex >= 0 && viewHistory[viewIndex]?.tab === tab) return;
+  viewHistory = viewHistory.slice(0, viewIndex + 1);
+  viewHistory.push({ kind: "folder", tab, lib, rel, key, title });
+  if (viewHistory.length > MAX_VIEW_HISTORY) {
+    viewHistory.shift();
+  }
+  viewIndex = viewHistory.length - 1;
+  syncHistoryButtons();
+  scheduleSave();
+}
+
 function recordViewHistory(panel) {
-  if (restoring || navigatingHistory) return;
+  if (restoring || navigatingHistory || !panel) return;
+  if (isFolderTab(panel.id)) {
+    const st = folderStates[panel.id] || panel.params || {};
+    if (st.lib) recordFolderHistory({ lib: st.lib, rel: st.rel || "", key: st.key || "", title: panel.title || st.title || "" });
+    return;
+  }
   const lib = panel?.params?.lib;
   const path = panel?.params?.path;
   if (!lib || path == null) return;
@@ -914,6 +1088,15 @@ function syncHistoryButtons() {
 }
 
 async function activateHistoryEntry(entry) {
+  if (entry.kind === "folder") {
+    const exists = (hooks.libraries || []).some((l) => l.id === entry.lib);
+    if (!exists) return false;
+    openFolder(
+      { lib: entry.lib, rel: entry.rel || "", key: entry.key || "", title: entry.title || "" },
+      { newTab: false, recordHistory: false },
+    );
+    return true;
+  }
   if (popouts[entry.tab]) {
     const w = await WebviewWindow.getByLabel(popouts[entry.tab].label);
     if (w) {
@@ -970,14 +1153,18 @@ export async function navigateHistory(delta) {
  * the history, so a row can be picked directly).
  */
 export function viewHistorySnapshot() {
-  const items = viewHistory.map((e, index) => ({
-    index,
-    title: e.title || infos[e.tab]?.title || e.path || e.bookId || e.tab,
-    lib: e.lib,
-    libTitle: (hooks.libraries || []).find((l) => l.id === e.lib)?.title || e.lib,
-    path: e.path,
-    bookId: e.bookId ?? null,
-  }));
+  const items = viewHistory.map((e, index) => {
+    const libTitle = (hooks.libraries || []).find((l) => l.id === e.lib)?.title || e.lib;
+    return {
+      index,
+      title: e.title || infos[e.tab]?.title || e.path || e.rel || e.bookId || libTitle || e.tab,
+      lib: e.lib,
+      libTitle,
+      path: e.kind === "folder" ? (e.rel || e.key || "") : e.path,
+      bookId: e.bookId ?? null,
+      isFolder: e.kind === "folder",
+    };
+  });
   return { index: viewIndex, items: items.reverse() };
 }
 
@@ -1044,13 +1231,19 @@ export function closeDocument(lib, path) {
  * open, and the one that was active, once the saves have had time to finish.
  */
 export async function closeUnder(lib, path) {
-  const open = (dv?.panels || []).filter((p) => p.params?.lib === lib && (p.params.path === path || p.params.path?.startsWith(path + "/")));
+  const open = (dv?.panels || []).filter((p) => !isFolderTab(p.id) && p.params?.lib === lib && (p.params.path === path || p.params.path?.startsWith(path + "/")));
+  const openFolders = (dv?.panels || []).filter((p) => {
+    if (!isFolderTab(p.id)) return false;
+    const st = folderStates[p.id] || p.params;
+    return st?.lib === lib && (st.rel === path || st.rel?.startsWith(path + "/"));
+  });
   const active = ws.current?.lib === lib ? ws.current.path : null;
   const paths = open.map((p) => p.params.path);
   open.forEach((p) => p.api.close());
-  if (open.length) {
+  openFolders.forEach((p) => p.api.close());
+  if (open.length || openFolders.length) {
     scheduleSave();
-    await new Promise((r) => setTimeout(r, 400));
+    if (open.length) await new Promise((r) => setTimeout(r, 400));
   }
   return { paths, active: active && paths.includes(active) ? active : null };
 }

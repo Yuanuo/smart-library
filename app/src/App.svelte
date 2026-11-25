@@ -797,6 +797,7 @@
   });
 
   $effect(() => {
+    workspace.setLibraries(libraries);
     workspace.setStartState({
       libraryCount: libraries.length,
       aiConfigured,
@@ -857,9 +858,17 @@
     }
   }
 
-  async function openNode(lib, node) {
+  async function openNode(lib, node, key = "") {
     try {
-      await workspace.openVolume({ lib: lib.id, bookId: node.book_id, path: node.path ?? node.start });
+      if (!node) {
+        workspace.openFolder({ lib: lib.id, rel: "", key: "", title: lib.title });
+        return;
+      }
+      if (node.book_id || node.path) {
+        await workspace.openVolume({ lib: lib.id, bookId: node.book_id, path: node.path ?? node.start });
+        return;
+      }
+      workspace.openFolder({ lib: lib.id, rel: node.rel || "", key: key || "", title: node.title });
     } catch (e) {
       error = String(e);
     }
@@ -868,8 +877,8 @@
   async function openQuick(item) {
     try {
       if (item.kind === "folder") {
-        // a folder is not read: show it in the tree
-        if (!(await libPanel?.reveal({ lib: item.lib, path: item.path }))) error = "目录树里找不到这个文件夹";
+        workspace.openFolder({ lib: item.lib, rel: item.path || "", title: item.title || "" });
+        await libPanel?.reveal({ lib: item.lib, rel: item.path || "", isFolder: true });
         return;
       }
       // a citation's quote is highlighted as a phrase

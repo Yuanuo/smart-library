@@ -234,6 +234,7 @@
       nodes[lib] = fresh;
       open[lib] = true;
     }
+    workspace.refreshFolderTabs(lib);
   }
 
   const guard = (lib, f) => async (...a) => {
@@ -808,6 +809,7 @@
       });
       if (key) parent.children = merged;
       else nodes[lib] = merged;
+      workspace.refreshFolderTabs(lib);
     }
     const level = key ?? "";
     const list = key ? nodeAt(lib, key).children : nodes[lib];
@@ -1201,29 +1203,68 @@
   const trailOf = (lib, bookId, path) =>
     isFolder(lib) ? findFolderNode(lib, path) : isNotes(lib) ? findNoteNode(lib, path) : findNode(nodes[lib] ?? [], { bookId, path });
 
-  /** Open the tree down to the node of a document and select it. */
-  export async function reveal({ lib, bookId, path }) {
+  /** Open the tree down to the node of a document (or folder) and select it. */
+  export async function reveal({ lib, bookId = null, path = null, rel = "", key = "", isFolder = false }) {
     if (!libraries.some((l) => l.id === lib)) return false;
     open[lib] = true;
     if (!nodes[lib]) await load(lib);
+    if (isFolder) {
+      if (!rel && !key) {
+        current = null;
+        await tick();
+        panel?.querySelector(`[data-lib="${lib}"] .root`)?.scrollIntoView({ block: "center" });
+        return true;
+      }
+      if (key && !rel) {
+        const parts = key.split("/").filter(Boolean);
+        const ex = expansionOf(lib);
+        let acc = "";
+        for (const p of parts.slice(0, -1)) {
+          acc += `/${p}`;
+          ex[acc] = true;
+        }
+        current = { lib, key };
+        await tick();
+        panel?.querySelector(`[data-lib="${lib}"] [data-key="${key}"]`)?.scrollIntoView({ block: "center" });
+        return true;
+      }
+      const trail = await findFolderNode(lib, rel);
+      if (!trail) return false;
+      const ex = expansionOf(lib);
+      let acc = "";
+      for (const i of trail.slice(0, -1)) {
+        acc += `/${i}`;
+        ex[acc] = true;
+      }
+      acc += `/${trail[trail.length - 1]}`;
+      current = { lib, key: acc };
+      await tick();
+      panel?.querySelector(`[data-lib="${lib}"] [data-key="${acc}"]`)?.scrollIntoView({ block: "center" });
+      return true;
+    }
     const trail = await trailOf(lib, bookId, path);
     if (!trail) return false;
     const ex = expansionOf(lib);
-    let key = "";
+    let acc = "";
     for (const i of trail.slice(0, -1)) {
-      key += `/${i}`;
-      ex[key] = true;
+      acc += `/${i}`;
+      ex[acc] = true;
     }
-    key += `/${trail[trail.length - 1]}`;
-    current = { lib, key };
+    acc += `/${trail[trail.length - 1]}`;
+    current = { lib, key: acc };
     await tick();
-    panel?.querySelector(`[data-lib="${lib}"] [data-key="${key}"]`)?.scrollIntoView({ block: "center" });
+    panel?.querySelector(`[data-lib="${lib}"] [data-key="${acc}"]`)?.scrollIntoView({ block: "center" });
     return true;
   }
 
   function toggle(l) {
     open[l.id] = !open[l.id];
     if (open[l.id] && !nodes[l.id]) load(l.id);
+  }
+
+  function openRoot(l) {
+    toggle(l);
+    onopen(l, null, "");
   }
 
   function badge(l) {
@@ -1350,12 +1391,12 @@
       <div class="root" class:marked={menuMark?.lib === l.id && menuMark.key === null} data-rel="" data-isdir="1" role="treeitem" aria-expanded={!!open[l.id]} aria-selected="false" tabindex="0"
         oncontextmenu={(e) => libMenu(e, l)}
         onpointerdown={(e) => dragNode(l, null, null, e)}
-        onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggle(l))}>
+        onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openRoot(l))}>
         <button class="twisty" onclick={() => toggle(l)} tabindex="-1" aria-hidden="true">
           <Icon name={open[l.id] ? "chevron-down" : "chevron-right"} size={14} />
         </button>
         <span class="libicon" title={kindLabel(l)}><Icon name={kindIcon(l)} size={18} /></span>
-        <button class="title" onclick={() => toggle(l)} tabindex="-1" title={`${l.title}\n${l.remote ? `${l.remote}\n` : ""}${l.source}${l.kind === "folder" && l.writable ? "\n读写模式" : ""}`}>{l.title}</button>
+        <button class="title" onclick={() => openRoot(l)} tabindex="-1" title={`${l.title}\n${l.remote ? `${l.remote}\n` : ""}${l.source}${l.kind === "folder" && l.writable ? "\n读写模式" : ""}`}>{l.title}</button>
         {#if b?.index}
           <button class="badge warn link" tabindex="-1" title="点击建立索引" onclick={(e) => (e.stopPropagation(), onindex(l.id))}>{b.text}</button>
         {:else if b?.gitUpdate}
@@ -1387,7 +1428,7 @@
             onopen={(node, key) => {
               selected = { lib: l.id, key };
               current = { lib: l.id, key }; // the highlight follows what was opened last
-              onopen(l, node);
+              onopen(l, node, key);
             }} />
         {/if}
       {/if}

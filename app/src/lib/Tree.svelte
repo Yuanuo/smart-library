@@ -44,7 +44,7 @@
         {:else if node.href}
           <span class="leaf unsupported" title="内容尚未接入：{node.href}">{node.title}</span>
         {:else}
-          <button class="folder" onclick={(e) => click(e, node, key, () => ontoggle(key))} title={node.title}>{node.title}</button>
+          <button class="folder" onclick={(e) => click(e, node, key, () => { onopen(node, key); if (hasChildren) ontoggle(key); })} title={node.title}>{node.title}</button>
         {/if}
       </div>
       {#if hasChildren && open}
