@@ -1289,6 +1289,26 @@ pub async fn rename_library(id: String, title: String, state: State<'_, AppState
     Ok(status_of(&state))
 }
 
+/// Reorder the registered libraries. Any registered library omitted from `ids`
+/// is kept at the end in its existing order.
+#[tauri::command]
+pub async fn reorder_libraries(ids: Vec<String>, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    {
+        let mut libs = state.libraries.write().unwrap();
+        let mut remaining = std::mem::take(&mut *libs);
+        let mut ordered = Vec::with_capacity(remaining.len());
+        for id in ids {
+            if let Some(pos) = remaining.iter().position(|l| l.id == id) {
+                ordered.push(remaining.remove(pos));
+            }
+        }
+        ordered.extend(remaining);
+        *libs = ordered;
+    }
+    state.save_registry()?;
+    Ok(status_of(&state))
+}
+
 /// A place where a note can be added: a library's top or one of its notes.
 #[derive(Serialize)]
 pub struct NoteTargetDto {

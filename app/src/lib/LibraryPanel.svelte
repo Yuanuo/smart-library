@@ -512,13 +512,15 @@
 
   /** Dragging a node (or the picked nodes, when it is one of them) into a search range list. */
   function dragNode(l, node, key, e) {
-    // in a read-write folder the nodes can also be dropped on a folder of the tree to move them
+    // top-level library rows can be dragged to reorder; in a notes / read-write folder nodes can be moved
     const move =
-      node && isNotes(l.id)
-        ? { reorder: true, check: (row, zone) => noteVerdict(l, node, key, row, zone), onDrop: (row, zone) => noteDrop(l, node, key, row, zone) }
-        : node && isRwFolder(l.id) && (node.path == null || isEditableName(node.rel))
-          ? { check: (row) => moveVerdict(l, node, key, row), onDrop: (row) => dropMove(l, node, key, row) }
-          : null;
+      !node && libraries.length > 1
+        ? { selector: ".root", reorder: "only", check: (row, zone) => libVerdict(l, row, zone), onDrop: (row, zone) => libDrop(l, row, zone) }
+        : node && isNotes(l.id)
+          ? { reorder: true, check: (row, zone) => noteVerdict(l, node, key, row, zone), onDrop: (row, zone) => noteDrop(l, node, key, row, zone) }
+          : node && isRwFolder(l.id) && (node.path == null || isEditableName(node.rel))
+            ? { check: (row) => moveVerdict(l, node, key, row), onDrop: (row) => dropMove(l, node, key, row) }
+            : null;
     startScopeDrag(
       e,
       () => {
@@ -528,6 +530,49 @@
       },
       move,
     );
+  }
+
+  /** Desired library id order after dropping `dragId` before/after `targetId`, or null when unchanged. */
+  function libOrderAfter(dragId, targetId, zone) {
+    if (!targetId || targetId === dragId) return null;
+    const ids = libraries.map((x) => x.id);
+    if (!ids.includes(dragId)) return null;
+    const rest = ids.filter((id) => id !== dragId);
+    const at = rest.indexOf(targetId);
+    if (at < 0) return null;
+    rest.splice(at + (zone === "after" ? 1 : 0), 0, dragId);
+    return rest.every((id, i) => id === ids[i]) ? null : rest;
+  }
+
+  function libVerdict(l, row, zone) {
+    const targetId = row.closest("[data-lib]")?.dataset.lib;
+    return libOrderAfter(l.id, targetId, zone) ? "ok" : null;
+  }
+
+  async function libDrop(l, row, zone) {
+    const targetId = row.closest("[data-lib]")?.dataset.lib;
+    const next = libOrderAfter(l.id, targetId, zone);
+    if (!next) return;
+    try {
+      await api.reorderLibraries(next);
+      await onlibs?.();
+    } catch (e) {
+      onerror?.(String(e));
+    }
+  }
+
+  async function shiftLibrary(id, by) {
+    const ids = libraries.map((x) => x.id);
+    const idx = ids.indexOf(id);
+    const to = idx + by;
+    if (idx < 0 || to < 0 || to >= ids.length) return;
+    [ids[idx], ids[to]] = [ids[to], ids[idx]];
+    try {
+      await api.reorderLibraries(ids);
+      await onlibs?.();
+    } catch (e) {
+      onerror?.(String(e));
+    }
   }
 
   const parentOf = (r) => r.split("/").slice(0, -1).join("/");
@@ -1206,6 +1251,7 @@
     e.stopPropagation();
     const building = l.building || !!progress[l.id];
     const notes = l.kind === "notes";
+    const libIdx = libraries.findIndex((x) => x.id === l.id);
     menuMark = { lib: l.id, key: null };
     menu = {
       x: e.clientX,
@@ -1220,7 +1266,12 @@
               ...(l.kind === "folder" ? [{ label: "新建文件夹…", action: () => newFolder(l.id, null) }] : []),
             ]
           : [],
-        [{ label: "重命名…（F2）", action: () => renameLibrary(l) }, { label: "属性…", action: () => onprops(l, null, "", l.title) }],
+        [
+          { label: "重命名…（F2）", action: () => renameLibrary(l) },
+          { label: "上移", action: () => shiftLibrary(l.id, -1), disabled: libIdx <= 0 },
+          { label: "下移", action: () => shiftLibrary(l.id, 1), disabled: libIdx < 0 || libIdx >= libraries.length - 1 },
+          { label: "属性…", action: () => onprops(l, null, "", l.title) },
+        ],
         [
           ...(l.kind === "folder" ? [{ label: openFolderLabel, action: () => openInFileManager(l.id, null) }] : []),
           ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),

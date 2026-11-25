@@ -201,6 +201,7 @@ fn main() {
             commands::diary_today,
             commands::note_chain,
             commands::rename_library,
+            commands::reorder_libraries,
             commands::rename_note,
             commands::save_note,
             commands::note_append,

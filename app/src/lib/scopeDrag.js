@@ -54,11 +54,16 @@ export function startScopeDrag(e, getItems, moveTo = null) {
     ghost.style.top = `${ev.clientY + 12}px`;
     const under = document.elementFromPoint(ev.clientX, ev.clientY);
     setOver(under?.closest("[data-scope-drop]") ?? null);
-    // a row of the tree to drop on (moving the dragged nodes into that folder)
-    const row = moveTo ? under?.closest("[data-rel]") : null;
-    // `reorder`: the top / bottom quarter of a row means before / after it, the middle means into it
+    // a row of the tree to drop on (moving the dragged nodes into that folder, or reordering)
+    const row = moveTo ? under?.closest(moveTo.selector ?? "[data-rel]") : null;
+    // `reorder`: the top / bottom quarter of a row means before / after it, the middle means into it;
+    // `"only"`: top / bottom half means before / after (no "into" zone)
     let zone = "in";
-    if (row && moveTo.reorder && row.dataset.key) {
+    if (row && moveTo.reorder === "only") {
+      const r = row.getBoundingClientRect();
+      const f = (ev.clientY - r.top) / Math.max(1, r.height);
+      zone = f < 0.5 ? "before" : "after";
+    } else if (row && moveTo.reorder && row.dataset.key) {
       const r = row.getBoundingClientRect();
       const f = (ev.clientY - r.top) / Math.max(1, r.height);
       zone = f < 0.25 ? "before" : f > 0.75 ? "after" : "in";
