@@ -48,6 +48,14 @@ pub struct KepanEntry {
     pub text: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VerseEntry {
+    /// paragraph marker, e.g. `¶4`
+    pub lb: String,
+    /// visible text of the verse paragraph
+    pub text: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Article {
     pub text: VolumeText,
@@ -55,6 +63,8 @@ pub struct Article {
     pub headings: Vec<Heading>,
     /// detected 科判 paragraphs (populated when rendered with `detect_structure`)
     pub kepans: Vec<KepanEntry>,
+    /// detected 颂词 paragraphs (populated when rendered with `detect_structure`)
+    pub verses: Vec<VerseEntry>,
     /// structured HTML when rendering was asked for
     pub html: Option<String>,
     /// Source attribution, separated from the searchable document text.
@@ -146,6 +156,7 @@ fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, ru
         dir,
         headings: Vec::new(),
         kepans: Vec::new(),
+        verses: Vec::new(),
         rules,
         anchors: std::collections::HashMap::new(),
         pending_anchors: Vec::new(),
@@ -160,6 +171,7 @@ fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, ru
         meta,
         headings: w.headings,
         kepans: w.kepans,
+        verses: w.verses,
         html: w.html.map(|h| h.buf),
         attribution: None,
         anchors: w.anchors,
@@ -707,6 +719,437 @@ pub fn select_kepan_siblings(
     filtered.into_iter().map(|(_, item)| item.clone()).collect()
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KepanRef {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_title: Option<String>,
+    pub lb: String,
+    pub label: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KepanChildLink {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lb: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LinkedKepan {
+    pub lb: String,
+    pub kind: &'static str,
+    pub level: u8,
+    pub label: String,
+    pub title: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<KepanRef>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<KepanChildLink>,
+}
+
+fn ganzhi_level(c: char) -> Option<u8> {
+    "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥"
+        .chars()
+        .position(|g| g == c)
+        .map(|i| (i + 1) as u8)
+}
+
+fn normalize_kepan_title(s: &str) -> String {
+    let stripped = strip_inline_parens(s).unwrap_or_else(|| s.to_string());
+    stripped
+        .chars()
+        .filter(|c| {
+            !c.is_whitespace()
+                && !matches!(
+                    c,
+                    '，' | '。' | '！' | '？' | '；' | '：' | '、' | ',' | '.' | '!' | '?' | ';' | ':'
+                        | '“' | '”' | '‘' | '’' | '「' | '」' | '『' | '』' | '—' | '-'
+                )
+        })
+        .collect()
+}
+
+fn kepan_titles_compatible(a: &str, b: &str) -> bool {
+    let na = normalize_kepan_title(a);
+    let nb = normalize_kepan_title(b);
+    !na.is_empty() && !nb.is_empty() && (na == nb || na.contains(&nb) || nb.contains(&na))
+}
+
+struct ParsedSubItem {
+    text: String,
+    child_num: u32,
+    child_title: String,
+    target_path: Option<String>,
+    target_doc_title: Option<String>,
+    target_lb: Option<String>,
+    target_label: Option<String>,
+}
+
+struct ParsedKepanNode {
+    path: String,
+    doc_title: String,
+    lb: String,
+    is_split: bool,
+    level: u8,
+    num: u32,
+    label: String,
+    title: String,
+    text: String,
+    items: Vec<ParsedSubItem>,
+    parent: Option<KepanRef>,
+}
+
+fn parse_kepan_node(path: &str, doc_title: &str, k: &KepanEntry) -> ParsedKepanNode {
+    let t = k.text.trim();
+    let mut level = 0u8;
+    let mut num = 0u32;
+    let mut label = String::new();
+    let mut title = String::new();
+
+    if let Some(first) = t.chars().next() {
+        if let Some(lv) = ganzhi_level(first) {
+            let rest = &t[first.len_utf8()..];
+            let num_bytes: usize = rest.chars().take_while(|&c| is_kepan_num(c)).map(char::len_utf8).sum();
+            if num_bytes > 0 {
+                let num_str = &rest[..num_bytes];
+                level = lv;
+                num = parse_series_num(num_str).unwrap_or(0);
+                label = format!("{}{}", first, num_str);
+                let after = &rest[num_bytes..];
+                if k.is_split {
+                    if let Some(inner) = after.strip_prefix('（').or_else(|| after.strip_prefix('(')) {
+                        if let Some(end) = inner.find(['）', ')']) {
+                            title = inner[..end].trim().to_string();
+                        }
+                    }
+                    if title.is_empty() {
+                        let before = find_fen_colon(after).map(|(b, _)| b).unwrap_or(after);
+                        title = before.trim_start_matches(|c: char| c == '、' || c.is_whitespace()).trim().to_string();
+                    }
+                } else {
+                    title = after
+                        .trim_start_matches(|c: char| c == '、' || c.is_whitespace())
+                        .trim_end_matches(|c: char| matches!(c, '：' | ':') || c.is_whitespace())
+                        .to_string();
+                }
+            }
+        }
+    }
+    if label.is_empty() && k.is_split {
+        if let Some((before, _)) = find_fen_colon(t) {
+            label = before.trim().to_string();
+            title = label.clone();
+        }
+    }
+
+    let mut items = Vec::new();
+    if k.is_split {
+        if let Some((before, after_colon)) = find_fen_colon(t) {
+            let fen_num_str: String = t[before.len() + '分'.len_utf8()..]
+                .chars()
+                .take_while(|&c| is_kepan_num(c))
+                .collect();
+            let expected = parse_series_num(&fen_num_str).unwrap_or(0) as usize;
+            let body = after_colon.trim().trim_end_matches(|c: char| matches!(c, '。' | '；' | ';') || c.is_whitespace());
+            let mut raw_parts: Vec<&str> = body
+                .split(['；', ';'])
+                .map(|s| s.trim().trim_end_matches(['。', '；', ';']))
+                .filter(|s| !s.is_empty())
+                .collect();
+            if raw_parts.len() == 1 && expected >= 2 && strip_ganzhi_num(raw_parts[0]).is_none() {
+                let by_dun: Vec<&str> = body.split('、').map(str::trim).filter(|s| !s.is_empty()).collect();
+                if by_dun.len() == expected {
+                    raw_parts = by_dun;
+                }
+            }
+            for (idx, part) in raw_parts.into_iter().enumerate() {
+                let (child_num, child_title) = if let Some(first) = part.chars().next() {
+                    if ganzhi_level(first).is_some() {
+                        let rest = &part[first.len_utf8()..];
+                        let nb: usize = rest.chars().take_while(|&c| is_kepan_num(c)).map(char::len_utf8).sum();
+                        if nb > 0 {
+                            let n = parse_series_num(&rest[..nb]).unwrap_or((idx + 1) as u32);
+                            let ct = rest[nb..].trim_start_matches(|c: char| c == '、' || c.is_whitespace()).trim().to_string();
+                            (n, ct)
+                        } else {
+                            ((idx + 1) as u32, part.to_string())
+                        }
+                    } else {
+                        let nb: usize = part.chars().take_while(|&c| is_kepan_num(c)).map(char::len_utf8).sum();
+                        if nb > 0 && part[nb..].starts_with('、') {
+                            let n = parse_series_num(&part[..nb]).unwrap_or((idx + 1) as u32);
+                            let ct = part[nb + '、'.len_utf8()..].trim().to_string();
+                            (n, ct)
+                        } else {
+                            ((idx + 1) as u32, part.to_string())
+                        }
+                    }
+                } else {
+                    ((idx + 1) as u32, String::new())
+                };
+                items.push(ParsedSubItem {
+                    text: part.to_string(),
+                    child_num,
+                    child_title,
+                    target_path: None,
+                    target_doc_title: None,
+                    target_lb: None,
+                    target_label: None,
+                });
+            }
+        }
+    }
+
+    ParsedKepanNode {
+        path: path.to_string(),
+        doc_title: doc_title.to_string(),
+        lb: k.lb.clone(),
+        is_split: k.is_split,
+        level,
+        num,
+        label,
+        title,
+        text: k.text.clone(),
+        items,
+        parent: None,
+    }
+}
+
+/// Build bidirectional parent/child kepan links across one or more ordered documents,
+/// returning the linked kepan entries belonging to `cur_path`.
+/// Repeated identical `kepan-split` recaps at the start of later lessons share the same
+/// logical stack frame so children in later lessons link back to earlier splits too.
+pub fn build_kepan_links(docs: &[(&str, &str, &[KepanEntry])], cur_path: &str) -> Vec<LinkedKepan> {
+    let mut nodes: Vec<ParsedKepanNode> = Vec::new();
+    for &(path, doc_title, kepans) in docs {
+        for k in kepans {
+            nodes.push(parse_kepan_node(path, doc_title, k));
+        }
+    }
+
+    struct Frame {
+        level: u8,
+        num: u32,
+        title: String,
+        owners: Vec<usize>,
+    }
+
+    let mut stack: Vec<Frame> = Vec::new();
+    for i in 0..nodes.len() {
+        let cur_level = nodes[i].level;
+        let cur_num = nodes[i].num;
+        let cur_title = nodes[i].title.clone();
+        let cur_is_split = nodes[i].is_split;
+
+        while let Some(top) = stack.last() {
+            if top.level > cur_level {
+                stack.pop();
+            } else if top.level == cur_level {
+                let is_recap = cur_is_split
+                    && top.num == cur_num
+                    && (kepan_titles_compatible(&top.title, &cur_title)
+                        || (normalize_kepan_title(&top.title).is_empty() && normalize_kepan_title(&cur_title).is_empty()));
+                if is_recap {
+                    break;
+                }
+                stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        // If `cur` is a recap of the same `kepan-split` on top of the stack, join that frame
+        // and inherit already-resolved child links & parent from its primary owner.
+        if cur_is_split
+            && stack
+                .last()
+                .is_some_and(|top| top.level == cur_level && top.num == cur_num)
+        {
+            let first_owner = stack.last().unwrap().owners[0];
+            if nodes[i].parent.is_none() {
+                if let Some(ref p) = nodes[first_owner].parent {
+                    let mut inherited = p.clone();
+                    if inherited.path.is_none() && nodes[first_owner].path != nodes[i].path {
+                        inherited.path = Some(nodes[first_owner].path.clone());
+                        inherited.doc_title = Some(nodes[first_owner].doc_title.clone());
+                    }
+                    nodes[i].parent = Some(inherited);
+                }
+            }
+            let copied: Vec<(Option<String>, Option<String>, Option<String>, Option<String>)> = nodes[first_owner]
+                .items
+                .iter()
+                .map(|it| {
+                    let tp = it.target_path.clone().or_else(|| {
+                        (it.target_lb.is_some() && nodes[first_owner].path != nodes[i].path)
+                            .then(|| nodes[first_owner].path.clone())
+                    });
+                    let td = it.target_doc_title.clone().or_else(|| {
+                        (it.target_lb.is_some() && nodes[first_owner].path != nodes[i].path)
+                            .then(|| nodes[first_owner].doc_title.clone())
+                    });
+                    (tp, td, it.target_lb.clone(), it.target_label.clone())
+                })
+                .collect();
+            let cur_node_path = nodes[i].path.clone();
+            for (idx, (tp, td, tlb, tlab)) in copied.into_iter().enumerate() {
+                if let Some(dst) = nodes[i].items.get_mut(idx) {
+                    if dst.target_lb.is_none() && tlb.is_some() {
+                        dst.target_path = tp.filter(|p| p != &cur_node_path);
+                        dst.target_doc_title = if dst.target_path.is_some() { td } else { None };
+                        dst.target_lb = tlb;
+                        dst.target_label = tlab;
+                    }
+                }
+            }
+            stack.last_mut().unwrap().owners.push(i);
+            continue;
+        }
+
+        if let Some(frame) = stack.last() {
+            let pi = *frame.owners.last().unwrap();
+            if nodes[pi].is_split && !nodes[pi].items.is_empty() && cur_level > 0 && cur_level == frame.level + 1 {
+                let same_doc = nodes[pi].path == nodes[i].path;
+                let cur_path_str = nodes[i].path.clone();
+                let cur_doc_title = nodes[i].doc_title.clone();
+                let cur_lb = nodes[i].lb.clone();
+                let cur_label = nodes[i].label.clone();
+
+                let matched_idx = nodes[pi]
+                    .items
+                    .iter()
+                    .position(|it| it.target_lb.is_none() && it.child_num == cur_num && kepan_titles_compatible(&it.child_title, &cur_title))
+                    .or_else(|| {
+                        same_doc.then(|| {
+                            nodes[pi].items.iter().position(|it| it.target_lb.is_none() && it.child_num == cur_num)
+                        }).flatten()
+                    })
+                    .or_else(|| {
+                        nodes[pi].items.iter().position(|it| it.target_lb.is_none() && kepan_titles_compatible(&it.child_title, &cur_title))
+                    })
+                    .or_else(|| {
+                        (!same_doc).then(|| {
+                            nodes[pi].items.iter().position(|it| {
+                                it.target_lb.is_none() && normalize_kepan_title(&it.child_title).is_empty() && it.child_num == cur_num
+                            })
+                        }).flatten()
+                    });
+
+                if let Some(mi) = matched_idx {
+                    let parent_ref = KepanRef {
+                        path: (!same_doc).then(|| nodes[pi].path.clone()),
+                        doc_title: (!same_doc).then(|| nodes[pi].doc_title.clone()),
+                        lb: nodes[pi].lb.clone(),
+                        label: nodes[pi].label.clone(),
+                        title: nodes[pi].title.clone(),
+                    };
+                    let owners: Vec<usize> = frame.owners.clone();
+                    for owner_idx in owners {
+                        let owner_same_doc = nodes[owner_idx].path == cur_path_str;
+                        if let Some(item) = nodes[owner_idx].items.get_mut(mi) {
+                            if item.target_lb.is_none() {
+                                item.target_path = (!owner_same_doc).then(|| cur_path_str.clone());
+                                item.target_doc_title = (!owner_same_doc).then(|| cur_doc_title.clone());
+                                item.target_lb = Some(cur_lb.clone());
+                                item.target_label = Some(cur_label.clone());
+                            }
+                        }
+                    }
+                    nodes[i].parent = Some(parent_ref);
+                }
+            }
+        }
+        if cur_is_split {
+            stack.push(Frame {
+                level: cur_level,
+                num: cur_num,
+                title: cur_title,
+                owners: vec![i],
+            });
+        }
+    }
+
+    nodes
+        .into_iter()
+        .filter(|n| n.path == cur_path)
+        .map(|n| LinkedKepan {
+            lb: n.lb,
+            kind: if n.is_split { "split" } else { "head" },
+            level: n.level,
+            label: n.label,
+            title: n.title,
+            text: n.text,
+            parent: n.parent,
+            children: n
+                .items
+                .into_iter()
+                .map(|it| KepanChildLink {
+                    text: it.text,
+                    path: it.target_path,
+                    doc_title: it.target_doc_title,
+                    lb: it.target_lb,
+                    label: it.target_label,
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BookRefOccurrence {
+    pub title: String,
+    pub count: usize,
+    pub lbs: Vec<String>,
+}
+
+/// Extract unique `《…》` book citations in order of appearance from `(lb, text)`
+/// pairs, matching the same rule as the frontend reader (`1..=60` chars, no `《》\n。！？；：`).
+pub fn extract_book_refs<'a>(lines: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<BookRefOccurrence> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_title: std::collections::HashMap<String, (usize, Vec<String>)> = std::collections::HashMap::new();
+    for (lb, text) in lines {
+        let mut rest = text;
+        while let Some(open) = rest.find('《') {
+            let after = &rest[open + '《'.len_utf8()..];
+            let Some(close) = after.find('》') else { break };
+            let inner = &after[..close];
+            let valid = !inner.is_empty()
+                && inner.chars().count() <= 60
+                && !inner.chars().any(|c| matches!(c, '《' | '》' | '\n' | '\r' | '。' | '！' | '？' | '；' | '：'));
+            if valid {
+                let entry = by_title.entry(inner.to_string()).or_insert_with(|| {
+                    order.push(inner.to_string());
+                    (0, Vec::new())
+                });
+                entry.0 += 1;
+                if !lb.is_empty() && entry.1.last().map(String::as_str) != Some(lb) && entry.1.len() < 20 {
+                    entry.1.push(lb.to_string());
+                }
+                rest = &after[close + '》'.len_utf8()..];
+            } else {
+                rest = after;
+            }
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|title| {
+            let (count, lbs) = by_title.remove(&title)?;
+            Some(BookRefOccurrence { title, count, lbs })
+        })
+        .collect()
+}
+
 struct Walker {
     pieces: Vec<(String, Option<usize>)>,
     lbs: Vec<String>,
@@ -715,6 +1158,7 @@ struct Walker {
     dir: String,
     headings: Vec<Heading>,
     kepans: Vec<KepanEntry>,
+    verses: Vec<VerseEntry>,
     rules: Rules,
     anchors: std::collections::HashMap<String, String>,
     pending_anchors: Vec<String>,
@@ -860,6 +1304,13 @@ impl Walker {
                             is_split: kc.contains("kepan-split"),
                             text,
                         });
+                    }
+                } else if verse_class.is_some() {
+                    let mut text = String::new();
+                    visible_text(el, &mut text);
+                    let text = text.trim().to_string();
+                    if !text.is_empty() {
+                        self.verses.push(VerseEntry { lb, text });
                     }
                 }
             }
@@ -1183,5 +1634,61 @@ mod tests {
         let picked2 = select_kepan_siblings(&trans, "dir/注释上.md", "注释上");
         let titles2: Vec<&str> = picked2.iter().map(|(_, t)| t.as_str()).collect();
         assert_eq!(titles2, vec!["颂词译文", "注释上", "注释下"]);
+    }
+
+    #[test]
+    fn builds_in_doc_and_cross_doc_kepan_links_and_extracts_book_refs() {
+        let md1 = "壬二（宣说彼等显现依于心）分二：真实宣说；运用其比喻。\n\n癸一、真实宣说：\n\n心行以心造诸业，现于心中心假立，\n\n为调迷心当精勤。\n\n如《入行论》与《赞戒论》所说，再次引用《入行论》。";
+        let md2 = "癸二、运用其比喻：\n\n如为莨菪碱迷醉，呈现种种不同相，";
+        let a1 = read_article(&crate::markdown::to_html(md1), "d/第1课.md", Some(&RenderOptions::default()));
+        let a2 = read_article(&crate::markdown::to_html(md2), "d/第2课.md", Some(&RenderOptions::default()));
+        assert_eq!(a1.verses.len(), 2);
+
+        let docs = vec![
+            ("d/第1课.md", "第1课", a1.kepans.as_slice()),
+            ("d/第2课.md", "第2课", a2.kepans.as_slice()),
+        ];
+        let links1 = build_kepan_links(&docs, "d/第1课.md");
+        assert_eq!(links1.len(), 2);
+        assert_eq!(links1[0].children.len(), 2);
+        assert_eq!(links1[0].children[0].path, None); // same doc
+        assert_eq!(links1[0].children[0].lb.as_deref(), Some("¶2"));
+        assert_eq!(links1[0].children[1].path.as_deref(), Some("d/第2课.md")); // cross doc
+        assert_eq!(links1[0].children[1].lb.as_deref(), Some("¶1"));
+
+        let links2 = build_kepan_links(&docs, "d/第2课.md");
+        assert_eq!(links2.len(), 1);
+        let p = links2[0].parent.as_ref().unwrap();
+        assert_eq!(p.path.as_deref(), Some("d/第1课.md"));
+        assert_eq!(p.label, "壬二");
+
+        let refs = extract_book_refs([
+            ("¶1", "壬二（宣说彼等显现依于心）分二：真实宣说；运用其比喻。"),
+            ("¶5", "如《入行论》与《赞戒论》所说，再次引用《入行论》。"),
+        ]);
+        assert_eq!(refs.len(), 2);
+        assert_eq!((refs[0].title.as_str(), refs[0].count), ("入行论", 2));
+        assert_eq!((refs[1].title.as_str(), refs[1].count), ("赞戒论", 1));
+    }
+
+    #[test]
+    fn repeated_kepan_split_recap_in_later_lesson_preserves_cross_doc_links() {
+        let md2 = "乙一（广说善恶取舍之分类）分三：丙一、以取舍各自分类而真实赞戒；丙二、别分持戒之方法；丙三、与之相关语结文。\n\n丙一、以取舍各自分类而真实赞戒：";
+        let md14 = "乙一（广说善恶取舍之分类）分三：丙一、以取舍各自分类而真实赞戒；丙二、别分持戒之方法；丙三、与之相关语结文。\n\n丙三（与之相关语结文）分四：丁一、无有修持；丁二、教诫。";
+        let a2 = read_article(&crate::markdown::to_html(md2), "d/第2课.md", Some(&RenderOptions::default()));
+        let a14 = read_article(&crate::markdown::to_html(md14), "d/第14课.md", Some(&RenderOptions::default()));
+        let docs = vec![
+            ("d/第2课.md", "第2课", a2.kepans.as_slice()),
+            ("d/第14课.md", "第14课", a14.kepans.as_slice()),
+        ];
+        let links2 = build_kepan_links(&docs, "d/第2课.md");
+        // 第2课's 乙一 -> 丙三 must link across the recap to 第14课's 丙三!
+        assert_eq!(links2[0].children[2].path.as_deref(), Some("d/第14课.md"));
+        assert_eq!(links2[0].children[2].lb.as_deref(), Some("¶2"));
+
+        let links14 = build_kepan_links(&docs, "d/第14课.md");
+        // 第14课's recap 乙一 -> 丙一 inherits the link back to 第2课's 丙一!
+        assert_eq!(links14[0].children[0].path.as_deref(), Some("d/第2课.md"));
+        assert_eq!(links14[0].children[0].lb.as_deref(), Some("¶2"));
     }
 }

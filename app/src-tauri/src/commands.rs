@@ -4318,6 +4318,237 @@ pub async fn sibling_kepans(
     }
 }
 
+fn parse_para_lb_num(lb: &str) -> Option<usize> {
+    lb.strip_prefix('¶')?.parse::<usize>().ok()
+}
+
+/// Extract detected 科判 (with in-doc + optional cross-sibling parent/child links)
+/// and grouped 颂词/偈颂 from a document for AI / MCP tools.
+pub async fn ai_doc_structure(
+    lib: String,
+    path: String,
+    include_kepan: bool,
+    include_verses: bool,
+    include_siblings: bool,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let l = state.library(&lib)?;
+    let (title, kepans_raw, verses_raw) = match l.kind.as_str() {
+        "notes" => {
+            let store = state.notes(&l)?;
+            let p = path.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let id: i64 = p.parse().map_err(|_| format!("不是笔记：{}", p))?;
+                let note = store.get(id)?.ok_or("笔记不存在")?;
+                let a = notes::article(&note.content, Some(&RenderOptions::default()));
+                Ok::<_, String>((note.title, a.kepans, a.verses))
+            })
+            .await
+            .map_err(|e| format!("读取笔记结构失败：{}", e))??
+        }
+        "folder" => {
+            let f = state.folder(&l)?;
+            let p = path.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let name = p.rsplit('/').next().unwrap_or(&p);
+                let title = folder::title_of(name).to_string();
+                let a = f.article(&p, Some(&RenderOptions::default()))?;
+                Ok::<_, String>((title, a.kepans, a.verses))
+            })
+            .await
+            .map_err(|e| format!("读取文档结构失败：{}", e))??
+        }
+        "html" => {
+            let bc = state.bookcase_of(&l)?;
+            let t = state.html_tree(&l)?;
+            let p = path.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let leaf = t.leaf(&p).ok_or_else(|| format!("目录里没有这篇文章：{}", p))?;
+                let a = bc.article(&p, Some(&RenderOptions::default()))?;
+                Ok::<_, String>((leaf.title.clone(), a.kepans, a.verses))
+            })
+            .await
+            .map_err(|e| format!("读取文章结构失败：{}", e))??
+        }
+        other => {
+            return Err(format!(
+                "当前知识库类型（{}）暂不支持文档科判/偈颂结构识别（支持 folder / html / notes）",
+                other
+            ));
+        }
+    };
+
+    let linked_kepans = if include_kepan {
+        if include_siblings && !kepans_raw.is_empty() {
+            let sibs = sibling_kepans(lib.clone(), path.clone(), state).await.unwrap_or_default();
+            if sibs.iter().any(|s| s.path == path) {
+                let doc_refs: Vec<(&str, &str, &[smart_library_core::article::KepanEntry])> = sibs
+                    .iter()
+                    .map(|s| (s.path.as_str(), s.title.as_str(), s.kepans.as_slice()))
+                    .collect();
+                smart_library_core::article::build_kepan_links(&doc_refs, &path)
+            } else {
+                smart_library_core::article::build_kepan_links(&[(&path, &title, &kepans_raw)], &path)
+            }
+        } else {
+            smart_library_core::article::build_kepan_links(&[(&path, &title, &kepans_raw)], &path)
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Group contiguous verse paragraphs (consecutive ¶N) and attach nearest preceding kepan.
+    let mut grouped_verses: Vec<serde_json::Value> = Vec::new();
+    if include_verses && !verses_raw.is_empty() {
+        let kepan_positions: Vec<(usize, &str, &str)> = linked_kepans
+            .iter()
+            .filter_map(|k| parse_para_lb_num(&k.lb).map(|n| (n, k.lb.as_str(), k.label.as_str())))
+            .collect();
+        let mut cur_lb = String::new();
+        let mut cur_last_num: Option<usize> = None;
+        let mut cur_lines: Vec<String> = Vec::new();
+
+        let flush = |out: &mut Vec<serde_json::Value>,
+                     lb: &mut String,
+                     lines: &mut Vec<String>,
+                     kpos: &[(usize, &str, &str)]| {
+            if lines.is_empty() {
+                return;
+            }
+            let start_num = parse_para_lb_num(lb);
+            let nearest_kepan = start_num.and_then(|sn| kpos.iter().rev().find(|(kn, _, _)| *kn < sn));
+            let mut obj = serde_json::Map::new();
+            obj.insert("lb".into(), serde_json::json!(lb.clone()));
+            obj.insert("text".into(), serde_json::json!(lines.join("\n")));
+            if let Some((_, klb, klabel)) = nearest_kepan {
+                obj.insert("kepan_lb".into(), serde_json::json!(klb));
+                if !klabel.is_empty() {
+                    obj.insert("kepan_label".into(), serde_json::json!(klabel));
+                }
+            }
+            out.push(serde_json::Value::Object(obj));
+            lb.clear();
+            lines.clear();
+        };
+
+        for v in &verses_raw {
+            let num = parse_para_lb_num(&v.lb);
+            let contiguous = match (cur_last_num, num) {
+                (Some(prev), Some(now)) => now == prev + 1,
+                _ => false,
+            };
+            if !cur_lines.is_empty() && !contiguous {
+                flush(&mut grouped_verses, &mut cur_lb, &mut cur_lines, &kepan_positions);
+            }
+            if cur_lines.is_empty() {
+                cur_lb = v.lb.clone();
+            }
+            cur_lines.push(v.text.clone());
+            cur_last_num = num;
+        }
+        flush(&mut grouped_verses, &mut cur_lb, &mut cur_lines, &kepan_positions);
+    }
+
+    let mut out = serde_json::Map::new();
+    out.insert("lib".into(), serde_json::json!(lib));
+    out.insert("path".into(), serde_json::json!(path));
+    out.insert("title".into(), serde_json::json!(title));
+    if include_kepan {
+        out.insert("kepan_count".into(), serde_json::json!(linked_kepans.len()));
+        out.insert("kepans".into(), serde_json::to_value(&linked_kepans).unwrap_or_default());
+    }
+    if include_verses {
+        out.insert("verse_count".into(), serde_json::json!(grouped_verses.len()));
+        out.insert("verses".into(), serde_json::Value::Array(grouped_verses));
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
+/// Extract unique `《…》` book references from any document and optionally resolve
+/// each title against loaded library title indexes (respecting `denied_libs`).
+pub async fn ai_doc_book_refs(
+    lib: String,
+    book_id: Option<String>,
+    path: Option<String>,
+    resolve: bool,
+    denied_libs: &std::collections::HashSet<String>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let dto = open_node(lib.clone(), book_id.clone(), path.clone(), None, None, state.clone()).await?;
+    let owned_lines: Vec<(String, String)> = dto
+        .lines
+        .iter()
+        .map(|l| (l.lb.clone(), l.parts.iter().map(|p| p.t.as_str()).collect::<String>()))
+        .collect();
+    let occs = smart_library_core::article::extract_book_refs(
+        owned_lines.iter().map(|(lb, text)| (lb.as_str(), text.as_str())),
+    );
+
+    let (resolved_map, pending) = if resolve && !occs.is_empty() {
+        let titles: Vec<String> = occs.iter().map(|o| o.title.clone()).collect();
+        match resolve_book_refs(lib.clone(), Some(dto.path.clone()), dto.book_id.clone(), titles, state).await {
+            Ok(res) => (res.matches, res.pending),
+            Err(_) => (HashMap::new(), false),
+        }
+    } else {
+        (HashMap::new(), false)
+    };
+
+    let refs: Vec<serde_json::Value> = occs
+        .into_iter()
+        .map(|o| {
+            let mut obj = serde_json::Map::new();
+            obj.insert("title".into(), serde_json::json!(o.title));
+            obj.insert("count".into(), serde_json::json!(o.count));
+            obj.insert("lbs".into(), serde_json::json!(o.lbs));
+            if resolve {
+                let targets: Vec<serde_json::Value> = resolved_map
+                    .get(&o.title)
+                    .map(|list| {
+                        list.iter()
+                            .filter(|t| !denied_libs.contains(&t.lib))
+                            .map(|t| {
+                                let mut tobj = serde_json::Map::new();
+                                tobj.insert("lib".into(), serde_json::json!(t.lib));
+                                tobj.insert("lib_title".into(), serde_json::json!(t.lib_title));
+                                tobj.insert("kind".into(), serde_json::json!(t.kind));
+                                tobj.insert("title".into(), serde_json::json!(t.title));
+                                if let Some(ref b) = t.book_id {
+                                    tobj.insert("book_id".into(), serde_json::json!(b));
+                                }
+                                if let Some(ref p) = t.path {
+                                    tobj.insert("path".into(), serde_json::json!(p));
+                                }
+                                if let Some(ref fp) = t.folder_path {
+                                    tobj.insert("folder_path".into(), serde_json::json!(fp));
+                                }
+                                if let Some(ref lb) = t.lb {
+                                    tobj.insert("lb".into(), serde_json::json!(lb));
+                                }
+                                if !t.author.is_empty() {
+                                    tobj.insert("author".into(), serde_json::json!(t.author));
+                                }
+                                serde_json::Value::Object(tobj)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                obj.insert("targets".into(), serde_json::Value::Array(targets));
+            }
+            serde_json::Value::Object(obj)
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "lib": dto.lib,
+        "path": dto.path,
+        "title": dto.title,
+        "ref_count": refs.len(),
+        "pending": pending,
+        "refs": refs,
+    }))
+}
+
 // ------------------------------------------------------------ index
 
 #[derive(Serialize, Clone)]

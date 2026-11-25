@@ -787,7 +787,7 @@ fn build_initialize_result(params: Option<&Value>, allow_write: bool) -> Value {
             "version": env!("CARGO_PKG_VERSION"),
         },
         "instructions": format!(
-            "Smart Library 本地知识库 MCP 服务。使用建议：1) 查找书名/经名/篇名或目录请优先用 quick_search（无需全文索引，可直接跨库）；2) 全文内容检索用 search_library（仅对 index_ready=true 的库有效，未建索引的库请改用 quick_search 或 get_library_tree）；3) 仅需确认或预览正文开头时，read_document 建议传较小的 max_chars（如 1500~3000）；4) 支持查本地词典 dict_lookup。{}",
+            "Smart Library 本地知识库 MCP 服务。使用建议：1) 查找书名/经名/篇名或目录请优先用 quick_search（无需全文索引，可直接跨库）；2) 全文内容检索用 search_library（仅对 index_ready=true 的库有效，未建索引的库请改用 quick_search 或 get_library_tree）；3) 仅需确认或预览正文开头时，read_document 建议传较小的 max_chars（如 1500~3000）；4) 可用 get_document_structure 提取文档科判大纲（含跨兄弟文档父子关联）与偈颂列表，用 get_document_book_refs 提取并定位文中《…》引用书名；5) 支持查本地词典 dict_lookup。{}",
             mode_hint
         )
     })

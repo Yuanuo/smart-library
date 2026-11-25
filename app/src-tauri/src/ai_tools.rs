@@ -189,6 +189,35 @@ pub fn tool_definitions_for(allow_write: bool) -> Vec<Value> {
             }
         }),
         json!({
+            "name": "get_document_structure",
+            "description": "提取文档中的科判大纲（含总分科判与子科判的同文档及跨兄弟文档父子跳转关联）与偈颂/颂词列表（附带所属科判与段落定位符 ¶N）。适用于快速梳理经论结构、定位科判上下级或汇总颂词（支持 folder / html / notes 库）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lib": { "type": "string", "description": "知识库 id" },
+                    "path": { "type": "string", "description": "文档路径或笔记 id" },
+                    "include_kepan": { "type": "boolean", "description": "可选，是否提取科判及父子关联，默认 true" },
+                    "include_verses": { "type": "boolean", "description": "可选，是否提取偈颂/颂词列表，默认 true" },
+                    "include_siblings": { "type": "boolean", "description": "可选，是否关联同系列（第n课/修法等）或同文件夹兄弟文档的跨文档科判父子关系，默认 true" }
+                },
+                "required": ["lib", "path"]
+            }
+        }),
+        json!({
+            "name": "get_document_book_refs",
+            "description": "提取文档正文中所有《…》书名/经论引用（含出现次数与定位行号），并自动在已加载的知识库书名索引中解析对应目标文档或目录，便于追踪引经据典出处。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lib": { "type": "string", "description": "知识库 id" },
+                    "path": { "type": "string", "description": "文档路径或笔记 id" },
+                    "book_id": { "type": "string", "description": "可选，CBETA 书号（如 T0220）" },
+                    "resolve": { "type": "boolean", "description": "可选，是否将引用的书名解析为知识库中的具体目标，默认 true" }
+                },
+                "required": ["lib", "path"]
+            }
+        }),
+        json!({
             "name": "list_recent_history",
             "description": "获取用户的最近阅读与编辑历史记录，可按关键词过滤。",
             "parameters": {
@@ -670,6 +699,41 @@ pub async fn exec_tool_with_policy(
                     }
                     ok_json(v)
                 }
+                Err(e) => err_res(e),
+            }
+        }
+
+        "get_document_structure" => {
+            let Some(lib) = arg_nonempty(&args, "lib") else {
+                return err_res("缺少必填参数 lib");
+            };
+            let Some(path) = arg_nonempty(&args, "path") else {
+                return err_res("缺少必填参数 path");
+            };
+            if let Err(e) = check_lib_allowed(policy, &lib) {
+                return err_res(e);
+            }
+            let include_kepan = args.get("include_kepan").and_then(|v| v.as_bool()).unwrap_or(true);
+            let include_verses = args.get("include_verses").and_then(|v| v.as_bool()).unwrap_or(true);
+            let include_siblings = args.get("include_siblings").and_then(|v| v.as_bool()).unwrap_or(true);
+            match commands::ai_doc_structure(lib, path, include_kepan, include_verses, include_siblings, state).await {
+                Ok(v) => ok_json(v),
+                Err(e) => err_res(e),
+            }
+        }
+
+        "get_document_book_refs" => {
+            let Some(lib) = arg_nonempty(&args, "lib") else {
+                return err_res("缺少必填参数 lib");
+            };
+            if let Err(e) = check_lib_allowed(policy, &lib) {
+                return err_res(e);
+            }
+            let path = arg_nonempty(&args, "path");
+            let book_id = arg_nonempty(&args, "book_id");
+            let resolve = args.get("resolve").and_then(|v| v.as_bool()).unwrap_or(true);
+            match commands::ai_doc_book_refs(lib, book_id, path, resolve, &policy.denied_libs, state).await {
+                Ok(v) => ok_json(v),
                 Err(e) => err_res(e),
             }
         }
