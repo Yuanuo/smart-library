@@ -57,6 +57,7 @@ let navigatingHistory = false;
 export const ws = $state({
   empty: true,
   current: null,
+  activeTab: null, // { kind: "doc" | "search" | "aichat", title?: string } of the active tab
   opened: 0,
   activeDoc: null,
   activeSearch: null,
@@ -289,6 +290,7 @@ function aiChatRenderer() {
             if (title) {
               st.title = `AI：${title.slice(0, 14)}`;
               panelApi?.setTitle(st.title);
+              if (panelApi?.isActive) ws.activeTab = { kind: "aichat", title: st.title };
             }
             panelApi?.updateParameters({ kind: "aichat", sessionId: st.sessionId });
             scheduleSave();
@@ -362,7 +364,10 @@ function searchRenderer() {
             panelApi.updateParameters(searchSnapshot(st));
             scheduleSave();
           },
-          ontitle: (t) => panelApi.setTitle(t),
+          ontitle: (t) => {
+            panelApi.setTitle(t);
+            if (panelApi?.isActive) ws.activeTab = { kind: "search", title: t };
+          },
           onpopout: () => popOutSearch(panelApi.id),
           onai: (req) => hooks.onai?.(req),
           onsearchresult: (sr) => {
@@ -657,12 +662,19 @@ export async function init(element, h) {
     else if (!panel || !dv.panels.some((x) => infos[x.id])) ws.current = null;
 
     if (panel && isSearchTab(panel.id)) {
+      ws.activeTab = { kind: "search", title: panel.title || "全文搜索" };
       ws.activeDoc = null;
       ws.activeSearch = searchResults[panel.id] || null;
-    } else if (panel && docStates[panel.id]) {
-      ws.activeDoc = docStates[panel.id];
+    } else if (panel && isAiChatTab(panel.id)) {
+      ws.activeTab = { kind: "aichat", title: panel.title || "AI 助手" };
+      ws.activeDoc = null;
+      ws.activeSearch = null;
+    } else if (panel && i) {
+      ws.activeTab = { kind: "doc" };
+      ws.activeDoc = docStates[panel.id] || null;
       ws.activeSearch = null;
     } else {
+      ws.activeTab = panel ? { kind: "other", title: panel.title || "" } : null;
       ws.activeDoc = null;
       ws.activeSearch = null;
     }
@@ -676,6 +688,7 @@ export async function init(element, h) {
     refreshEmpty();
     if (ws.current && panel.id === `${ws.current.lib}|${ws.current.path}`) ws.current = null;
     if (dv.panels.length === 0) {
+      ws.activeTab = null;
       ws.activeDoc = null;
       ws.activeSearch = null;
     }

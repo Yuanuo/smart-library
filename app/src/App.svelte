@@ -468,16 +468,22 @@
     workspace.openSearch({ scopes: scope && scope.lib ? [rangeItem(scope)] : [] });
   }
 
-  // window title: the document being read (with its author), its library,
+  // window title: the active tab (document with author & library, search, or AI chat),
   // then the program and its version; just the program when nothing is open
   let appInfo = $state(null);
   $effect(() => {
-    const c = workspace.ws.current;
-    const lib = c ? libraries.find((l) => l.id === c.lib)?.title : "";
+    const tab = workspace.ws.activeTab;
     const prog = `Smart Library${appInfo ? " " + appInfo.version : ""}`;
-    const title = c
-      ? [`${c.title}${c.author ? " by " + c.author : ""}`, lib ? `『${lib}』` : "", prog].filter(Boolean).join(" - ")
-      : prog;
+    let title = prog;
+    if (tab?.kind === "doc") {
+      const c = workspace.ws.current;
+      const lib = c ? libraries.find((l) => l.id === c.lib)?.title : "";
+      title = c
+        ? [`${c.title}${c.author ? " by " + c.author : ""}`, lib ? `『${lib}』` : "", prog].filter(Boolean).join(" - ")
+        : prog;
+    } else if (tab?.title) {
+      title = `${tab.title} - ${prog}`;
+    }
     document.title = title;
     getCurrentWindow().setTitle(title).catch(() => {});
   });
