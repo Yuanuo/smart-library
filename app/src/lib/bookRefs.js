@@ -82,7 +82,7 @@ export function bookRefTooltip(raw, targets) {
   if (targets.length === 1) {
     const t = targets[0];
     const loc = t.is_current_lib ? "本库" : t.lib_title;
-    return t.kind === "folder" && !t.path ? `在目录树中定位：${t.title}（${loc}）` : `跳转到：${t.title}（${loc}）`;
+    return t.kind === "folder" && !t.path ? `打开文件夹：${t.title}（${loc}）` : `跳转到：${t.title}（${loc}）`;
   }
   return `匹配到 ${targets.length} 项，点击选择`;
 }

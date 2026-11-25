@@ -525,6 +525,7 @@
       lb: t.lb ?? null,
       kind: t.kind,
       folderPath: t.folder_path ?? null,
+      title: t.title ?? "",
     };
     Promise.resolve(onjump(req)).catch((err) => onaction?.({ type: "error", text: String(err) }));
   }
