@@ -433,7 +433,7 @@
     {@render extra?.()}
     <button type="button" class="tool-btn" onclick={exportMenu}>导出 ▾</button>
     {#if readonly}
-      <span class="muted hint" title="脑图（只读）· 按住中键拖动画布，滚轮缩放">脑图（只读）· 按住中键拖动画布，滚轮缩放</span>
+      <span class="muted hint" title="脑图（只读）· 按住中键拖动画布，Ctrl+滚轮缩放">脑图（只读）· 按住中键拖动画布，Ctrl+滚轮缩放</span>
     {:else}
       <span class="muted hint" title="脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布">脑图 · 双击节点编辑，Tab 添加子节点，Enter 添加同级节点，右键更多，按住中键拖动画布</span>
     {/if}
