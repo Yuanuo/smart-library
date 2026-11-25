@@ -507,14 +507,30 @@ function tabMenu({ panel, group }) {
 }
 
 /**
+ * Return the tab context menu items for the panel containing `anchorEl`
+ * (or the active panel when omitted), reusing the same `tabMenu` builder.
+ */
+export function getTabMenuItems(anchorEl = null) {
+  const panel =
+    (anchorEl && dv?.panels?.find((p) => p.view?.content?.element?.contains(anchorEl))) ||
+    dv?.activePanel;
+  if (!panel?.group) return null;
+  return tabMenu({ panel, group: panel.group });
+}
+
+/**
  * Show the active tab's context menu at `(x, y)` (client coordinates), the
  * same menu a right-click on the tab itself builds. The reader's title link
  * uses it, so the menu is not defined twice.
  */
-export function showTabMenuAt(x, y) {
-  const panel = dv?.activePanel;
+export function showTabMenuAt(x, y, anchorEl = null) {
+  const panel =
+    (anchorEl && dv?.panels?.find((p) => p.view?.content?.element?.contains(anchorEl))) ||
+    dv?.activePanel;
   if (!panel) return;
-  const tab = [...(hostEl?.querySelectorAll(".dv-tab") || [])].find((el) => el.dataset?.tabPanelId === panel.id);
+  const tab =
+    panel.view?.tab?.element?.closest?.(".dv-tab") ||
+    [...(hostEl?.querySelectorAll(".dv-tab") || [])].find((el) => el.dataset?.tabPanelId === panel.id);
   if (!tab) return;
   tab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: x, clientY: y }));
 }

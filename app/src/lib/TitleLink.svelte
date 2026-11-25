@@ -3,15 +3,19 @@
   // the locate icon and the title together show the document in the tree.
   // Right-click opens the document tab's own menu, at the pointer.
   import Icon from "./Icon.svelte";
-  import { showTabMenuAt } from "./workspace.svelte.js";
+  import ContextMenu from "./ContextMenu.svelte";
+  import { getTabMenuItems } from "./workspace.svelte.js";
 
   // `text`: what is shown when it is not the whole title (the tool bar next to it may already say part of it)
   let { title, text = title, onlocate = null } = $props();
+  let menu = $state(null);
 
   function tabMenu(e) {
+    const items = getTabMenuItems(e.currentTarget);
+    if (!items?.length) return;
     e.preventDefault();
     e.stopPropagation();
-    showTabMenuAt(e.clientX, e.clientY);
+    menu = { x: e.clientX, y: e.clientY, items };
   }
 </script>
 
@@ -21,6 +25,10 @@
   </button>
 {:else}
   <strong class="title-plain">{title}</strong>
+{/if}
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
 {/if}
 
 <style>
