@@ -38,11 +38,23 @@ pub struct Heading {
     pub level: u8,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KepanEntry {
+    /// paragraph marker, e.g. `¶3`
+    pub lb: String,
+    /// true for `kepan-split` (`分二：…`), false for `kepan-head`
+    pub is_split: bool,
+    /// visible text of the kepan paragraph
+    pub text: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Article {
     pub text: VolumeText,
     pub meta: ArticleMeta,
     pub headings: Vec<Heading>,
+    /// detected 科判 paragraphs (populated when rendered with `detect_structure`)
+    pub kepans: Vec<KepanEntry>,
     /// structured HTML when rendering was asked for
     pub html: Option<String>,
     /// Source attribution, separated from the searchable document text.
@@ -133,6 +145,7 @@ fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, ru
         html: render.map(HtmlOut::new),
         dir,
         headings: Vec::new(),
+        kepans: Vec::new(),
         rules,
         anchors: std::collections::HashMap::new(),
         pending_anchors: Vec::new(),
@@ -146,6 +159,7 @@ fn read_article_inner(html: &str, path: &str, render: Option<&RenderOptions>, ru
         text,
         meta,
         headings: w.headings,
+        kepans: w.kepans,
         html: w.html.map(|h| h.buf),
         attribution: None,
         anchors: w.anchors,
@@ -576,6 +590,123 @@ fn classify_blocks(body: &Element) -> std::collections::HashMap<*const Element, 
     map
 }
 
+fn parse_series_num(s: &str) -> Option<u32> {
+    if s.is_empty() {
+        return None;
+    }
+    if s.chars().all(|c| c.is_ascii_digit()) {
+        return s.parse::<u32>().ok();
+    }
+    let mut total: u32 = 0;
+    let mut cur: u32 = 0;
+    for c in s.chars() {
+        match c {
+            '零' | '〇' => cur = 0,
+            '一' => cur = 1,
+            '二' => cur = 2,
+            '三' => cur = 3,
+            '四' => cur = 4,
+            '五' => cur = 5,
+            '六' => cur = 6,
+            '七' => cur = 7,
+            '八' => cur = 8,
+            '九' => cur = 9,
+            '十' => {
+                total += (if cur == 0 { 1 } else { cur }) * 10;
+                cur = 0;
+            }
+            '廿' => {
+                total += 20;
+                cur = 0;
+            }
+            '卅' => {
+                total += 30;
+                cur = 0;
+            }
+            '百' => {
+                total += (if cur == 0 { 1 } else { cur }) * 100;
+                cur = 0;
+            }
+            '千' => {
+                total += (if cur == 0 { 1 } else { cur }) * 1000;
+                cur = 0;
+            }
+            _ => return None,
+        }
+    }
+    Some(total + cur)
+}
+
+/// Extract `(prefix, unit, seq)` from titles like `第5课`, `赞戒论第12课`, `第3修法`.
+fn series_key(title: &str) -> Option<(String, &'static str, u32)> {
+    const UNITS: &[&str] = &["修法", "课", "卷", "章", "讲", "品", "回", "节", "篇", "部", "集", "辑", "册"];
+    let mut offset = 0;
+    while let Some(pos) = title[offset..].find('第') {
+        let at = offset + pos;
+        let after_di = &title[at + '第'.len_utf8()..];
+        let num_bytes: usize = after_di.chars().take_while(|&c| is_kepan_num(c)).map(char::len_utf8).sum();
+        if num_bytes > 0 {
+            let num_str = &after_di[..num_bytes];
+            let after_num = &after_di[num_bytes..];
+            if let Some(&unit) = UNITS.iter().find(|&&u| after_num.starts_with(u)) {
+                if let Some(seq) = parse_series_num(num_str) {
+                    let prefix = title[..at]
+                        .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '_' | '-' | '·' | '—' | '：' | ':'))
+                        .trim()
+                        .to_string();
+                    return Some((prefix, unit, seq));
+                }
+            }
+        }
+        offset = at + '第'.len_utf8();
+    }
+    None
+}
+
+/// Sibling files to exclude from cross-document kepan linking:
+/// JSON-based formats (`.md.json`, `.map.json`, `.wb.json`, `.json`) and
+/// documents whose name/title contains `科判`.
+pub fn is_ignored_kepan_sibling(path: &str, title: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".json") {
+        return true;
+    }
+    let file_name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    title.contains("科判") || file_name.contains("科判")
+}
+
+/// Filter and order sibling `(path, title)` pairs for cross-document kepan linking:
+/// 1. Always ignore `.json` (`.md.json`, `.map.json`, etc.) and names containing `科判`.
+/// 2. If `cur_title` follows a numbered series (`第n课`, `第n修法`, …), keep only
+///    siblings of the same `(prefix, unit)` series sorted by `n`.
+/// 3. Otherwise (e.g. translations without `第n`), keep all non-ignored siblings in folder order.
+pub fn select_kepan_siblings(
+    siblings: &[(String, String)],
+    cur_path: &str,
+    cur_title: &str,
+) -> Vec<(String, String)> {
+    if is_ignored_kepan_sibling(cur_path, cur_title) {
+        return Vec::new();
+    }
+    let filtered: Vec<(usize, &(String, String))> = siblings
+        .iter()
+        .enumerate()
+        .filter(|(_, (p, t))| !is_ignored_kepan_sibling(p, t))
+        .collect();
+    if let Some((prefix, unit, _)) = series_key(cur_title) {
+        let mut matched: Vec<(u32, usize, (String, String))> = filtered
+            .into_iter()
+            .filter_map(|(idx, (p, t))| {
+                let (sp, su, seq) = series_key(t)?;
+                (sp == prefix && su == unit).then(|| (seq, idx, (p.clone(), t.clone())))
+            })
+            .collect();
+        matched.sort_by_key(|(seq, idx, _)| (*seq, *idx));
+        return matched.into_iter().map(|(_, _, item)| item).collect();
+    }
+    filtered.into_iter().map(|(_, item)| item.clone()).collect()
+}
+
 struct Walker {
     pieces: Vec<(String, Option<usize>)>,
     lbs: Vec<String>,
@@ -583,6 +714,7 @@ struct Walker {
     html: Option<HtmlOut>,
     dir: String,
     headings: Vec<Heading>,
+    kepans: Vec<KepanEntry>,
     rules: Rules,
     anchors: std::collections::HashMap<String, String>,
     pending_anchors: Vec<String>,
@@ -651,13 +783,14 @@ impl Walker {
         }
     }
 
-    fn block(&mut self, el: &Element, tag: &str, class: &str) {
+    fn block(&mut self, el: &Element, tag: &str, class: &str) -> String {
         self.open(tag, class);
-        self.start_block();
+        let lb = self.start_block();
         self.walk_children(el);
         self.close(tag);
         // text after the block (outside any block) starts a new paragraph
         self.cur_lb = None;
+        lb
     }
 
     fn walk(&mut self, el: &Element) {
@@ -716,7 +849,19 @@ impl Walker {
                     "blockquote" => ("p", "p quote"),
                     _ => ("p", "p"),
                 };
-                self.block(el, tag, class);
+                let lb = self.block(el, tag, class);
+                if let Some(kc) = kepan {
+                    let mut text = String::new();
+                    visible_text(el, &mut text);
+                    let text = text.trim().to_string();
+                    if !text.is_empty() {
+                        self.kepans.push(KepanEntry {
+                            lb,
+                            is_split: kc.contains("kepan-split"),
+                            text,
+                        });
+                    }
+                }
             }
             n if CONTAINERS.contains(&n) => {
                 // a container with its own text is a paragraph too
@@ -1012,5 +1157,31 @@ mod tests {
         assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶5"></span>金刚藏菩萨，"#), "{out}");
         assert!(out.contains(r#"<p class="p verse"><span class="lb" data-lb="¶6"></span>欲令大众悦，"#), "{out}");
         assert!(out.contains(r#"<p class="p verse verse-quote"><span class="lb" data-lb="¶7"></span>“诸菩萨所行，"#), "{out}");
+    }
+
+    #[test]
+    fn selects_kepan_siblings_by_series_or_folder_and_ignores_kepan_and_json() {
+        let sibs = vec![
+            ("dir/第10课.md".into(), "第10课".into()),
+            ("dir/科判.md.json".into(), "科判".into()),
+            ("dir/总科判.md".into(), "总科判".into()),
+            ("dir/第2课.md".into(), "第2课".into()),
+            ("dir/第1课.md".into(), "第1课".into()),
+            ("dir/附记.md".into(), "附记".into()),
+        ];
+        let picked = select_kepan_siblings(&sibs, "dir/第2课.md", "第2课");
+        let titles: Vec<&str> = picked.iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(titles, vec!["第1课", "第2课", "第10课"]);
+
+        // Non-series folder (e.g. translations): keep folder order, still ignore 科判 / .json
+        let trans = vec![
+            ("dir/颂词译文.md".into(), "颂词译文".into()),
+            ("dir/科判.map.json".into(), "科判".into()),
+            ("dir/注释上.md".into(), "注释上".into()),
+            ("dir/注释下.md".into(), "注释下".into()),
+        ];
+        let picked2 = select_kepan_siblings(&trans, "dir/注释上.md", "注释上");
+        let titles2: Vec<&str> = picked2.iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(titles2, vec!["颂词译文", "注释上", "注释下"]);
     }
 }

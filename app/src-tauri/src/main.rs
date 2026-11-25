@@ -237,6 +237,7 @@ fn main() {
             commands::quick_search,
             commands::prepare_titles,
             commands::resolve_book_refs,
+            commands::sibling_kepans,
             commands::to_pinyin,
             commands::pinyin_convert,
             commands::pinyin_text,

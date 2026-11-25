@@ -44,6 +44,7 @@
   import { formatShortcut } from "./shortcuts.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
   import { annotateBookRefs, bookRefTooltip, onBookRefsRefresh } from "./bookRefs.js";
+  import { annotateKepanLinks, annotateCrossDocKepanLinks, clearKepanLinks } from "./kepanLinks.js";
 
   let {
     vol,
@@ -120,6 +121,33 @@
         n.classList.toggle("lone", !n.dataset.n || !changed.has(n.dataset.n));
       }
     });
+  });
+
+  // Build bidirectional jump links between 科判 split lines and child headings
+  // (in-document immediately, plus cross-sibling-document asynchronously when needed).
+  $effect(() => {
+    const v = vol;
+    const _h = html;
+    const m = mode;
+    const on = settings.readerStructureStyle && settings.readerKepanLinks && m === "para";
+    const ctrl = new AbortController();
+    tick().then(() => {
+      if (ctrl.signal.aborted || !docEl) return;
+      if (!on) {
+        clearKepanLinks(docEl);
+        return;
+      }
+      const local = annotateKepanLinks(docEl);
+      if (local && v && v.kind !== "cbeta" && v.kind !== "zim" && v.volumes?.length > 1) {
+        annotateCrossDocKepanLinks(docEl, local, {
+          lib: v.lib,
+          path: v.path,
+          volumes: v.volumes,
+          signal: ctrl.signal,
+        });
+      }
+    });
+    return () => ctrl.abort();
   });
 
   // Auto-link `《…》` book references asynchronously after the document renders.
@@ -530,8 +558,38 @@
     Promise.resolve(onjump(req)).catch((err) => onaction?.({ type: "error", text: String(err) }));
   }
 
+  function jumpToLocalLb(lb) {
+    if (!scroller || !lb) return;
+    const el = scroller.querySelector(`[data-lb="${lb}"]`);
+    if (!el) return;
+    scroller.querySelectorAll(".flash").forEach((e) => e.classList.remove("flash"));
+    restoring = true;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.add("flash");
+    setTimeout(() => (restoring = false), 350);
+  }
+
   /** A click on the source link of a clipping goes to the place it came from. */
   function docClick(e) {
+    const kepanNav = e.target.closest?.("a.kepan-link, button.kepan-back");
+    if (kepanNav) {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+      e.preventDefault();
+      closeTip();
+      const targetPath = kepanNav.dataset.kepanPath;
+      const targetLb = kepanNav.dataset.kepanLb;
+      if (targetPath && targetPath !== vol?.path) {
+        if (onjump && vol?.lib) {
+          Promise.resolve(onjump({ lib: vol.lib, path: targetPath, lb: targetLb || null })).catch((err) =>
+            onaction?.({ type: "error", text: String(err) }),
+          );
+        }
+      } else {
+        jumpToLocalLb(targetLb);
+      }
+      return;
+    }
     const bookRef = e.target.closest?.("a.book-ref");
     if (bookRef) {
       const sel = window.getSelection();
@@ -801,6 +859,58 @@
     font-weight: var(--reader-weight, 400);
     -webkit-text-stroke-width: var(--reader-stroke, 0);
     color: var(--ink);
+  }
+  .doc :global(a.kepan-link) {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+    border-radius: 2px;
+    cursor: pointer;
+    transition: color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
+  }
+  .doc :global(a.kepan-link:hover) {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-bottom-color: var(--accent);
+  }
+  .doc :global(button.kepan-back) {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0.6em;
+    padding: 0 0.45em;
+    height: 1.45em;
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--ui-font, sans-serif);
+    font-size: 0.68em;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0;
+    vertical-align: middle;
+    cursor: pointer;
+    user-select: none;
+    -webkit-text-stroke-width: 0;
+    opacity: 0.72;
+    transition: opacity 0.12s ease, color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
+  }
+  .doc :global(button.kepan-back)::before {
+    content: attr(data-label);
+  }
+  .doc :global(p.kepan:hover button.kepan-back),
+  .doc :global(button.kepan-back:focus-visible) {
+    opacity: 1;
+  }
+  .doc :global(button.kepan-back:hover) {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    opacity: 1;
+  }
+  .doc.wrap-lines :global(button.kepan-back),
+  .doc.wrap-pages :global(button.kepan-back) {
+    display: none;
   }
   :global(.doc :where(p.verse)) {
     margin: var(--reader-para, 0.35em) 0 var(--reader-para, 0.35em) 1.5em;

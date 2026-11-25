@@ -757,6 +757,12 @@
                 onchange={(e) => update({ readerStructureStyle: e.currentTarget.checked })} />
               <span class="wide">科判与颂词样式增强（自动识别只读文档中的科判与偈颂并赋予独立样式）</span>
             </label>
+            <label class="row" class:muted={!settings.readerStructureStyle}>
+              <input type="checkbox" checked={settings.readerKepanLinks}
+                disabled={!settings.readerStructureStyle}
+                onchange={(e) => update({ readerKepanLinks: e.currentTarget.checked })} />
+              <span class="wide">科判跳转关联（总分科判可点击跳到子科判，子科判可一键返回父科判）</span>
+            </label>
             <div class="preview-wrap">
               <div class="sample doc" aria-label="预览">
                 <p class="p">这是一段示例文字，用来预览字体、字号、字重、字间距、行间距和段间距的效果。<strong>这是着重强调的粗体文字</strong>。Sample 0123，ABCabc。</p>

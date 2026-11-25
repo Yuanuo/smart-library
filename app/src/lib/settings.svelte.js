@@ -136,6 +136,7 @@ const DEFAULTS = {
   readerWeight: "std", // std | mid | bold
   readerScript: "orig", // orig: as the text is | simp: shown in simplified characters
   readerStructureStyle: true, // highlight detected 科判 and 颂词 in read-only reader
+  readerKepanLinks: true, // link 科判 splits and child headings for quick jumping
   readerCustomCss: "", // optional user CSS overrides for the read-only reader
   selectLookup: "ctrl", // reader selection opens the dictionary: ctrl | auto | off
   externalLink: "window", // window | ask | browser
@@ -176,6 +177,7 @@ function load() {
       raw.readerFont = "default";
     }
     raw.readerStructureStyle = raw.readerStructureStyle !== false;
+    raw.readerKepanLinks = raw.readerKepanLinks !== false;
     if (typeof raw.readerCustomCss !== "string") {
       raw.readerCustomCss = "";
     }

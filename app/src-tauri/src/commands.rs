@@ -4215,6 +4215,109 @@ pub async fn resolve_book_refs(
     Ok(ResolveBookRefsDto { version, pending, matches })
 }
 
+#[derive(Serialize)]
+pub struct SiblingKepansDto {
+    pub path: String,
+    pub title: String,
+    pub kepans: Vec<smart_library_core::article::KepanEntry>,
+}
+
+/// Extract ordered 科判 outlines across sibling documents in the same series
+/// (`第n课`/`第n修法`…) or folder, ignoring `.json` files and `科判` docs.
+#[tauri::command]
+pub async fn sibling_kepans(
+    lib: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SiblingKepansDto>, String> {
+    let l = state.library(&lib)?;
+    match l.kind.as_str() {
+        "notes" => {
+            let store = state.notes(&l)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                let id: i64 = path.parse().map_err(|_| format!("不是笔记：{}", path))?;
+                let note = store.get(id)?.ok_or("笔记不存在")?;
+                let children = store.children(note.parent)?;
+                let sibs: Vec<(String, String)> = children
+                    .iter()
+                    .filter(|s| !s.mind && !s.board)
+                    .map(|s| (s.id.to_string(), s.title.clone()))
+                    .collect();
+                let selected = smart_library_core::article::select_kepan_siblings(&sibs, &path, &note.title);
+                let opts = RenderOptions::default();
+                let mut out = Vec::with_capacity(selected.len());
+                for (sp, st) in selected {
+                    if let Ok(sid) = sp.parse::<i64>() {
+                        if let Ok(Some(sn)) = store.get(sid) {
+                            let a = notes::article(&sn.content, Some(&opts));
+                            out.push(SiblingKepansDto { path: sp, title: st, kepans: a.kepans });
+                        }
+                    }
+                }
+                Ok(out)
+            })
+            .await
+            .map_err(|e| format!("读取兄弟笔记科判失败：{}", e))?
+        }
+        "folder" => {
+            let f = state.folder(&l)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                let cur_name = path.rsplit('/').next().unwrap_or(&path);
+                let cur_title = folder::title_of(cur_name).to_string();
+                let sibs: Vec<(String, String)> = f
+                    .siblings(&path)
+                    .into_iter()
+                    .filter(|s| {
+                        !matches!(
+                            folder::EditKind::of(&s.name),
+                            Some(folder::EditKind::MindMap) | Some(folder::EditKind::Whiteboard)
+                        )
+                    })
+                    .map(|s| {
+                        let t = folder::title_of(&s.name).to_string();
+                        (s.rel, t)
+                    })
+                    .collect();
+                let selected = smart_library_core::article::select_kepan_siblings(&sibs, &path, &cur_title);
+                let opts = RenderOptions::default();
+                let mut out = Vec::with_capacity(selected.len());
+                for (sp, st) in selected {
+                    if let Ok(a) = f.article(&sp, Some(&opts)) {
+                        out.push(SiblingKepansDto { path: sp, title: st, kepans: a.kepans });
+                    }
+                }
+                Ok(out)
+            })
+            .await
+            .map_err(|e| format!("读取兄弟文档科判失败：{}", e))?
+        }
+        "html" => {
+            let bc = state.bookcase_of(&l)?;
+            let t = state.html_tree(&l)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                let leaf = t.leaf(&path).ok_or_else(|| format!("目录里没有这篇文章：{}", path))?;
+                let sibs: Vec<(String, String)> = t
+                    .siblings(&path)
+                    .iter()
+                    .map(|s| (s.path.clone(), s.title.clone()))
+                    .collect();
+                let selected = smart_library_core::article::select_kepan_siblings(&sibs, &path, &leaf.title);
+                let opts = RenderOptions::default();
+                let mut out = Vec::with_capacity(selected.len());
+                for (sp, st) in selected {
+                    if let Ok(a) = bc.article(&sp, Some(&opts)) {
+                        out.push(SiblingKepansDto { path: sp, title: st, kepans: a.kepans });
+                    }
+                }
+                Ok(out)
+            })
+            .await
+            .map_err(|e| format!("读取兄弟文章科判失败：{}", e))?
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
 // ------------------------------------------------------------ index
 
 #[derive(Serialize, Clone)]
