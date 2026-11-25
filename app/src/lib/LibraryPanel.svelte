@@ -923,6 +923,22 @@
     }
   }
 
+  /** Search scope of a document's parent node in the tree (or the whole library when top-level / not found). */
+  export async function parentScope({ lib, bookId = null, path = null }) {
+    const l = libraries.find((x) => x.id === lib);
+    if (!l) return null;
+    try {
+      if (!nodes[lib]) await load(lib);
+      const trail = await trailOf(lib, bookId, path);
+      if (!trail || trail.length <= 1) return scopeOf(l, null);
+      const parentKey = "/" + trail.slice(0, -1).join("/");
+      const parentNode = nodeAt(lib, parentKey);
+      return scopeOf(l, parentNode, parentKey);
+    } catch {
+      return scopeOf(l, null);
+    }
+  }
+
   /** Menu sections (lists of items) joined by separators; empty ones are left out. */
   const sections = (...groups) => groups.filter((g) => g.length).flatMap((g, i) => (i ? ["separator", ...g] : g));
 

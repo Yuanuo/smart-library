@@ -347,6 +347,7 @@
           children: [
             { label: `全文匹配：${q}`, action: act("phrase") },
             { label: `篇内检索：${q}`, action: act("book") },
+            { label: `父目录检索：${q}`, action: act("parent") },
             { label: `标题快搜：${q}`, action: act("quick") },
             { label: `页内查找：${q}`, action: () => findInPage(text) },
           ],

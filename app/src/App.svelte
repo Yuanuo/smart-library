@@ -153,6 +153,12 @@
       // a new search page; "search in this book" limits it to the book
       const scopes = a.type === "book" ? [{ lib: v.lib, label: v.title, books: v.book_id ? [v.book_id] : [], paths: v.book_id ? [] : [v.path], rels: [], whole: false }] : [];
       workspace.openSearch({ query: a.text, phrase: a.type === "phrase", scopes, autorun: true });
+    } else if (a.type === "parent") {
+      (async () => {
+        const sc = await libPanel?.parentScope({ lib: v.lib, bookId: v.book_id ?? null, path: v.path ?? null });
+        const scopes = sc ? [sc] : [];
+        workspace.openSearch({ query: a.text, phrase: false, scopes, autorun: true });
+      })();
     } else if (a.type === "note") {
       clipDlg = { text: a.text, vol: v, lb: a.lb };
     } else if (a.type === "diary") {
