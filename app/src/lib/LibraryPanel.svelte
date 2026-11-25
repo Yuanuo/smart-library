@@ -1078,6 +1078,112 @@
     }
   });
 
+  // ---- persist and restore tree expansion state
+  const TREE_STATE_KEY = "tree.state";
+  function readTreeState() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(TREE_STATE_KEY) || "null");
+      if (raw && typeof raw === "object") {
+        return {
+          open: Array.isArray(raw.open) ? raw.open : [],
+          expanded: raw.expanded && typeof raw.expanded === "object" ? raw.expanded : {},
+        };
+      }
+    } catch {}
+    return { open: [], expanded: {} };
+  }
+
+  const savedTreeState = readTreeState();
+  const restoredLibs = new Set();
+  const restoringLibs = new Set();
+  let treeHydrated = false;
+
+  async function restoreLibExpansion(l) {
+    const entry = savedTreeState.expanded[l.id];
+    restoringLibs.add(l.id);
+    try {
+      if (!nodes[l.id]) await load(l.id);
+      if (!nodes[l.id] || !entry || !Array.isArray(entry.items) || !entry.items.length) return;
+      const ex = expansionOf(l.id);
+      if (entry.mode === "rel" && (l.kind === "folder" || l.kind === "notes")) {
+        const wanted = new Set(entry.items);
+        const walk = async (list, prefix) => {
+          for (let i = 0; i < list.length; i++) {
+            const n = list[i];
+            if (!n?.rel || !wanted.has(n.rel)) continue;
+            const key = `${prefix}/${i}`;
+            await loadChildren(l.id, n);
+            ex[key] = true;
+            if (n.children?.length) await walk(n.children, key);
+          }
+        };
+        await walk(nodes[l.id], "");
+      } else if (entry.mode === "key" && (!entry.tree || entry.tree === (l.tree ?? ""))) {
+        for (const k of entry.items) {
+          if (typeof k === "string" && nodeAt(l.id, k)) ex[k] = true;
+        }
+      }
+    } finally {
+      restoringLibs.delete(l.id);
+      persistTreeState();
+    }
+  }
+
+  function persistTreeState() {
+    if (!treeHydrated || !libraries.length) return;
+    const openIds = [];
+    const nextExpanded = {};
+    for (const l of libraries) {
+      if (open[l.id]) openIds.push(l.id);
+      if (restoringLibs.has(l.id) || (!nodes[l.id] && savedTreeState.expanded[l.id])) {
+        if (savedTreeState.expanded[l.id]) nextExpanded[l.id] = savedTreeState.expanded[l.id];
+        continue;
+      }
+      const ex = expanded[l.id];
+      if (!ex) continue;
+      const keys = Object.keys(ex).filter((k) => ex[k]);
+      if (!keys.length) continue;
+      if (l.kind === "folder" || l.kind === "notes") {
+        const items = [];
+        for (const k of keys) {
+          const rel = nodeAt(l.id, k)?.rel;
+          if (rel) items.push(rel);
+        }
+        if (items.length) nextExpanded[l.id] = { mode: "rel", items };
+      } else {
+        nextExpanded[l.id] = { mode: "key", tree: l.tree ?? "", items: keys };
+      }
+    }
+    try {
+      localStorage.setItem(TREE_STATE_KEY, JSON.stringify({ open: openIds, expanded: nextExpanded }));
+    } catch {}
+  }
+
+  $effect(() => {
+    if (!libraries.length) return;
+    for (const l of libraries) {
+      if (restoredLibs.has(l.id)) continue;
+      restoredLibs.add(l.id);
+      if (savedTreeState.open.includes(l.id)) {
+        open[l.id] = true;
+        restoreLibExpansion(l);
+      }
+    }
+    treeHydrated = true;
+  });
+
+  $effect(() => {
+    if (!libraries.length) return;
+    for (const l of libraries) {
+      void open[l.id];
+      const ex = expanded[l.id];
+      if (ex) {
+        for (const k of Object.keys(ex)) void ex[k];
+      }
+    }
+    persistTreeState();
+  });
+
   const loadings = {}; // lib id -> the running load
   function load(id) {
     return (loadings[id] ??= doLoad(id).finally(() => delete loadings[id]));
