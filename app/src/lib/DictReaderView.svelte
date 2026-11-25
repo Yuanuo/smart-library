@@ -75,9 +75,14 @@
         { label: "复制文字", action: () => navigator.clipboard.writeText(text).catch(() => {}) },
         "separator",
         { label: `全文检索：${q}`, action: () => forwardAction("search", text) },
-        { label: `全文匹配：${q}`, action: () => forwardAction("phrase", text) },
-        { label: `标题快搜：${q}`, action: () => forwardAction("quick", text) },
-        { label: `页内查找：${q}`, action: () => findInPage(text) },
+        {
+          label: "更多检索",
+          children: [
+            { label: `全文匹配：${q}`, action: () => forwardAction("phrase", text) },
+            { label: `标题快搜：${q}`, action: () => forwardAction("quick", text) },
+            { label: `页内查找：${q}`, action: () => findInPage(text) },
+          ],
+        },
         "separator",
         makePinyinItem(text, () => (pinyinDlg = text)),
         {
@@ -86,20 +91,23 @@
         },
       );
       if (settings.aiOn) {
-        items.push(
-          "separator",
-          { label: "发给 AI 助手", action: () => forwardAction("ai-external", text, { autoSend: false, source }) },
-          { label: "追加到 AI 会话", action: () => forwardAction("ai-external", text, { autoSend: false, append: true, source }) },
-          {
-            label: "AI 解释选中文字",
-            action: () =>
-              forwardAction("ai-external", text, {
-                prompt: "请用通俗准确的现代汉语解释以上词典释义，并说明其核心义理与背景。",
-                autoSend: true,
-                source,
-              }),
-          },
-        );
+        items.push("separator", {
+          label: "AI 助手",
+          children: [
+            { label: "发给 AI 助手", action: () => forwardAction("ai-external", text, { autoSend: false, source }) },
+            { label: "追加到 AI 会话", action: () => forwardAction("ai-external", text, { autoSend: false, append: true, source }) },
+            "separator",
+            {
+              label: "AI 解释选中文字",
+              action: () =>
+                forwardAction("ai-external", text, {
+                  prompt: "请用通俗准确的现代汉语解释以上词典释义，并说明其核心义理与背景。",
+                  autoSend: true,
+                  source,
+                }),
+            },
+          ],
+        });
       }
     } else if (!extHref) {
       items.push(

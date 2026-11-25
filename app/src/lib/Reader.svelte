@@ -463,12 +463,19 @@
       if (onaction) {
         items.push(
           { label: `全文检索：${q}`, action: act("search") },
-          { label: `全文匹配：${q}`, action: act("phrase") },
-          { label: `书内检索：${q}`, action: act("book") },
-          { label: `标题快搜：${q}`, action: act("quick") },
+          {
+            label: "更多检索",
+            children: [
+              { label: `全文匹配：${q}`, action: act("phrase") },
+              { label: `书内检索：${q}`, action: act("book") },
+              { label: `标题快搜：${q}`, action: act("quick") },
+              { label: `页内查找：${q}`, action: () => findInPage(text) },
+            ],
+          },
         );
+      } else {
+        items.push({ label: `页内查找：${q}`, action: () => findInPage(text) });
       }
-      items.push({ label: `页内查找：${q}`, action: () => findInPage(text) });
       items.push(
         "separator",
         makePinyinItem(text, act("pinyin")),
@@ -480,19 +487,26 @@
       items.push({ label: "添加书签", action: act("bookmark") });
       items.push({ label: text ? "添加收藏…" : "添加收藏…（先选中文字）", action: act("clip"), disabled: !text });
       if (text) {
-        items.push("separator", { label: "加入笔记…", action: act("note") }, { label: `追加到今日记：${localDate()}`, action: act("diary") });
+        const noteChildren = [
+          { label: "加入笔记…", action: act("note") },
+          { label: `追加到今日记：${localDate()}`, action: act("diary") },
+        ];
         const last = getLast();
-        if (last) items.push({ label: `追加到最近的笔记：${clip(last.title, 12)}`, action: act("note-last") });
+        if (last) noteChildren.push({ label: `追加到最近的笔记：${clip(last.title, 12)}`, action: act("note-last") });
+        items.push({ label: "加入笔记", children: noteChildren });
       }
     }
     if (settings.aiOn && text && onai) {
-      items.push(
-        "separator",
-        { label: "发给 AI 助手", action: () => onai({ quote: text, lb, autoSend: false }) },
-        { label: "追加到 AI 会话", action: () => onai({ quote: text, lb, append: true, autoSend: false }) },
-        { label: "AI 解释选中文字", action: () => onai({ quote: text, lb, prompt: "请用通俗准确的现代汉语解释以上引文，并说明其核心义理与背景。", autoSend: true }) },
-        { label: "AI 编写创新方案", action: () => onai({ quote: text, lb, prompt: "请基于以上引文的核心思想与方法，结合现代应用场景，编写一份结构清晰、可落地的创新方案。", autoSend: true }) },
-      );
+      items.push("separator", {
+        label: "AI 助手",
+        children: [
+          { label: "发给 AI 助手", action: () => onai({ quote: text, lb, autoSend: false }) },
+          { label: "追加到 AI 会话", action: () => onai({ quote: text, lb, append: true, autoSend: false }) },
+          "separator",
+          { label: "AI 解释选中文字", action: () => onai({ quote: text, lb, prompt: "请用通俗准确的现代汉语解释以上引文，并说明其核心义理与背景。", autoSend: true }) },
+          { label: "AI 编写创新方案", action: () => onai({ quote: text, lb, prompt: "请基于以上引文的核心思想与方法，结合现代应用场景，编写一份结构清晰、可落地的创新方案。", autoSend: true }) },
+        ],
+      });
     }
     if (items.length) menu = { x: e.clientX, y: e.clientY, items };
   }
