@@ -10,7 +10,7 @@
   import { matchesShortcut, formatShortcut } from "./shortcuts.js";
   import { settings } from "./settings.svelte.js";
 
-  let { vol, title = vol.title, lib, path, readonly = false, onsaved = null, onlocate = null, ontag = null, onprops = null, extra = null } = $props();
+  let { vol, title = vol.title, lib, path, readonly = false, onsaved = null, onlocate = null, ontag = null, onprops = null, extra = null, tabMenuItems = null } = $props();
 
   let el = $state();
   let error = $state("");
@@ -386,7 +386,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="board" onkeydown={key}>
   <div class="view-bar">
-    <TitleLink {title} {onlocate} />
+    <TitleLink {title} {onlocate} {tabMenuItems} />
     {#if ontag}<button type="button" class="tool-btn" onclick={ontag} title={formatShortcut("tag", settings.shortcuts) ? `为本篇加标签（${formatShortcut("tag", settings.shortcuts)}）` : "为本篇加标签"} aria-label="加标签"><Icon name="tag" size={16} /></button>{/if}
     {#if onprops}<button type="button" class="tool-btn" onclick={onprops} title={formatShortcut("props", settings.shortcuts) ? `属性（${formatShortcut("props", settings.shortcuts)}）` : "属性"} aria-label="属性"><Icon name="sliders" size={16} /></button>{/if}
     {@render extra?.()}

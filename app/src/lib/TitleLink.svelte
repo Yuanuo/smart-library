@@ -4,14 +4,13 @@
   // Right-click opens the document tab's own menu, at the pointer.
   import Icon from "./Icon.svelte";
   import ContextMenu from "./ContextMenu.svelte";
-  import { getTabMenuItems } from "./workspace.svelte.js";
 
   // `text`: what is shown when it is not the whole title (the tool bar next to it may already say part of it)
-  let { title, text = title, onlocate = null } = $props();
+  let { title, text = title, onlocate = null, tabMenuItems = null } = $props();
   let menu = $state(null);
 
   function tabMenu(e) {
-    const items = getTabMenuItems(e.currentTarget);
+    const items = tabMenuItems?.(e.currentTarget);
     if (!items?.length) return;
     e.preventDefault();
     e.stopPropagation();
@@ -20,7 +19,7 @@
 </script>
 
 {#if onlocate}
-  <button class="title-link" onclick={onlocate} oncontextmenu={tabMenu} title="在目录树中定位：{title}（右键：标签菜单）" aria-label="在目录树中定位">
+  <button class="title-link" onclick={onlocate} oncontextmenu={tabMenuItems ? tabMenu : undefined} title="在目录树中定位：{title}{tabMenuItems ? '（右键：标签菜单）' : ''}" aria-label="在目录树中定位">
     <Icon name="locate" size={16} />{#if text}<span>{text}</span>{/if}
   </button>
 {:else}

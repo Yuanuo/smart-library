@@ -56,6 +56,7 @@
     onchapter,
     onprogress = null,
     onlocate = null,
+    tabMenuItems = null,
     extra = null,
     // actions that need the main window (search, marks): `onaction({ type, text, lb, vol })`
     onaction = null,
@@ -673,7 +674,7 @@
   <div class="reader">
     <header class="view-bar">
       <div class="nav">
-        <TitleLink title={vol.label ? `${vol.title} ${vol.label}` : vol.title} text={shownTitle} onlocate={vol.kind === "zim" ? null : onlocate} />
+        <TitleLink title={vol.label ? `${vol.title} ${vol.label}` : vol.title} text={shownTitle} onlocate={vol.kind === "zim" ? null : onlocate} {tabMenuItems} />
         {#if vol.volumes.length}
         <select aria-label={vol.kind !== "cbeta" ? "同一目录的文章" : "卷"} class="vols" value={vol.path} onchange={(e) => onvolume(e.target.value)}>
           {#each vol.volumes as v}

@@ -22,7 +22,7 @@
   const loadMindMap = () => import("./MindMapView.svelte");
   const loadWhiteboard = () => import("./WhiteboardView.svelte");
 
-  let { p, onopen, onprogress, ontitle, onlocate = null, onaction = null, onai = null, ondocstate = null, getNodePath = null } = $props();
+  let { p, onopen, onprogress, ontitle, onlocate = null, onaction = null, onai = null, ondocstate = null, getNodePath = null, tabMenuItems = null } = $props();
 
   let vol = $state(null);
   let error = $state("");
@@ -424,6 +424,7 @@
           readonly={!vol.writable}
           onsaved={(s) => s && (loadedStamp = s)}
           {onlocate}
+          {tabMenuItems}
           ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
           onprops={onaction ? () => onaction({ type: "props", vol }) : null}
           lib={p.lib}
@@ -448,6 +449,7 @@
           readonly={!vol.writable}
           onsaved={(s) => s && (loadedStamp = s)}
           {onlocate}
+          {tabMenuItems}
           ontag={onaction ? () => onaction({ type: "tag", vol }) : null}
           onprops={onaction ? () => onaction({ type: "props", vol }) : null}
           lib={p.lib}
@@ -461,7 +463,7 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="editor" onkeydown={noteKey}>
       <div class="view-bar">
-        <TitleLink title={p.retitled ?? vol.title} {onlocate} />
+        <TitleLink title={p.retitled ?? vol.title} {onlocate} {tabMenuItems} />
         {#if onaction}
           <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title={formatShortcut("tag", settings.shortcuts) ? `为本篇加标签（${formatShortcut("tag", settings.shortcuts)}）` : "为本篇加标签"} aria-label="加标签"><Icon name="tag" size={16} /></button>
           <button type="button" class="tool-btn" onclick={() => onaction({ type: "props", vol })} title={formatShortcut("props", settings.shortcuts) ? `属性（${formatShortcut("props", settings.shortcuts)}）` : "属性"} aria-label="属性"><Icon name="sliders" size={16} /></button>
@@ -517,6 +519,7 @@
       onvolume={(path) => onopen({ lib: p.lib, bookId: p.bookId, path })}
       onchapter={chapter}
       {onlocate}
+      {tabMenuItems}
       {onaction}
       onjump={onopen}
       onexternal={handleExternal}

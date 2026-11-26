@@ -225,6 +225,7 @@ function readerRenderer() {
         props: {
           p,
           getNodePath: hooks.onnodepath,
+          tabMenuItems: getTabMenuItems,
           onopen: (req) => {
             if (req?.kind === "folder" && !req.path && req.folderPath != null) {
               const title = req.title || req.folderPath.split("/").filter(Boolean).pop() || "";
