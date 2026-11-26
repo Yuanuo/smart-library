@@ -796,7 +796,9 @@ fn collect_words_files(path: &Path, seen: &mut HashSet<PathBuf>, out: &mut Vec<P
             .map(|n| n.to_lowercase().ends_with(FILE_SUFFIX))
             .unwrap_or(false);
         if is_words {
-            let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+            let canon = std::fs::canonicalize(path)
+                .map(|p| PathBuf::from(crate::folder::strip_win_prefix(&p.to_string_lossy())))
+                .unwrap_or_else(|_| path.to_path_buf());
             if seen.insert(canon.clone()) {
                 out.push(canon);
             }

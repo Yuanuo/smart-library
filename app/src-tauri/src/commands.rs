@@ -621,7 +621,12 @@ impl AppState {
 fn load_registry(config_dir: &Path) -> Vec<Library> {
     if let Ok(s) = std::fs::read_to_string(config_dir.join("libraries.json")) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-            if let Ok(libs) = serde_json::from_value::<Vec<Library>>(v["libraries"].clone()) {
+            if let Ok(mut libs) = serde_json::from_value::<Vec<Library>>(v["libraries"].clone()) {
+                for l in &mut libs {
+                    if !l.source.is_empty() {
+                        l.source = folder::strip_win_prefix(&l.source);
+                    }
+                }
                 return libs;
             }
         }
@@ -690,7 +695,9 @@ fn open_bookcase_at(path: &str) -> Result<Bookcase, String> {
 }
 
 fn same_path(a: &str, b: &str) -> bool {
-    a.replace('/', "\\").eq_ignore_ascii_case(&b.replace('/', "\\"))
+    folder::strip_win_prefix(a)
+        .replace('/', "\\")
+        .eq_ignore_ascii_case(&folder::strip_win_prefix(b).replace('/', "\\"))
 }
 
 fn zim_version(path: &str) -> Result<String, String> {
@@ -923,7 +930,7 @@ pub async fn add_zim(
         !state.bind_cancel.load(Ordering::SeqCst)
     })?;
     let stamp = zim_version(&path.to_string_lossy())?;
-    let path = path.to_string_lossy().into_owned();
+    let path = folder::strip_win_prefix(&path.to_string_lossy());
     let id = {
         let mut libs = state.libraries.write().unwrap();
         if libs.iter().any(|l| l.kind == "zim" && same_path(&l.source, &path)) { return Err("这个 ZIM 数据包已经绑定".into()); }

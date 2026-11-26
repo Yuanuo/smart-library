@@ -1637,17 +1637,32 @@ fn civil_date(days: u64) -> String {
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
+/// Strip the Windows extended-length path prefix (`\\?\` or `\\?\UNC\`)
+/// returned by `std::fs::canonicalize`.
+pub fn strip_win_prefix(p: &str) -> String {
+    #[cfg(windows)]
+    {
+        if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{}", rest);
+        }
+        if let Some(rest) = p.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+    }
+    p.to_string()
+}
+
 /// The canonical form of a folder path, for comparing.
 pub fn canonical(path: &str) -> Result<String, String> {
     let p = std::fs::canonicalize(path.trim().trim_matches('"')).map_err(|e| format!("{}: {}", path, e))?;
     if !p.is_dir() {
         return Err(format!("不是文件夹：{}", path));
     }
-    Ok(p.to_string_lossy().into_owned())
+    Ok(strip_win_prefix(&p.to_string_lossy()))
 }
 
 fn parts(p: &str) -> Vec<String> {
-    p.replace('\\', "/").to_lowercase().split('/').filter(|s| !s.is_empty()).map(String::from).collect()
+    strip_win_prefix(p).replace('\\', "/").to_lowercase().split('/').filter(|s| !s.is_empty()).map(String::from).collect()
 }
 
 /// Why `new` cannot be linked next to the `existing` folders (canonical
