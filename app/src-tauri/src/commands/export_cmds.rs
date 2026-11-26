@@ -521,7 +521,6 @@ pub async fn import_package(
             // a whole library comes as one note named like it; picked nodes come as they are
             let wrap = pkg.manifest["scope"] == "library";
             let dir = state.attachments_dir(&lib_id);
-            let ids_before: HashSet<i64> = store.rows()?.into_iter().map(|r| r.id).collect();
             let notes = if is_dir {
                 smart_library_core::exchange::import_dir_into_notes(
                     &store,
@@ -545,9 +544,6 @@ pub async fn import_package(
                     },
                 )?
             };
-            // the new notes join the index (when the library has one) just before the next full-text search
-            let added: Vec<String> = store.rows()?.into_iter().map(|r| r.id).filter(|i| !ids_before.contains(i)).map(|i| i.to_string()).collect();
-            state.mark_dirty(&lib_id, added);
             Ok(ImportDone { status: status_of(&state), title: state.library(&lib_id)?.title, notes })
         })
         .await

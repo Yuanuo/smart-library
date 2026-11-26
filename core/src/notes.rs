@@ -192,6 +192,22 @@ impl NotesStore {
                  updated INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS notes_parent ON notes(parent_id, position);
+              CREATE TABLE IF NOT EXISTS note_index_changes (
+                  revision INTEGER PRIMARY KEY AUTOINCREMENT,
+                  note_id INTEGER NOT NULL
+              );
+              CREATE TRIGGER IF NOT EXISTS notes_index_insert AFTER INSERT ON notes BEGIN
+                  INSERT INTO note_index_changes (note_id) VALUES (NEW.id);
+              END;
+              CREATE TRIGGER IF NOT EXISTS notes_index_update
+              AFTER UPDATE OF parent_id, title, content, content_type ON notes
+              WHEN OLD.parent_id IS NOT NEW.parent_id OR OLD.title IS NOT NEW.title
+                   OR OLD.content IS NOT NEW.content OR OLD.content_type IS NOT NEW.content_type BEGIN
+                  INSERT INTO note_index_changes (note_id) VALUES (NEW.id);
+              END;
+              CREATE TRIGGER IF NOT EXISTS notes_index_delete AFTER DELETE ON notes BEGIN
+                  INSERT INTO note_index_changes (note_id) VALUES (OLD.id);
+              END;
              -- pictures a deleted snapshot still needs: the sweep leaves them alone
              CREATE TABLE IF NOT EXISTS trash_refs (
                  snapshot_id INTEGER NOT NULL,
@@ -739,7 +755,10 @@ impl NotesStore {
 
     /// Every note with its folder chain, in tree order.
     pub fn rows(&self) -> Result<Vec<NoteRow>, String> {
-        let c = self.conn.lock().unwrap();
+        Self::read_rows(&self.conn.lock().unwrap())
+    }
+
+    fn read_rows(c: &Connection) -> Result<Vec<NoteRow>, String> {
         let mut st = c
             .prepare("SELECT id, parent_id, title, content, content_type FROM notes ORDER BY position, id")
             .map_err(err)?;
@@ -777,14 +796,54 @@ impl NotesStore {
         Ok(out)
     }
 
-    /// Changes whenever a note is added, removed or edited.
+    /// Read the index journal and its source rows under the same connection lock.
+    /// A missing or older-than-retained revision requires replacing the index contents.
+    pub fn index_changes(&self, since: Option<i64>) -> Result<Option<IndexChanges>, String> {
+        let c = self.conn.lock().unwrap();
+        let (first, revision): (i64, i64) = c.query_row(
+            "SELECT COALESCE(MIN(revision), 0), COALESCE(MAX(revision), 0) FROM note_index_changes",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).map_err(err)?;
+        if since == Some(revision) {
+            return Ok(None);
+        }
+        let changed = match since {
+            Some(since) if since >= first.saturating_sub(1) && since < revision => {
+                let mut st = c.prepare("SELECT DISTINCT note_id FROM note_index_changes WHERE revision > ?1").map_err(err)?;
+                let ids = st.query_map(params![since], |r| r.get(0)).map_err(err)?
+                    .collect::<Result<_, _>>().map_err(err)?;
+                Some(ids)
+            }
+            _ => None,
+        };
+        Ok(Some(IndexChanges { revision, changed, rows: Self::read_rows(&c)? }))
+    }
+
+    /// Retain the latest indexed revision as a boundary for subsequent updates.
+    pub fn prune_index_changes(&self, revision: i64) -> Result<(), String> {
+        self.conn.lock().unwrap().execute(
+            "DELETE FROM note_index_changes WHERE revision < ?1", params![revision],
+        ).map_err(err)?;
+        Ok(())
+    }
+
+    /// Index version for status display and comparison.
     pub fn fingerprint(&self) -> String {
         let c = self.conn.lock().unwrap();
-        c.query_row("SELECT COUNT(*), COALESCE(MAX(updated), 0), COALESCE(SUM(LENGTH(content)), 0) FROM notes", [], |r| {
-            Ok(format!("{}:{}:{}", r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
-        })
-        .unwrap_or_default()
+        c.query_row("SELECT COALESCE(MAX(revision), 0) FROM note_index_changes", [], |r| r.get(0))
+            .map(index_version).unwrap_or_default()
     }
+}
+
+pub struct IndexChanges {
+    pub revision: i64,
+    pub changed: Option<std::collections::HashSet<i64>>,
+    pub rows: Vec<NoteRow>,
+}
+
+pub fn index_version(revision: i64) -> String {
+    format!("notes:{revision}")
 }
 
 /// The article view of a note (Markdown -> paragraphs).

@@ -97,9 +97,7 @@ pub struct AppState {
     /// read-write folder libraries: the stamp of each open file as last read or
     /// saved (`<lib>|<path>`), to notice changes made outside
     stamps: Mutex<HashMap<String, String>>,
-    /// documents edited since the index was built or last brought up to date
-    /// (folder paths / note ids), per library; the index gets them just
-    /// before a full-text search (`flush_dirty`)
+    /// Edited folder paths, per library. SQLite notes keep their own index journal.
     dirty: Mutex<HashMap<String, HashSet<String>>>,
     /// the stamp of each read-write folder's `meta.json` as we last wrote or read it
     sidecar_seen: Mutex<HashMap<String, String>>,
@@ -552,6 +550,12 @@ impl AppState {
             if !dir.join("smart-library-index.json").exists() || self.building.lock().unwrap().contains(&l.id) {
                 continue; // no index to update yet, or a build is running; keep dirty paths for later
             }
+            if l.kind == "notes" {
+                if let Err(e) = self.sync_notes_index(l, &dir) {
+                    eprintln!("failed to update note index for {}: {e}", l.id);
+                }
+                continue;
+            }
             let paths: HashSet<String> = match self.dirty.lock().unwrap().get_mut(&l.id) {
                 Some(s) if !s.is_empty() => std::mem::take(s),
                 _ => continue,
@@ -587,11 +591,6 @@ impl AppState {
                     removed.extend(changed);
                     let docs = f.docs(&files).collect::<Result<Vec<_>, _>>()?;
                     (docs.into_iter().map(Ok).collect(), version, snap)
-                } else if l.kind == "notes" {
-                    let store = self.notes(l)?;
-                    let rows: Vec<_> = store.rows()?.into_iter().filter(|r| paths.contains(&r.id.to_string())).collect();
-                    removed = paths.iter().filter(|p| !rows.iter().any(|r| &r.id.to_string() == *p)).cloned().collect();
-                    (notes::docs(&rows, &l.title).into_iter().map(Ok).collect(), Some(store.fingerprint()), None)
                 } else {
                     return Ok(());
                 };
@@ -606,6 +605,29 @@ impl AppState {
                 self.mark_dirty(&l.id, paths); // try again at the next search
             }
         }
+    }
+
+    fn sync_notes_index(&self, lib: &Library, dir: &Path) -> Result<(), String> {
+        let store = self.notes(lib)?;
+        let since = SearchIndex::data_version(dir)
+            .and_then(|version| version.strip_prefix("notes:")?.parse().ok());
+        let Some(batch) = store.index_changes(since)? else { return Ok(()) };
+        let version = notes::index_version(batch.revision);
+        let overlay = self.props.overlay(&lib.id)?;
+        if let Some(changed) = batch.changed {
+            let mut removed = changed.clone();
+            let rows: Vec<_> = batch.rows.into_iter().filter(|row| {
+                removed.remove(&row.id) || row.ancestors.iter().any(|id| changed.contains(id))
+            }).collect();
+            let removed: Vec<_> = removed.into_iter().map(|id| id.to_string()).collect();
+            let docs = notes::docs(&rows, &lib.title).into_iter().map(Ok);
+            smart_library_core::search::sync_docs(dir, docs, &removed, Some(&version), &overlay)?;
+        } else {
+            let docs = notes::docs(&batch.rows, &lib.title).into_iter();
+            smart_library_core::search::replace_docs(dir, docs, &version, &overlay)?;
+        }
+        self.indexes.write().unwrap().remove(&lib.id);
+        store.prune_index_changes(batch.revision)
     }
 
     fn index(&self, id: &str) -> Option<Arc<SearchIndex>> {
@@ -1438,7 +1460,6 @@ pub async fn create_note_at(
         _ => store.create(parent, &title, "")?,
     };
     let chain: Vec<String> = store.chain(id)?.iter().map(|i| i.to_string()).collect();
-    state.mark_dirty(&lib.id, chain.iter().cloned()); // the folders made on the way too
     Ok(NewNoteDto { lib: lib.id, chain, id: id.to_string() })
 }
 
@@ -1484,7 +1505,6 @@ fn diary_note(state: &AppState, date: &str) -> Result<(Arc<NotesStore>, NewNoteD
         store.create_with_id(ids[2], Some(month_id), &titles[2], "", "md")?
     };
     let dto = NewNoteDto { lib: lib.id, chain: store.chain(day_id)?.iter().map(|i| i.to_string()).collect(), id: day_id.to_string() };
-    state.mark_dirty(&dto.lib, dto.chain.iter().cloned());
     Ok((store, dto))
 }
 
@@ -1530,7 +1550,6 @@ pub async fn create_note(lib: String, parent: Option<String>, title: String, sta
         None => None,
     };
     let id = notes_of(&state, &lib)?.create(parent, &title, "")?.to_string();
-    state.mark_dirty(&lib, [id.clone()]);
     Ok(id)
 }
 
@@ -1767,8 +1786,6 @@ pub async fn rename_note(lib: String, id: String, title: String, state: State<'_
     let store = notes_of(&state, &lib)?;
     let nid = note_id(&id)?;
     store.update(nid, Some(&title), None)?;
-    // the notes below carry its title in their folders
-    state.mark_dirty(&lib, store.descendants(nid).unwrap_or_default().iter().map(|i| i.to_string()));
     Ok(id)
 }
 
@@ -1785,7 +1802,6 @@ pub async fn save_note(lib: String, id: String, content: String, state: State<'_
         return Ok(Some(stamp));
     }
     notes_of(&state, &lib)?.update(note_id(&id)?, None, Some(&content))?;
-    state.mark_dirty(&lib, [id]);
     Ok(None)
 }
 
@@ -1923,7 +1939,6 @@ pub async fn mindmap_add_clip(lib: String, id: String, topic: String, link: Stri
     }
     let data = smart_library_core::mindmap::add_clip(&note.content, &topic, &link, &tag)?;
     store.update(id, None, Some(&data))?;
-    state.mark_dirty(&lib, [id.to_string()]);
     Ok(())
 }
 
@@ -1931,7 +1946,6 @@ pub async fn mindmap_add_clip(lib: String, id: String, topic: String, link: Stri
 #[tauri::command]
 pub async fn note_append(lib: String, id: String, text: String, state: State<'_, AppState>) -> Result<(), String> {
     notes_of(&state, &lib)?.append(note_id(&id)?, &text)?;
-    state.mark_dirty(&lib, [id]);
     Ok(())
 }
 
@@ -1978,7 +1992,6 @@ pub async fn delete_note(lib: String, id: String, state: State<'_, AppState>) ->
             return Err(e);
         }
     };
-    state.mark_dirty(&lib, gone.iter().cloned());
     // the node tags are in the snapshot too: drop the old records, so a restore
     // under a new id does not leave a second (dangling) tag behind
     for id in &gone {
@@ -2094,7 +2107,6 @@ pub async fn restore_deleted_note(lib: String, id: i64, state: State<'_, AppStat
         }
     }
     let _ = store.release_deleted_pictures(id);
-    state.mark_dirty(&lib, made.iter().map(|(_, id)| id.to_string()));
     state.titles.write().unwrap().remove(&lib);
     state.snapshots.delete(id)?;
     let note = store.get(root)?.ok_or("恢复后找不到笔记")?;
@@ -2181,8 +2193,6 @@ pub async fn move_note(
     let store = notes_of(&state, &lib)?;
     let nid = note_id(&id)?;
     store.move_to(nid, parent, index)?;
-    // the notes below it are in other folders now
-    state.mark_dirty(&lib, store.descendants(nid).unwrap_or_default().iter().map(|i| i.to_string()));
     Ok(())
 }
 
@@ -4897,9 +4907,12 @@ pub async fn build_index(lib: String, incremental: Option<bool>, app: AppHandle,
                 }
                 _ if notes_store.is_some() => {
                     let n = notes_store.as_ref().unwrap();
-                    let docs = notes::docs(&n.rows()?, &lib_title);
-                    let meta = serde_json::json!({ "kind": "notes", "data_version": n.fingerprint() });
-                    smart_library_core::search::build_index(&dir, meta, docs.len(), docs.into_iter().map(Ok), &overlay, progress)?
+                    let batch = n.index_changes(None)?.expect("an index build reads every note");
+                    let docs = notes::docs(&batch.rows, &lib_title);
+                    let meta = serde_json::json!({ "kind": "notes", "data_version": notes::index_version(batch.revision) });
+                    let stats = smart_library_core::search::build_index(&dir, meta, docs.len(), docs.into_iter().map(Ok), &overlay, progress)?;
+                    let _ = n.prune_index_changes(batch.revision);
+                    stats
                 }
                 (Some(f), _, _) => {
                     let files = f.files();
@@ -5739,14 +5752,66 @@ mod library_id_tests {
     }
 
     #[test]
+    fn note_index_recovers_saved_changes_after_restart() {
+        let tmp = std::env::temp_dir().join(format!("sl_notes_index_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let lib = Library {
+            id: "notes-1".into(),
+            kind: "notes".into(),
+            title: "测试笔记".into(),
+            source: String::new(),
+            tree: String::new(),
+            exts: vec![],
+            max_mb: 0,
+            writable: true,
+            remote: String::new(),
+        };
+        let open = || AppState::new(tmp.join("cfg"), tmp.join("data"));
+        {
+            let state = open();
+            let store = state.notes(&lib).unwrap();
+            let parent = store.create(None, "原分类", "").unwrap();
+            let child = store.create(Some(parent), "子文档", "原始正文").unwrap();
+            let gone = store.create(Some(parent), "已删文档", "删除样本").unwrap();
+            store.create(Some(parent), "未改动子文档", "其他正文").unwrap();
+            let batch = store.index_changes(None).unwrap().unwrap();
+            let docs = notes::docs(&batch.rows, &lib.title);
+            smart_library_core::search::build_index(
+                &state.index_dir(&lib.id),
+                serde_json::json!({"data_version": "4:123:12"}),
+                docs.len(), docs.into_iter().map(Ok), &Default::default(), |_, _| {},
+            ).unwrap();
+            state.sync_notes_index(&lib, &state.index_dir(&lib.id)).unwrap();
+            store.update(parent, Some("新分类"), None).unwrap();
+            store.update(child, None, Some("保存正文")).unwrap();
+            store.delete(gone).unwrap();
+        }
+        {
+            let state = open();
+            let dir = state.index_dir(&lib.id);
+            state.flush_dirty(std::slice::from_ref(&lib));
+            let index = SearchIndex::open(&dir).unwrap();
+            for text in ["保存正文", "其他正文"] {
+                let result = index.search(&SearchRequest::new(text)).unwrap();
+                assert_eq!(result.hits.len(), 1);
+                assert_eq!(result.hits[0].book, "新分类");
+            }
+            for text in ["原始正文", "删除样本"] {
+                assert_eq!(index.count(&SearchRequest::new(text)).unwrap(), 0);
+            }
+        }
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
     fn flush_dirty_preserves_paths_while_building() {
         let tmp = std::env::temp_dir().join(format!("sl_flush_dirty_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let state = AppState::new(tmp.join("cfg"), tmp.join("data"));
         let lib = Library {
-            id: "notes-1".into(),
-            kind: "notes".into(),
-            title: "测试笔记".into(),
+            id: "folder-1".into(),
+            kind: "folder".into(),
+            title: "测试文件夹".into(),
             source: String::new(),
             tree: String::new(),
             exts: vec![],

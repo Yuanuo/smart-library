@@ -511,6 +511,26 @@ pub fn sync_docs(
     data_version: Option<&str>,
     overlay: &Overlay,
 ) -> Result<usize, String> {
+    write_docs(dir, docs, Some(removed), data_version, overlay)
+}
+
+/// Refresh an existing index from a complete source snapshot.
+pub fn replace_docs(
+    dir: &Path,
+    docs: impl Iterator<Item = IndexDoc>,
+    data_version: &str,
+    overlay: &Overlay,
+) -> Result<usize, String> {
+    write_docs(dir, docs.map(Ok), None, Some(data_version), overlay)
+}
+
+fn write_docs(
+    dir: &Path,
+    docs: impl Iterator<Item = Result<IndexDoc, String>>,
+    removed: Option<&[String]>,
+    data_version: Option<&str>,
+    overlay: &Overlay,
+) -> Result<usize, String> {
     let meta_text = std::fs::read_to_string(dir.join(META_FILE)).map_err(|_| format!("no index in {}", dir.display()))?;
     let mut meta: serde_json::Value = serde_json::from_str(&meta_text).map_err(|e| e.to_string())?;
     if meta["index_version"].as_u64() != Some(INDEX_VERSION as u64) {
@@ -522,13 +542,19 @@ pub fn sync_docs(
     let mut writer = index.writer::<TantivyDocument>(200_000_000).map_err(|e| e.to_string())?;
     let mut tops: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut n = 0;
-    for p in removed {
-        writer.delete_term(Term::from_field_text(f.path, p));
+    if let Some(removed) = removed {
+        for p in removed {
+            writer.delete_term(Term::from_field_text(f.path, p));
+        }
+    } else {
+        writer.delete_all_documents().map_err(|e| e.to_string())?;
     }
     for d in docs {
         let Ok(mut d) = d else { continue };
         overlay.apply(&mut d);
-        writer.delete_term(Term::from_field_text(f.path, &d.path));
+        if removed.is_some() {
+            writer.delete_term(Term::from_field_text(f.path, &d.path));
+        }
         writer.add_document(make_doc(&f, &d, &mut tops)).map_err(|e| e.to_string())?;
         n += 1;
     }
@@ -536,7 +562,7 @@ pub fn sync_docs(
     writer.wait_merging_threads().map_err(|e| e.to_string())?;
     // new first-level names join the recorded ones
     let mut all: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    if let Some(o) = meta["facet_tops"].as_object() {
+    if let Some(o) = meta["facet_tops"].as_object().filter(|_| removed.is_some()) {
         for (k, v) in o {
             all.insert(k.clone(), v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default());
         }
