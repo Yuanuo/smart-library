@@ -14,7 +14,7 @@
 //! styles, event handlers or links leave the reader.
 
 use crate::markup::{self, Element, Node};
-use crate::render::{HtmlOut, RenderOptions};
+use crate::html_out::{HtmlOut, RenderOptions};
 use crate::volume::{assemble, VolumeText};
 
 #[derive(Debug, Clone, Default)]
@@ -1199,7 +1199,7 @@ impl Walker {
         if self.cur_lb.is_none() {
             self.start_block();
         }
-        self.plain_len += s.chars().filter(|&c| !crate::volume::is_dropped(c)).count();
+        self.plain_len += s.chars().filter(|&c| !crate::text::is_dropped(c)).count();
         self.pieces.push((s.clone(), self.cur_lb));
         if let Some(h) = self.html.as_mut() {
             h.text(&s);
@@ -1390,7 +1390,7 @@ impl Walker {
                 self.walk_children(el);
                 self.close("a");
             }
-            "a" if self.rules.resolved_links && el.attr("href").is_some_and(|href| crate::zim::is_internal_href(href) || crate::zim::external_url(href).is_some()) => {
+            "a" if self.rules.resolved_links && el.attr("href").is_some_and(|href| crate::zim_links::is_internal_href(href) || crate::zim_links::external_url(href).is_some()) => {
                 // `#/File:…` is a ZIM path to a file (the link around an
                 // image), not an anchor in this article: keep the image, but
                 // no link — clicking it would look for a chapter by that name
@@ -1400,13 +1400,13 @@ impl Walker {
                 }
                 if let Some(h) = self.html.as_mut() {
                     let href = el.attr("href").unwrap();
-                    let kind = if crate::zim::external_url(href).is_some() { "external" } else { "internal" };
+                    let kind = if crate::zim_links::external_url(href).is_some() { "external" } else { "internal" };
                     h.open("a", &[("class", "zim-link"), ("href", "#"), ("data-zim-href", href), ("data-link-kind", kind)]);
                 }
                 self.walk_children(el);
                 self.close("a");
             }
-            "a" if el.attr("href").is_some_and(|href| crate::zim::external_url(href).is_some()) => {
+            "a" if el.attr("href").is_some_and(|href| crate::zim_links::external_url(href).is_some()) => {
                 if let Some(h) = self.html.as_mut() {
                     let href = el.attr("href").unwrap();
                     h.open("a", &[("class", "ext-link"), ("href", "#"), ("data-ext-href", href)]);

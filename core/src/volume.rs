@@ -33,29 +33,13 @@
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::{NsReader, XmlVersion};
-use crate::render::{safe_style, HtmlOut, RenderOptions};
+use crate::html_out::{safe_style, HtmlOut, RenderOptions};
+use crate::text::is_dropped;
+pub use crate::text::is_punct;
 use std::collections::HashMap;
 
 const TEI_NS: &str = "http://www.tei-c.org/ns/1.0";
 const CB_NS: &str = "http://www.cbeta.org/ns/1.0";
-
-/// Punctuation that CBETA added on top of the original text (the printed
-/// books have none). Same set as `PUNCT` in `tools/ref_extract.py`.
-/// `【】〖〗︵︶｀＇` were added after checking the `p` anchors of all volumes
-/// (positions in the line do not count them); `○ △ □ 〃 ※ ～ 〇`, box-drawing
-/// characters, digits and Latin letters *are* counted and stay.
-const PUNCT: &str = "，。、；：？！「」『』（）〔〕［］《》〈〉…—·．﹑﹔﹕﹖﹗“”‘’,.;:?!()[]<>【】〖〗︵︶｀＇";
-
-pub fn is_punct(c: char) -> bool {
-    PUNCT.contains(c)
-}
-
-/// Characters dropped from `plain`: punctuation and whitespace (as Python's
-/// `str.isspace`, which also counts U+001C..U+001F).
-pub(crate) fn is_dropped(c: char) -> bool {
-    is_punct(c) || c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
-}
-
 
 /// Start of an original line inside `plain`.
 #[derive(Debug, Clone, PartialEq, Eq)]

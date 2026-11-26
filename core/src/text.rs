@@ -1,4 +1,4 @@
-//! Text decoding helpers.
+//! Text decoding and reading position helpers.
 
 /// Decode bytes as text, honouring a BOM:
 /// UTF-8 (EF BB BF), UTF-16LE (FF FE), UTF-16BE (FE FF).
@@ -27,6 +27,23 @@ fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {
     char::decode_utf16(units)
         .map(|r| r.unwrap_or('\u{FFFD}'))
         .collect()
+}
+
+/// Punctuation that CBETA added on top of the original text (the printed
+/// books have none). Same set as `PUNCT` in `tools/ref_extract.py`.
+/// `【】〖〗︵︶｀＇` were added after checking the `p` anchors of all volumes
+/// (positions in the line do not count them); `○ △ □ 〃 ※ ～ 〇`, box-drawing
+/// characters, digits and Latin letters *are* counted and stay.
+const PUNCT: &str = "，。、；：？！「」『』（）〔〕［］《》〈〉…—·．﹑﹔﹕﹖﹗“”‘’,.;:?!()[]<>【】〖〗︵︶｀＇";
+
+pub fn is_punct(c: char) -> bool {
+    PUNCT.contains(c)
+}
+
+/// Characters dropped from `plain`: punctuation and whitespace (as Python's
+/// `str.isspace`, which also counts U+001C..U+001F).
+pub(crate) fn is_dropped(c: char) -> bool {
+    is_punct(c) || c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
 #[cfg(test)]

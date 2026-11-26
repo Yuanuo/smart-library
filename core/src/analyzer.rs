@@ -22,7 +22,7 @@
 //! Positions: one per emitted term, so the bigrams of a run are consecutive
 //! and a phrase is a sequence of consecutive bigrams.
 
-use crate::volume::is_punct;
+use crate::text::is_punct;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization;
