@@ -16,6 +16,7 @@
         {:else if state.phase === "downloading"}<p>正在下载更新：{mb(state.downloaded)} MB{state.total ? ` / ${mb(state.total)} MB` : ""}</p>{#if state.total}<progress value={state.downloaded} max={state.total}></progress>{/if}
         {:else if state.phase === "ready"}<p>更新已下载并验证。安装时应用会关闭并重新启动，请先保存所有窗口中尚未保存的内容。</p>
         {:else if state.phase === "installing"}<p>正在安装更新，程序随后会自动重启…</p>
+        {:else if state.phase === "installed"}<p>{state.error || "更新已安装，请重新打开程序。"}</p>
         {:else}<p>更新失败，请重试。</p><p class="error">{state.error}</p>{/if}
       </div>
       <div class="actions">

@@ -17,7 +17,7 @@
   import AboutDialog from "./lib/AboutDialog.svelte";
   import UpdateDialog from "./lib/UpdateDialog.svelte";
   import PinyinDialog from "./lib/PinyinDialog.svelte";
-  import { checkUpdates } from "./lib/updater.svelte.js";
+  import { checkUpdates, updateState, hasPendingUpdate } from "./lib/updater.svelte.js";
   import { installShortcuts, readerSelection, formatShortcut } from "./lib/shortcuts.js";
   import { localDate, localTime } from "./lib/diary.js";
   import { settings, update as updateSettings, activeAiPreset, isAiConfigured } from "./lib/settings.svelte.js";
@@ -1171,8 +1171,10 @@
           title={formatShortcut("settings", settings.shortcuts) ? `设置（${formatShortcut("settings", settings.shortcuts)}）` : "设置"} aria-label="设置">
           <Icon name="gear" size={17} /><span>设置</span>
         </button>
-        <button class="rail-btn" onclick={() => (aboutBox = true)} title="关于" aria-label="关于">
+        <button class="rail-btn" onclick={() => (aboutBox = true)}
+          title={hasPendingUpdate() ? `关于（发现新版本 ${updateState.version}）` : "关于"} aria-label="关于">
           <Icon name="info" size={17} /><span>关于</span>
+          {#if hasPendingUpdate()}<span class="rail-dot ok"></span>{/if}
         </button>
       </div>
     </aside>
