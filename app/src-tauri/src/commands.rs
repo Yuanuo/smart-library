@@ -463,6 +463,9 @@ impl AppState {
         let _ = self.marks.rekey(lib, from, to, title);
         let _ = self.history.rekey(lib, from, to, title);
         let _ = self.ai_chat.rekey(lib, from, to, title);
+        if let Err(e) = self.snapshots.rekey(lib, from, to) {
+            eprintln!("failed to move snapshots for {lib}: {from} -> {to}: {e}");
+        }
         self.sidecar_sync();
         {
             let mut stamps = self.stamps.lock().unwrap();

@@ -308,6 +308,18 @@ impl SnapshotStore {
         Ok(n)
     }
 
+    /// Move document snapshots to the new library-relative path.
+    pub fn rekey(&self, lib: &str, from: &str, to: &str) -> Result<(), String> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "UPDATE snapshots SET doc_id = ?3 || substr(doc_id, ?4)
+             WHERE lib = ?1 AND kind != 'deleted'
+               AND (doc_id = ?2 OR substr(doc_id, 1, ?4) = ?2 || '/')",
+            params![lib, from, to, from.chars().count() as i64 + 1],
+        ).map_err(err)?;
+        Ok(())
+    }
+
     /// A library was removed: so are the snapshots that belonged to its documents.
     pub fn remove_lib(&self, lib: &str) -> Result<usize, String> {
         let c = self.conn.lock().unwrap();
@@ -370,6 +382,27 @@ mod tests {
         assert_eq!(store.get(m1.id).unwrap().unwrap().content, "# A");
         assert!(store.delete(m1.id).unwrap());
         assert_eq!(store.list("notes", "1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn follows_folder_moves_and_note_renames() {
+        let store = SnapshotStore::memory().unwrap();
+        let before = "专题_甲/文档.md";
+        let manual = store.create("folder", before, "manual", "初稿", "md", "# 原文").unwrap();
+        let ai = store.create("folder", before, "ai", "AI 改前", "md", "# 修改前").unwrap();
+        let sibling = store.create("folder", "专题_甲集/文档.md", "manual", "", "md", "").unwrap();
+        let elsewhere = store.create("elsewhere", before, "manual", "", "md", "").unwrap();
+        let after = "资料/专题_甲/新文档.md";
+
+        store.rekey("folder", "专题_甲", "资料/专题_甲").unwrap();
+        store.rekey("folder", "资料/专题_甲/文档.md", after).unwrap();
+
+        assert!(store.list("folder", before).unwrap().is_empty());
+        assert_eq!(store.list("folder", after).unwrap().len(), 2);
+        assert_eq!(store.get(manual.id).unwrap().unwrap().doc_id, after);
+        assert_eq!(store.get(ai.id).unwrap().unwrap().doc_id, after);
+        assert_eq!(store.get(sibling.id).unwrap().unwrap().doc_id, "专题_甲集/文档.md");
+        assert_eq!(store.get(elsewhere.id).unwrap().unwrap().doc_id, before);
     }
 
     #[test]
