@@ -527,16 +527,24 @@ impl AppState {
     /// A folder library has just become read-write: what its file has and what
     /// we kept so far are put together, and the file is written.
     fn sidecar_enable(&self, l: &Library) -> Result<(), String> {
+        let mut imported_props = false;
         if let Some(sc) = smart_library_core::sidecar::read(Path::new(&l.source), &l.id)? {
             for (p, d) in sc.props {
                 if self.props.get(&l.id, None, &p)?.is_empty() {
                     self.props.set(&l.id, None, &p, &d)?;
+                    imported_props = true;
                 }
             }
             let marks: Vec<_> = sc.marks.into_iter().map(|mut m| { m.lib_title = l.title.clone(); m }).collect();
             self.marks.merge_lib(&l.id, &marks)?;
         }
-        self.sidecar_write(l).map(|_| ())
+        self.sidecar_write(l)?;
+        if imported_props {
+            if let Ok(f) = self.folder(l) {
+                let _ = self.queue_folder_property_changes(l, &f);
+            }
+        }
+        Ok(())
     }
 
     fn save_registry(&self) -> Result<(), String> {
@@ -5239,6 +5247,93 @@ mod library_id_tests {
             assert_eq!(result.hits.len(), 1);
             assert_eq!(result.hits[0].path, "专题/文章.md");
         }
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn legacy_folder_snapshot_without_properties_does_not_dirty_untagged_folder() {
+        let tmp = std::env::temp_dir().join(format!("sl_legacy_snap_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let root = tmp.join("folder");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.md"), "正文内容").unwrap();
+        let lib = Library {
+            id: "folder-legacy".into(),
+            kind: "folder".into(),
+            title: "旧快照文件夹".into(),
+            source: root.to_string_lossy().into_owned(),
+            tree: String::new(),
+            exts: vec!["md".into()],
+            max_mb: 0,
+            writable: false,
+            remote: String::new(),
+        };
+        let state = AppState::new(tmp.join("cfg"), tmp.join("data"));
+        let folder = state.folder(&lib).unwrap();
+        let files = folder.files();
+        let dir = state.index_dir(&lib.id);
+        smart_library_core::search::build_index(
+            &dir, serde_json::json!({"data_version": folder.fingerprint(&files)}), files.len(),
+            folder.docs(&files), &props::Overlay::default(), |_, _| {},
+        ).unwrap();
+        // Write a legacy folder-snapshot.json with no `properties` field.
+        std::fs::write(
+            dir.join("folder-snapshot.json"),
+            serde_json::to_vec(&serde_json::json!({ "files": { "a.md": [12, 0] }, "metas": {} })).unwrap(),
+        ).unwrap();
+
+        state.queue_folder_property_changes(&lib, &folder).unwrap();
+        assert!(state.dirty.lock().unwrap().get(&lib.id).is_none_or(|s| s.is_empty()));
+        // Snapshot should now record the empty properties map.
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("folder-snapshot.json")).unwrap()).unwrap();
+        assert_eq!(saved["properties"], serde_json::json!({}));
+        drop(state);
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn sidecar_enable_queues_imported_properties_for_cached_folder() {
+        let tmp = std::env::temp_dir().join(format!("sl_sidecar_enable_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let root = tmp.join("folder");
+        std::fs::create_dir_all(root.join("专题")).unwrap();
+        std::fs::write(root.join("专题/文章.md"), "受影响的文章").unwrap();
+        let mut lib = Library {
+            id: "folder-enable".into(),
+            kind: "folder".into(),
+            title: "切换读写文件夹".into(),
+            source: root.to_string_lossy().into_owned(),
+            tree: String::new(),
+            exts: vec!["md".into()],
+            max_mb: 0,
+            writable: false,
+            remote: String::new(),
+        };
+        let state = AppState::new(tmp.join("cfg"), tmp.join("data"));
+        let folder = state.folder(&lib).unwrap(); // cached while read-only
+        let files = folder.files();
+        let dir = state.index_dir(&lib.id);
+        let overlay = props::Overlay::default();
+        smart_library_core::search::build_index(
+            &dir, serde_json::json!({"data_version": folder.fingerprint(&files)}), files.len(),
+            folder.docs(&files), &overlay, |_, _| {},
+        ).unwrap();
+        save_folder_snapshot(&dir, &folder_snapshot_map(&folder, &files, &overlay));
+
+        let props = vec![("专题".into(), Dims::from([("period".into(), vec!["宋".into()])]))];
+        smart_library_core::sidecar::write(
+            &root, &smart_library_core::sidecar::Sidecar { props, marks: vec![] },
+        ).unwrap();
+
+        lib.writable = true;
+        state.sidecar_enable(&lib).unwrap();
+        state.flush_dirty(std::slice::from_ref(&lib));
+        let mut req = SearchRequest::new("");
+        req.filters = vec![Filter { root: "period".into(), values: vec!["宋".into()] }];
+        let result = SearchIndex::open(&dir).unwrap().search(&req).unwrap();
+        assert_eq!(result.hits.len(), 1);
+        assert_eq!(result.hits[0].path, "专题/文章.md");
+        drop(state);
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

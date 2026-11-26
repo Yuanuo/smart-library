@@ -23,19 +23,23 @@ impl AppState {
         }
         let old = load_folder_snapshot(&dir);
         let current = self.props.overlay(&lib.id)?.folder_properties();
-        let paths = changed_property_paths(
-            old.as_ref().and_then(|snap| snap.properties.as_ref()),
-            &current,
-        );
-        if !paths.is_empty() {
-            self.mark_dirty(
-                &lib.id,
-                folder
-                    .files()
-                    .into_iter()
-                    .filter(|f| paths.iter().any(|p| file_at_path(&f.rel, p)))
-                    .map(|f| f.rel),
-            );
+        if let Some(mut snap) = old {
+            if snap.properties.is_none() && current.is_empty() {
+                snap.properties = Some(current);
+                save_folder_snapshot(&dir, &snap);
+                return Ok(());
+            }
+            let paths = changed_property_paths(snap.properties.as_ref(), &current);
+            if !paths.is_empty() {
+                self.mark_dirty(
+                    &lib.id,
+                    folder
+                        .files()
+                        .into_iter()
+                        .filter(|f| paths.iter().any(|p| file_at_path(&f.rel, p)))
+                        .map(|f| f.rel),
+                );
+            }
         }
         Ok(())
     }
@@ -250,7 +254,9 @@ fn changed_property_paths<'a>(
     cur: &'a std::collections::BTreeMap<String, Dims>,
 ) -> Vec<&'a str> {
     let Some(old) = old else {
-        return vec![""]; // older snapshots did not track the properties applied to the index
+        // Older snapshots did not record properties; only re-index paths that
+        // actually have properties now (an empty map needs no re-index).
+        return cur.keys().map(String::as_str).collect();
     };
     cur.iter()
         .filter(|(path, dims)| old.get(*path) != Some(*dims))
@@ -386,12 +392,10 @@ pub async fn check_folder_changes(app: AppHandle) -> Result<Vec<FolderChangeDto>
             let overlay = state.props.overlay(&l.id)?;
             let old_snapshot = load_folder_snapshot(&dir);
             let properties = overlay.folder_properties();
-            if indexed_ver.as_deref() != Some(cur_ver.as_str())
-                || old_snapshot
-                    .as_ref()
-                    .and_then(|snap| snap.properties.as_ref())
-                    != Some(&properties)
-            {
+            let props_changed = old_snapshot
+                .as_ref()
+                .is_some_and(|snap| !changed_property_paths(snap.properties.as_ref(), &properties).is_empty());
+            if indexed_ver.as_deref() != Some(cur_ver.as_str()) || props_changed {
                 let (added, modified, removed, has_snapshot) = match old_snapshot {
                     Some(old) => {
                         let cur = folder_snapshot_map(&f, &files, &overlay);
@@ -704,14 +708,11 @@ pub async fn props_set(
         // a rebuild is running: it may have read the old properties
         return Err("正在建立索引：属性已保存，索引完成后请再保存一次或重建索引".into());
     }
-    if l.kind == "folder" {
-        build_index(lib, Some(true), app, state).await?;
-        return Ok(PropsSaved { updating: 1 });
-    }
     // the documents the properties apply to
     enum Job {
         Cbeta(Arc<Bookcase>, Option<HashSet<String>>),
         Html(Arc<Bookcase>, Arc<HtmlTree>, Option<HashSet<String>>),
+        Folder(Arc<FolderLibrary>, Vec<folder::FolderFile>, String),
         Notes(Arc<NotesStore>, Option<HashSet<i64>>),
         Zim(Arc<Mutex<smart_library_core::zim::Zim>>, Vec<usize>),
     }
@@ -737,6 +738,14 @@ pub async fn props_set(
                 Some(nav_document_targets(&state, &l, &path)?)
             },
         ),
+        IndexSource::Folder(f) => {
+            let files: Vec<_> = f
+                .files()
+                .into_iter()
+                .filter(|file| file_at_path(&file.rel, &path))
+                .collect();
+            Job::Folder(f, files, path.clone())
+        }
         IndexSource::Notes(store) => {
             let ids = if path.is_empty() {
                 None
@@ -756,7 +765,6 @@ pub async fn props_set(
             };
             Job::Zim(z, jobs)
         }
-        IndexSource::Folder(_) => return Ok(PropsSaved { updating: 0 }),
     };
     let overlay = index_overlay(&state, &l)?;
     let lib_title = l.title.clone();
@@ -773,6 +781,24 @@ pub async fn props_set(
                 ),
                 Job::Html(bc, t, paths) => {
                     update_docs(&dir, t.docs(bc, paths.as_ref()).1, &overlay)
+                }
+                Job::Folder(f, files, prop_path) => {
+                    let n = update_docs(&dir, f.docs(files), &overlay)?;
+                    if let Some(mut snap) = load_folder_snapshot(&dir) {
+                        let cur_props = overlay.folder_properties();
+                        if prop_path.is_empty() {
+                            snap.properties = Some(cur_props);
+                            save_folder_snapshot(&dir, &snap);
+                        } else if let Some(props) = snap.properties.as_mut() {
+                            if let Some(d) = cur_props.get(prop_path) {
+                                props.insert(prop_path.clone(), d.clone());
+                            } else {
+                                props.remove(prop_path);
+                            }
+                            save_folder_snapshot(&dir, &snap);
+                        }
+                    }
+                    Ok(n)
                 }
                 Job::Notes(store, ids) => {
                     let rows: Vec<_> = store
