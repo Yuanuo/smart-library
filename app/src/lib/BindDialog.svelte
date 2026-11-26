@@ -42,7 +42,7 @@
       items: [
         { id: "notes", name: "默认知识库（推荐）", desc: "笔记存在程序自己的数据库里，不依赖文件夹：适合大量笔记和日记，保存与搜索都快；Markdown、脑图、白板，可整体导出备份（读写）", ready: true },
         { id: "folder", name: "本地文件夹", desc: "直接使用磁盘上的文件夹和文件：可用 git 或网盘同步备份，别的软件也能打开；默认只读，可解锁后编辑 Markdown、脑图、白板（可控读写）", ready: true },
-        { id: "git", name: "远程知识库（Git）", desc: "克隆远程 Git 仓库为本地只读知识库（默认浅克隆），支持手动与定期检查更新（只读）", ready: true },
+        { id: "git", name: "远程知识库（Git）", desc: "克隆远程 Git 仓库或直接绑定本地已克隆的 Git 仓库为只读知识库，支持手动与定期检查更新（只读）", ready: true },
       ],
     },
     {
@@ -67,6 +67,10 @@
   let gitDestEdited = $state(false);
   let gitTitleEdited = $state(false);
   let gitUrlTimer = null;
+  let gitDestTimer = null;
+  let gitDirInfo = $state(null); // { path, exists, is_empty, is_git_repo, remote_url, branch, title, conflict }
+  let gitDirError = $state("");
+  const gitReusingLocal = $derived(!!(gitDirInfo?.is_git_repo && gitDirInfo?.remote_url));
   // import package (.smartlib / .smartdir)
   let pkgPath = $state("");
   let pkgInfo = $state(null); // { kind, title, scope, files, exts, max_mb }
@@ -113,6 +117,7 @@
       clearTimeout(inspectTimer);
       clearTimeout(zimTimer);
       clearTimeout(gitUrlTimer);
+      clearTimeout(gitDestTimer);
     };
   });
 
@@ -330,17 +335,51 @@
     }, 300);
   }
 
+  async function inspectGitDest(dir) {
+    const d = (dir ?? gitDest).trim();
+    gitDirInfo = null;
+    gitDirError = "";
+    if (!d) return;
+    try {
+      const info = await api.gitInspectDir(d);
+      if (gitDest.trim() !== d) return;
+      gitDirInfo = info;
+      if (info.is_git_repo && info.remote_url) {
+        if (!gitUrl.trim()) gitUrl = info.remote_url;
+        if (!gitTitleEdited && info.title) gitTitle = uniqueTitle(info.title, "远程知识库");
+      } else if (info.exists && !info.is_empty) {
+        gitDirError = info.is_git_repo
+          ? "该 Git 仓库未配置远程地址（remote），无法绑定为远程知识库，请改用「本地文件夹」添加。"
+          : "目标文件夹不为空且不是 Git 仓库根目录，请选择空目录或已克隆的 Git 仓库。";
+      }
+    } catch (e) {
+      if (gitDest.trim() === d) gitDirError = String(e);
+    }
+  }
+
+  function laterInspectGitDest() {
+    gitDestEdited = true;
+    gitDirInfo = null;
+    gitDirError = "";
+    clearTimeout(gitDestTimer);
+    const d = gitDest.trim();
+    if (!d) return;
+    gitDestTimer = setTimeout(() => inspectGitDest(d), 350);
+  }
+
   async function pickGitDest() {
     if (busy) return;
     error = "";
     const f = await open({
       directory: true,
       multiple: false,
-      title: "选择用于存放克隆仓库的空文件夹",
+      title: "选择空文件夹或已克隆的 Git 仓库文件夹",
     });
     if (f) {
+      clearTimeout(gitDestTimer);
       gitDest = f;
       gitDestEdited = true;
+      await inspectGitDest(f);
     }
   }
 
@@ -352,7 +391,9 @@
         kind === "zim"
           ? "正在读取 ZIM…"
           : kind === "git"
-            ? "正在浅克隆远程仓库…"
+            ? gitReusingLocal
+              ? "正在绑定本地 Git 仓库…"
+              : "正在浅克隆远程仓库…"
             : kind === "import"
               ? pkgInfo?.kind === "smartdir" && importMode === "folder"
                 ? "正在解压并绑定本地文件夹…"
@@ -483,14 +524,14 @@
         </div>
         {#if error}<p class="error">{error}</p>{/if}
       {:else}
-        <p class="muted">克隆远程 Git 仓库作为只读知识库（默认浅克隆 <code>--depth 1</code>），支持手动和定期检查更新。如需本地修改与同步，请在本地文件夹中手动操作。</p>
+        <p class="muted">克隆远程 Git 仓库（默认浅克隆 <code>--depth 1</code>），或直接选择本地已克隆的 Git 仓库绑定为只读知识库，支持手动和定期检查更新。</p>
         <p class="muted small">
           Git 可用：{gitInfo.version}（<code>{gitInfo.path}</code>）
           <button type="button" class="link" onclick={() => { gitEditingPath = true; customGitPath = gitInfo.path; error = ""; }} disabled={busy}>更改</button>
         </p>
         <label class="field">
           仓库地址
-          <input type="text" use:autofocus bind:value={gitUrl} oninput={laterGitDefault} placeholder="https://github.com/user/repo.git" disabled={busy} />
+          <input type="text" use:autofocus bind:value={gitUrl} oninput={laterGitDefault} placeholder="https://github.com/user/repo.git（或直接下方选择本地已有 Git 仓库）" disabled={busy} />
         </label>
         <label class="field">
           名称
@@ -500,16 +541,28 @@
           知识库 ID（可选）
           <input type="text" bind:value={libraryId} placeholder={ID_PLACEHOLDER} title={ID_TITLE} disabled={busy} />
         </label>
-        <label class="field">
-          分支（可选）
-          <input type="text" bind:value={gitBranch} placeholder="留空使用仓库默认分支" disabled={busy} />
-        </label>
+        {#if !gitReusingLocal}
+          <label class="field">
+            分支（可选）
+            <input type="text" bind:value={gitBranch} placeholder="留空使用仓库默认分支" disabled={busy} />
+          </label>
+        {/if}
         <label class="field">
           本地存放位置
-          <input type="text" bind:value={gitDest} oninput={() => (gitDestEdited = true)} placeholder="输入仓库地址后自动分配空目录" disabled={busy} />
+          <input type="text" bind:value={gitDest} oninput={laterInspectGitDest} placeholder="输入仓库地址后自动分配空目录，或选择本地已有 Git 仓库" disabled={busy} />
           <button type="button" onclick={pickGitDest} disabled={busy}>更改…</button>
         </label>
-        <p class="hint muted">已默认分配空目录，可直接克隆，也可点击「更改…」选择其他空文件夹。</p>
+        {#if gitDirInfo?.conflict}
+          <p class="error">{gitDirInfo.conflict}</p>
+        {:else if gitDirError}
+          <p class="error">{gitDirError}</p>
+        {:else if gitReusingLocal}
+          <p class="hint muted">
+            检测到本地已有 Git 仓库{gitDirInfo.branch ? `（当前分支：${gitDirInfo.branch}）` : ""}，将直接绑定而不重新克隆。
+          </p>
+        {:else}
+          <p class="hint muted">可自动分配空目录进行克隆，也可点击「更改…」选择其他空目录或本地已克隆的 Git 仓库。</p>
+        {/if}
         <fieldset>
           <legend>索引哪些文件</legend>
           <label class="field">文件后缀（逗号或空格分隔）<input type="text" bind:value={exts} disabled={busy} /></label>
@@ -650,7 +703,13 @@
       {#if kind === "notes"}
         <button class="primary" disabled={!notesTitle.trim() || busy} onclick={bind}>{busy ? "创建中…" : "创建"}</button>
       {:else if kind === "git"}
-        <button class="primary" disabled={!gitInfo?.available || gitEditingPath || !gitUrl.trim() || !gitDest.trim() || !exts.trim() || busy} onclick={bind}>{busy ? "克隆中…" : "克隆并添加"}</button>
+        <button
+          class="primary"
+          disabled={!gitInfo?.available || gitEditingPath || !gitDest.trim() || (!gitUrl.trim() && !gitReusingLocal) || !!gitDirInfo?.conflict || !!gitDirError || !exts.trim() || busy}
+          onclick={bind}
+        >
+          {busy ? (gitReusingLocal ? "绑定中…" : "克隆中…") : gitReusingLocal ? "直接绑定" : "克隆并添加"}
+        </button>
       {:else if kind === "import"}
         <button class="primary" disabled={!pkgInfo || (pkgInfo.kind === "smartdir" && importMode === "folder" && !importDest.trim()) || busy} onclick={bind}>{busy ? "导入中…" : "导入"}</button>
       {:else if kind === "folder"}

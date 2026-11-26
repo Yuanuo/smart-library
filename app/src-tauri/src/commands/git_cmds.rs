@@ -148,16 +148,69 @@ fn git_stderr_or_stdout(out: &std::process::Output) -> String {
 }
 
 fn git_path(p: &str) -> String {
-    #[cfg(windows)]
-    {
-        if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
-            return format!(r"\\{}", rest);
-        }
-        if let Some(rest) = p.strip_prefix(r"\\?\") {
-            return rest.to_string();
-        }
+    folder::strip_win_prefix(p)
+}
+
+fn git_stdout(git: &str, dir: &str, args: &[&str]) -> Option<String> {
+    let dir = git_path(dir);
+    let out = new_cmd(git).arg("-C").arg(&dir).args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
     }
-    p.to_string()
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+/// Inspect a local directory to see if it is the root of an existing Git repository.
+/// Returns `Some((remote_url, branch))` when `canon_dir` is a Git work-tree root
+/// (`remote_url` is empty if no remote is configured).
+fn detect_local_git_repo(git: &str, canon_dir: &str) -> Option<(String, String)> {
+    let top = git_stdout(git, canon_dir, &["rev-parse", "--show-toplevel"])?;
+    let top_canon = folder::canonical(&top).ok()?;
+    if !super::same_path(&top_canon, canon_dir) {
+        return None;
+    }
+    let branch = git_stdout(git, canon_dir, &["symbolic-ref", "--short", "HEAD"]).unwrap_or_default();
+    let remote_name = if !branch.is_empty() {
+        git_stdout(git, canon_dir, &["config", "--get", &format!("branch.{}.remote", branch)])
+    } else {
+        None
+    };
+    let remote_url = remote_name
+        .as_deref()
+        .and_then(|r| git_stdout(git, canon_dir, &["remote", "get-url", r]))
+        .or_else(|| git_stdout(git, canon_dir, &["remote", "get-url", "origin"]))
+        .or_else(|| {
+            let remotes = git_stdout(git, canon_dir, &["remote"])?;
+            let first = remotes.lines().next()?.trim();
+            if first.is_empty() {
+                None
+            } else {
+                git_stdout(git, canon_dir, &["remote", "get-url", first])
+            }
+        })
+        .unwrap_or_default();
+    Some((remote_url, branch))
+}
+
+fn normalize_git_url(u: &str) -> String {
+    let s = u.trim().trim_end_matches(['/', '\\']);
+    let s = if s.len() > 4 && s[s.len() - 4..].eq_ignore_ascii_case(".git") {
+        &s[..s.len() - 4]
+    } else {
+        s
+    };
+    s.trim_end_matches(['/', '\\']).to_ascii_lowercase()
+}
+
+fn same_git_url(a: &str, b: &str) -> bool {
+    normalize_git_url(a) == normalize_git_url(b)
+}
+
+fn is_shallow_repo(git: &str, dir: &str) -> bool {
+    git_stdout(git, dir, &["rev-parse", "--is-shallow-repository"])
+        .map(|s| s == "true")
+        .unwrap_or(false)
 }
 
 fn is_dirty(git: &str, dir: &str) -> Result<bool, String> {
@@ -222,6 +275,99 @@ pub async fn git_default_dir(url: String, state: State<'_, AppState>) -> Result<
     Ok(GitDefaultDirDto { title, dest })
 }
 
+#[derive(Serialize)]
+pub struct GitInspectDirDto {
+    path: String,
+    exists: bool,
+    is_empty: bool,
+    is_git_repo: bool,
+    remote_url: String,
+    branch: String,
+    title: String,
+    conflict: Option<String>,
+}
+
+/// Inspect a user-chosen local directory for the Remote Git dialog:
+/// distinguishes an empty/new directory (to clone into) from an existing local Git clone (to bind directly).
+#[tauri::command]
+pub async fn git_inspect_dir(path: String, state: State<'_, AppState>) -> Result<GitInspectDirDto, String> {
+    let trimmed = path.trim().trim_matches('"').to_string();
+    if trimmed.is_empty() {
+        return Err("请指定本地存放目录".into());
+    }
+    let p = PathBuf::from(&trimmed);
+    if !p.exists() {
+        return Ok(GitInspectDirDto {
+            path: folder::strip_win_prefix(&trimmed),
+            exists: false,
+            is_empty: true,
+            is_git_repo: false,
+            remote_url: String::new(),
+            branch: String::new(),
+            title: String::new(),
+            conflict: None,
+        });
+    }
+    if !p.is_dir() {
+        return Err(format!("目标路径不是文件夹：{}", trimmed));
+    }
+    let canon = folder::canonical(&trimmed)?;
+    let conflict = {
+        let libs = state.libraries.read().unwrap();
+        let existing: Vec<&str> = libs.iter().filter(|l| l.kind == "folder").map(|l| l.source.as_str()).collect();
+        folder::conflict(&existing, &canon)
+    };
+    let is_empty = std::fs::read_dir(&canon)
+        .map_err(|e| format!("{}: {}", canon, e))?
+        .next()
+        .is_none();
+    if is_empty {
+        return Ok(GitInspectDirDto {
+            path: canon,
+            exists: true,
+            is_empty: true,
+            is_git_repo: false,
+            remote_url: String::new(),
+            branch: String::new(),
+            title: String::new(),
+            conflict,
+        });
+    }
+    let config_dir = state.config_dir.clone();
+    let canon_clone = canon.clone();
+    let detected = tauri::async_runtime::spawn_blocking(move || {
+        let (git_bin, _) = resolve_git(&config_dir)?;
+        detect_local_git_repo(&git_bin, &canon_clone)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let (is_git_repo, remote_url, branch, title) = match detected {
+        Some((remote_url, branch)) => {
+            let title = if !remote_url.is_empty() {
+                repo_name_from_url(&remote_url)
+            } else {
+                Path::new(&canon)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            };
+            (true, remote_url, branch, title)
+        }
+        None => (false, String::new(), String::new(), String::new()),
+    };
+    Ok(GitInspectDirDto {
+        path: canon,
+        exists: true,
+        is_empty: false,
+        is_git_repo,
+        remote_url,
+        branch,
+        title,
+        conflict,
+    })
+}
+
 fn parse_git_progress(line: &str) -> Option<(String, usize, usize)> {
     let s = line.trim().strip_prefix("remote:").map(str::trim).unwrap_or(line.trim());
     let (phase_raw, rest) = s.split_once(':')?;
@@ -255,7 +401,8 @@ fn parse_git_progress(line: &str) -> Option<(String, usize, usize)> {
     Some((label, done, total))
 }
 
-/// Clone a remote Git repository (shallow `--depth 1`) and bind it as a read-only folder library.
+/// Clone a remote Git repository (shallow `--depth 1`) — or bind an already-cloned local
+/// Git repository directly — as a read-only folder library.
 #[tauri::command]
 pub async fn add_git_library(
     url: String,
@@ -269,9 +416,6 @@ pub async fn add_git_library(
     state: State<'_, AppState>,
 ) -> Result<StatusDto, String> {
     let url = url.trim().to_string();
-    if url.is_empty() {
-        return Err("请填写 Git 仓库地址".into());
-    }
     let exts = FolderFilter::parse_exts(&exts);
     if exts.is_empty() {
         return Err("请至少填写一种文件后缀".into());
@@ -283,18 +427,18 @@ pub async fn add_git_library(
         return Err("请指定本地存放目录".into());
     }
     let dest_path = PathBuf::from(&dest_trimmed);
-    let created = if dest_path.exists() {
+    let (created, is_non_empty) = if dest_path.exists() {
         if !dest_path.is_dir() {
             return Err(format!("目标路径不是文件夹：{}", dest_trimmed));
         }
         let mut iter = std::fs::read_dir(&dest_path).map_err(|e| format!("{}: {}", dest_trimmed, e))?;
-        if iter.next().is_some() {
-            return Err("目标文件夹不为空，请选择一个空目录".into());
-        }
-        false
+        (false, iter.next().is_some())
     } else {
+        if url.is_empty() {
+            return Err("请填写 Git 仓库地址".into());
+        }
         std::fs::create_dir_all(&dest_path).map_err(|e| format!("无法创建目标文件夹 {}：{}", dest_trimmed, e))?;
-        true
+        (true, false)
     };
 
     let canon = match folder::canonical(&dest_trimmed) {
@@ -307,7 +451,7 @@ pub async fn add_git_library(
         }
     };
 
-    // Validate folder conflict and library_id before cloning.
+    // Validate folder conflict and library_id before cloning or binding.
     let check_res: Result<(), String> = {
         let libs = state.libraries.read().unwrap();
         let existing: Vec<&str> = libs.iter().filter(|l| l.kind == "folder").map(|l| l.source.as_str()).collect();
@@ -324,81 +468,113 @@ pub async fn add_git_library(
         return Err(e);
     }
 
-    let branch = branch.map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
-    let clone_res = tauri::async_runtime::spawn_blocking({
-        let url = url.clone();
-        let canon = canon.clone();
-        let git_bin = git_bin.clone();
-        let app = app.clone();
-        move || {
-            let clone_dest = git_path(&canon);
-            super::bind_progress(&app, "正在连接远程仓库…", 0, 0);
-            let mut cmd = new_cmd(&git_bin);
-            cmd.args(["clone", "--depth", "1", "--progress"]);
-            if let Some(b) = &branch {
-                cmd.args(["-b", b]);
+    let effective_url = if is_non_empty {
+        // Reuse an already-cloned local Git repository if it has a configured remote.
+        let detected = tauri::async_runtime::spawn_blocking({
+            let git_bin = git_bin.clone();
+            let canon = canon.clone();
+            move || detect_local_git_repo(&git_bin, &canon)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let Some((detected_url, _)) = detected else {
+            return Err("目标文件夹不为空且不是 Git 仓库根目录，请选择空目录或已克隆的 Git 仓库".into());
+        };
+        if detected_url.is_empty() {
+            return Err("该 Git 仓库未配置远程地址（remote），无法绑定为远程知识库，请改用「本地文件夹」添加".into());
+        }
+        if !url.is_empty() && !same_git_url(&url, &detected_url) {
+            return Err(format!(
+                "目标文件夹已是另一个 Git 仓库（远程地址：{}），与填写的仓库地址不一致。如需直接绑定此仓库，请清空或更正仓库地址。",
+                detected_url
+            ));
+        }
+        detected_url
+    } else {
+        if url.is_empty() {
+            if created {
+                let _ = std::fs::remove_dir(&canon);
             }
-            cmd.arg(&url)
-                .arg(&clone_dest)
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped());
-            let mut child = cmd.spawn().map_err(|e| format!("执行 git clone 失败：{}", e))?;
-            let mut err_lines: Vec<String> = Vec::new();
-            if let Some(mut stderr) = child.stderr.take() {
-                let mut buf = [0u8; 4096];
-                let mut line_buf: Vec<u8> = Vec::new();
-                while let Ok(n) = stderr.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    for &b in &buf[..n] {
-                        if b == b'\r' || b == b'\n' {
-                            if !line_buf.is_empty() {
-                                let line = String::from_utf8_lossy(&line_buf).trim().to_string();
-                                line_buf.clear();
-                                if let Some((label, done, total)) = parse_git_progress(&line) {
-                                    super::bind_progress(&app, &label, done, total);
-                                } else if !line.is_empty() && !line.starts_with("Cloning into") {
-                                    err_lines.push(line);
+            return Err("请填写 Git 仓库地址".into());
+        }
+        let branch = branch.map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
+        let clone_res = tauri::async_runtime::spawn_blocking({
+            let url = url.clone();
+            let canon = canon.clone();
+            let git_bin = git_bin.clone();
+            let app = app.clone();
+            move || {
+                let clone_dest = git_path(&canon);
+                super::bind_progress(&app, "正在连接远程仓库…", 0, 0);
+                let mut cmd = new_cmd(&git_bin);
+                cmd.args(["clone", "--depth", "1", "--progress"]);
+                if let Some(b) = &branch {
+                    cmd.args(["-b", b]);
+                }
+                cmd.arg(&url)
+                    .arg(&clone_dest)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped());
+                let mut child = cmd.spawn().map_err(|e| format!("执行 git clone 失败：{}", e))?;
+                let mut err_lines: Vec<String> = Vec::new();
+                if let Some(mut stderr) = child.stderr.take() {
+                    let mut buf = [0u8; 4096];
+                    let mut line_buf: Vec<u8> = Vec::new();
+                    while let Ok(n) = stderr.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                        for &b in &buf[..n] {
+                            if b == b'\r' || b == b'\n' {
+                                if !line_buf.is_empty() {
+                                    let line = String::from_utf8_lossy(&line_buf).trim().to_string();
+                                    line_buf.clear();
+                                    if let Some((label, done, total)) = parse_git_progress(&line) {
+                                        super::bind_progress(&app, &label, done, total);
+                                    } else if !line.is_empty() && !line.starts_with("Cloning into") {
+                                        err_lines.push(line);
+                                    }
                                 }
+                            } else {
+                                line_buf.push(b);
                             }
-                        } else {
-                            line_buf.push(b);
+                        }
+                    }
+                    if !line_buf.is_empty() {
+                        let line = String::from_utf8_lossy(&line_buf).trim().to_string();
+                        if let Some((label, done, total)) = parse_git_progress(&line) {
+                            super::bind_progress(&app, &label, done, total);
+                        } else if !line.is_empty() && !line.starts_with("Cloning into") {
+                            err_lines.push(line);
                         }
                     }
                 }
-                if !line_buf.is_empty() {
-                    let line = String::from_utf8_lossy(&line_buf).trim().to_string();
-                    if let Some((label, done, total)) = parse_git_progress(&line) {
-                        super::bind_progress(&app, &label, done, total);
-                    } else if !line.is_empty() && !line.starts_with("Cloning into") {
-                        err_lines.push(line);
-                    }
+                let status = child.wait().map_err(|e| format!("等待 git clone 失败：{}", e))?;
+                if !status.success() {
+                    let detail = err_lines.join("\n");
+                    return Err(if detail.is_empty() {
+                        "git clone 失败".into()
+                    } else {
+                        format!("git clone 失败：{}", detail)
+                    });
                 }
+                Ok::<_, String>(())
             }
-            let status = child.wait().map_err(|e| format!("等待 git clone 失败：{}", e))?;
-            if !status.success() {
-                let detail = err_lines.join("\n");
-                return Err(if detail.is_empty() {
-                    "git clone 失败".into()
-                } else {
-                    format!("git clone 失败：{}", detail)
-                });
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Err(e) = clone_res {
+            if created {
+                let _ = std::fs::remove_dir_all(&canon);
             }
-            Ok::<_, String>(())
+            return Err(e);
         }
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+        url
+    };
 
-    if let Err(e) = clone_res {
-        if created {
-            let _ = std::fs::remove_dir_all(&canon);
-        }
-        return Err(e);
-    }
-
-    let fallback_title = repo_name_from_url(&url);
+    let fallback_title = repo_name_from_url(&effective_url);
     let lib_title = title.filter(|t| !t.trim().is_empty()).map(|t| t.trim().to_string()).unwrap_or(fallback_title);
     {
         let mut libs = state.libraries.write().unwrap();
@@ -419,7 +595,7 @@ pub async fn add_git_library(
             exts,
             max_mb,
             writable: false,
-            remote: url,
+            remote: effective_url,
         });
     }
     state.save_registry()?;
@@ -467,9 +643,12 @@ pub async fn git_status_all(fetch: Option<bool>, state: State<'_, AppState>) -> 
             let mut err = None;
             if do_fetch {
                 let repo_dir = git_path(&source);
-                let f = new_cmd(&git_bin)
-                    .args(["-C", &repo_dir, "fetch", "--depth", "1"])
-                    .output();
+                let mut cmd = new_cmd(&git_bin);
+                cmd.args(["-C", &repo_dir, "fetch"]);
+                if is_shallow_repo(&git_bin, &source) {
+                    cmd.args(["--depth", "1"]);
+                }
+                let f = cmd.output();
                 match f {
                     Ok(o) if o.status.success() => {
                         let head = rev_parse(&git_bin, &source, "HEAD");

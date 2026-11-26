@@ -215,6 +215,7 @@ fn main() {
             commands::import_dir_as_folder,
             commands::git_check,
             commands::git_default_dir,
+            commands::git_inspect_dir,
             commands::add_git_library,
             commands::git_status_all,
             commands::git_pull_library,

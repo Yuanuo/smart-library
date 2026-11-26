@@ -87,6 +87,7 @@ export const importDirAsFolder = (path, dest, title = null, writable = false, li
   invoke("import_dir_as_folder", { path, dest, title, writable, libraryId });
 export const gitCheck = (customPath = null) => invoke("git_check", { customPath });
 export const gitDefaultDir = (url) => invoke("git_default_dir", { url });
+export const gitInspectDir = (path) => invoke("git_inspect_dir", { path });
 export const addGitLibrary = (url, dest, title, branch, exts, maxMb, libraryId = "") =>
   invoke("add_git_library", { url, dest, title, branch, exts, maxMb, libraryId });
 export const gitStatusAll = (fetch = false) => invoke("git_status_all", { fetch });
