@@ -561,16 +561,32 @@ impl AppState {
                 let mut removed = Vec::new();
                 let (docs, version, folder_snap): (Vec<_>, Option<String>, Option<FolderSnapshot>) = if l.kind == "folder" {
                     let f = self.folder(l)?;
-                    let mut files = Vec::new();
-                    for p in &paths {
-                        match f.abs(p).ok().and_then(|a| std::fs::metadata(a).ok()).filter(|m| m.is_file()) {
-                            Some(m) => files.push(folder::FolderFile { rel: p.clone(), name: p.rsplit('/').next().unwrap_or(p).to_string(), size: m.len() }),
-                            None => removed.push(p.clone()),
-                        }
-                    }
                     let all = f.files();
-                    let snap = folder_snapshot_map(&f, &all);
-                    (f.docs(&files).collect(), Some(f.fingerprint(&all)), Some(snap))
+                    let mut changed = paths.clone();
+                    let indexed = load_folder_snapshot(&dir);
+                    let (version, snap) = if let Some(old) = indexed {
+                        let version = f.fingerprint(&all);
+                        let snap = folder_snapshot_map(&f, &all);
+                        let meta_dirs = changed_meta_dirs(&old, &snap);
+                        changed.extend(snap.files.iter().filter_map(|(rel, stamp)| {
+                            (old.files.get(rel) != Some(stamp)
+                                || meta_dirs.iter().any(|dir| file_in_dir(rel, dir)))
+                            .then_some(rel.clone())
+                        }));
+                        changed.extend(old.files.keys().filter(|rel| !snap.files.contains_key(*rel)).cloned());
+                        if old.files != snap.files || !meta_dirs.is_empty() {
+                            self.titles.write().unwrap().remove(&l.id);
+                        }
+                        (Some(version), Some(snap))
+                    } else {
+                        // An older index has no baseline for external changes.
+                        // Let the folder check still detect that it needs a rebuild.
+                        (None, None)
+                    };
+                    let files: Vec<_> = all.into_iter().filter(|file| changed.remove(&file.rel)).collect();
+                    removed.extend(changed);
+                    let docs = f.docs(&files).collect::<Result<Vec<_>, _>>()?;
+                    (docs.into_iter().map(Ok).collect(), version, snap)
                 } else if l.kind == "notes" {
                     let store = self.notes(l)?;
                     let rows: Vec<_> = store.rows()?.into_iter().filter(|r| paths.contains(&r.id.to_string())).collect();
@@ -5674,6 +5690,52 @@ mod library_id_tests {
         let mut overlay = props.overlay("lib").unwrap(); overlay.set_nav_ancestors(navigation_ancestors(&nodes));
         overlay.apply(&mut sibling);
         assert!(sibling.text.is_empty());
+    }
+
+    #[test]
+    fn folder_index_flush_includes_external_changes() {
+        let tmp = std::env::temp_dir().join(format!("sl_folder_index_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let root = tmp.join("folder");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("local.md"), "原来甲文").unwrap();
+        std::fs::write(root.join("external.md"), "原来乙文").unwrap();
+        let state = AppState::new(tmp.join("cfg"), tmp.join("data"));
+        let lib = Library {
+            id: "folder-1".into(),
+            kind: "folder".into(),
+            title: "测试文件夹".into(),
+            source: root.to_string_lossy().into_owned(),
+            tree: String::new(),
+            exts: vec!["md".into()],
+            max_mb: 0,
+            writable: true,
+            remote: String::new(),
+        };
+        let folder = state.folder(&lib).unwrap();
+        let files = folder.files();
+        let dir = state.index_dir(&lib.id);
+        smart_library_core::search::build_index(
+            &dir, serde_json::json!({"data_version": folder.fingerprint(&files)}),
+            files.len(), folder.docs(&files), &Default::default(), |_, _| {},
+        ).unwrap();
+        save_folder_snapshot(&dir, &folder_snapshot_map(&folder, &files));
+
+        std::fs::write(root.join("local.md"), "内部正文改写").unwrap();
+        std::fs::write(root.join("external.md"), "外部正文改写").unwrap();
+        state.mark_dirty(&lib.id, ["local.md".into()]);
+        state.flush_dirty(std::slice::from_ref(&lib));
+
+        {
+            let index = SearchIndex::open(&dir).unwrap();
+            for text in ["内部正文改写", "外部正文改写"] {
+                assert_eq!(index.count(&SearchRequest::new(text)).unwrap(), 1);
+            }
+            assert_eq!(index.count(&SearchRequest::new("原来乙文")).unwrap(), 0);
+        }
+        assert_eq!(SearchIndex::data_version(&dir), Some(folder.fingerprint(&folder.files())));
+        drop(state);
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
