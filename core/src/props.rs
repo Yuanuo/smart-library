@@ -307,6 +307,11 @@ pub struct Overlay {
 }
 
 impl Overlay {
+    pub fn folder_properties(&self) -> BTreeMap<String, Dims> {
+        self.map.iter().filter(|((book, _), _)| book.is_empty())
+            .map(|((_, path), dims)| (path.clone(), dims.clone())).collect()
+    }
+
     pub fn has_nav_properties(&self) -> bool {
         self.map.keys().any(|(book, path)| book.is_empty() && path.starts_with("@nav/"))
     }

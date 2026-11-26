@@ -10,7 +10,7 @@
 //! document title, author), so it can still be shown after its library was
 //! unbound; only opening it needs the library.
 
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -207,6 +207,12 @@ impl Marks {
             .map_err(err)?;
         let rows = st.query_map(params![lib, book_id.unwrap_or(""), path], |r| r.get(0)).map_err(err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(err)
+    }
+
+    pub fn library_of(&self, id: i64) -> Result<Option<String>, String> {
+        self.conn.lock().unwrap().query_row(
+            "SELECT lib FROM marks WHERE id = ?1", params![id], |r| r.get(0),
+        ).optional().map_err(err)
     }
 
     pub fn update(&self, id: i64, note: Option<&str>, tags: Option<&[String]>) -> Result<(), String> {

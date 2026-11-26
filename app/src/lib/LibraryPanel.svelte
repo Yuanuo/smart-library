@@ -854,7 +854,7 @@
         reconciling[l.id] = false;
       }
     }
-    api.sidecarRefresh().catch(() => {}); // the file that travels with a folder may have been changed by git
+    await api.sidecarRefresh().catch(() => {}); // import sidecar properties before comparing with the index
     ongitstatus?.(false); // re-check local uncommitted changes in remote git folders on focus
     try {
       const changed = await api.checkFolderChanges();

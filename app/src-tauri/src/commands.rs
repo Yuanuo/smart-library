@@ -275,6 +275,7 @@ impl AppState {
         if lib.writable {
             let _ = self.sidecar_load(lib); // a bad file leaves what we have
         }
+        let _ = self.queue_folder_property_changes(lib, &f);
         self.folders.write().unwrap().insert(lib.id.clone(), f.clone());
         Ok(f)
     }
@@ -466,7 +467,7 @@ impl AppState {
         if let Err(e) = self.snapshots.rekey(lib, from, to) {
             eprintln!("failed to move snapshots for {lib}: {from} -> {to}: {e}");
         }
-        self.sidecar_sync();
+        self.sidecar_sync(lib);
         {
             let mut stamps = self.stamps.lock().unwrap();
             for b in before {
@@ -478,16 +479,16 @@ impl AppState {
         self.mark_dirty(lib, before.iter().cloned().chain(before.iter().map(|b| swap(b))));
     }
 
-    /// Write the properties and marks of every read-write folder library into
-    /// its `.smart-library/meta.json` (only when they differ from the file).
+    /// Write the changed read-write library's properties and marks into its
+    /// `.smart-library/meta.json` (only when they differ from the file).
     /// Called after each change; a failure (a folder on a read-only disk …)
     /// does not stop the change, the data stays in our own files.
-    fn sidecar_sync(&self) {
+    fn sidecar_sync(&self, lib: &str) {
         if self.db_degraded {
             return;
         }
-        let libs: Vec<Library> = self.libraries.read().unwrap().iter().filter(|l| l.kind == "folder" && l.writable).cloned().collect();
-        for l in libs {
+        let Ok(l) = self.library(lib) else { return };
+        if l.kind == "folder" && l.writable {
             let _ = self.sidecar_write(&l);
         }
     }
@@ -543,6 +544,21 @@ impl AppState {
         self.dirty.lock().unwrap().entry(lib.to_string()).or_default().extend(paths);
     }
 
+    fn queue_folder_property_changes(&self, lib: &Library, folder: &FolderLibrary) -> Result<(), String> {
+        let dir = self.index_dir(&lib.id);
+        if !dir.join("smart-library-index.json").exists() {
+            return Ok(());
+        }
+        let old = load_folder_snapshot(&dir);
+        let current = self.props.overlay(&lib.id)?.folder_properties();
+        let paths = changed_property_paths(old.as_ref().and_then(|snap| snap.properties.as_ref()), &current);
+        if !paths.is_empty() {
+            self.mark_dirty(&lib.id, folder.files().into_iter()
+                .filter(|f| paths.iter().any(|p| file_at_path(&f.rel, p))).map(|f| f.rel));
+        }
+        Ok(())
+    }
+
     /// Bring the indexes of `libs` up to date with the documents edited since:
     /// those that exist are written again, those that are gone are dropped.
     /// Done just before a full-text search, so saving a note stays cheap and
@@ -559,45 +575,43 @@ impl AppState {
                 }
                 continue;
             }
+            if l.kind != "folder" {
+                continue;
+            }
+            let Ok(f) = self.folder(l) else { continue };
             let paths: HashSet<String> = match self.dirty.lock().unwrap().get_mut(&l.id) {
                 Some(s) if !s.is_empty() => std::mem::take(s),
                 _ => continue,
             };
             let result = (|| -> Result<(), String> {
-                let overlay = self.props.overlay(&l.id).unwrap_or_default();
-                let mut removed = Vec::new();
-                let (docs, version, folder_snap): (Vec<_>, Option<String>, Option<FolderSnapshot>) = if l.kind == "folder" {
-                    let f = self.folder(l)?;
-                    let all = f.files();
-                    let mut changed = paths.clone();
-                    let indexed = load_folder_snapshot(&dir);
-                    let (version, snap) = if let Some(old) = indexed {
-                        let version = f.fingerprint(&all);
-                        let snap = folder_snapshot_map(&f, &all);
-                        let meta_dirs = changed_meta_dirs(&old, &snap);
-                        changed.extend(snap.files.iter().filter_map(|(rel, stamp)| {
-                            (old.files.get(rel) != Some(stamp)
-                                || meta_dirs.iter().any(|dir| file_in_dir(rel, dir)))
-                            .then_some(rel.clone())
-                        }));
-                        changed.extend(old.files.keys().filter(|rel| !snap.files.contains_key(*rel)).cloned());
-                        if old.files != snap.files || !meta_dirs.is_empty() {
-                            self.titles.write().unwrap().remove(&l.id);
-                        }
-                        (Some(version), Some(snap))
-                    } else {
-                        // An older index has no baseline for external changes.
-                        // Let the folder check still detect that it needs a rebuild.
-                        (None, None)
-                    };
-                    let files: Vec<_> = all.into_iter().filter(|file| changed.remove(&file.rel)).collect();
-                    removed.extend(changed);
-                    let docs = f.docs(&files).collect::<Result<Vec<_>, _>>()?;
-                    (docs.into_iter().map(Ok).collect(), version, snap)
+                let overlay = self.props.overlay(&l.id)?;
+                let all = f.files();
+                let mut changed = paths.clone();
+                let (version, folder_snap) = if let Some(old) = load_folder_snapshot(&dir) {
+                    let version = f.fingerprint(&all);
+                    let snap = folder_snapshot_map(&f, &all, &overlay);
+                    let meta_dirs = changed_meta_dirs(&old, &snap);
+                    let props_paths = changed_property_paths(old.properties.as_ref(), snap.properties.as_ref().unwrap());
+                    changed.extend(snap.files.iter().filter_map(|(rel, stamp)| {
+                        (old.files.get(rel) != Some(stamp)
+                            || meta_dirs.iter().any(|dir| file_in_dir(rel, dir))
+                            || props_paths.iter().any(|path| file_at_path(rel, path)))
+                        .then_some(rel.clone())
+                    }));
+                    changed.extend(old.files.keys().filter(|rel| !snap.files.contains_key(*rel)).cloned());
+                    if old.files != snap.files || !meta_dirs.is_empty() {
+                        self.titles.write().unwrap().remove(&l.id);
+                    }
+                    (Some(version), Some(snap))
                 } else {
-                    return Ok(());
+                    // An older index has no baseline for external changes.
+                    // Let the folder check still detect that it needs a rebuild.
+                    (None, None)
                 };
-                smart_library_core::search::sync_docs(&dir, docs.into_iter(), &removed, version.as_deref(), &overlay)?;
+                let files: Vec<_> = all.into_iter().filter(|file| changed.remove(&file.rel)).collect();
+                let removed: Vec<_> = changed.into_iter().collect();
+                let docs = f.docs(&files).collect::<Result<Vec<_>, _>>()?;
+                smart_library_core::search::sync_docs(&dir, docs.into_iter().map(Ok), &removed, version.as_deref(), &overlay)?;
                 if let Some(snap) = folder_snap {
                     save_folder_snapshot(&dir, &snap);
                 }
@@ -1592,7 +1606,7 @@ pub async fn delete_folder_dir(lib: String, rel: String, state: State<'_, AppSta
     state.mark_dirty(&lib, before.iter().cloned());
     let _ = state.props.remove_nodes(&lib, std::slice::from_ref(&rel));
     let _ = state.props.remove_nodes(&lib, &before);
-    state.sidecar_sync();
+    state.sidecar_sync(&lib);
     Ok(before.len())
 }
 
@@ -1747,6 +1761,7 @@ pub async fn sidecar_refresh(state: State<'_, AppState>) -> Result<bool, String>
         let seen = state.sidecar_seen.lock().unwrap().get(&l.id).cloned();
         if now.is_some() && now != seen {
             state.sidecar_load(&l)?;
+            state.queue_folder_property_changes(&l, &*state.folder(&l)?)?;
             changed = true;
         }
     }
@@ -1961,7 +1976,7 @@ pub async fn delete_note(lib: String, id: String, state: State<'_, AppState>) ->
         state.mark_dirty(&lib, [id.clone()]);
         state.stamps.lock().unwrap().remove(&format!("{}|{}", lib, id));
         let _ = state.props.remove_nodes(&lib, &[id]);
-        state.sidecar_sync();
+        state.sidecar_sync(&lib);
         return Ok(1);
     }
     let store = notes_of(&state, &lib)?;
@@ -4610,9 +4625,11 @@ struct FolderSnapshot {
     files: HashMap<String, (u64, u64)>,
     /// Directory relative path ("" for library root) -> (size, mtime) of its `.meta.json`.
     metas: HashMap<String, (u64, u64)>,
+    #[serde(default)]
+    properties: Option<std::collections::BTreeMap<String, Dims>>,
 }
 
-fn folder_snapshot_map(f: &folder::FolderLibrary, files: &[folder::FolderFile]) -> FolderSnapshot {
+fn folder_snapshot_map(f: &folder::FolderLibrary, files: &[folder::FolderFile], overlay: &props::Overlay) -> FolderSnapshot {
     let mut file_map = HashMap::with_capacity(files.len());
     let mut dirs = std::collections::BTreeSet::new();
     dirs.insert(String::new());
@@ -4654,7 +4671,24 @@ fn folder_snapshot_map(f: &folder::FolderLibrary, files: &[folder::FolderFile]) 
     FolderSnapshot {
         files: file_map,
         metas: meta_map,
+        properties: Some(overlay.folder_properties()),
     }
+}
+
+fn changed_property_paths<'a>(
+    old: Option<&'a std::collections::BTreeMap<String, Dims>>,
+    cur: &'a std::collections::BTreeMap<String, Dims>,
+) -> Vec<&'a str> {
+    let Some(old) = old else {
+        return vec![""]; // older snapshots did not track the properties applied to the index
+    };
+    cur.iter().filter(|(path, dims)| old.get(*path) != Some(*dims)).map(|(path, _)| path.as_str())
+        .chain(old.keys().filter(|path| !cur.contains_key(*path)).map(String::as_str))
+        .collect()
+}
+
+fn file_at_path(file: &str, path: &str) -> bool {
+    file == path || file_in_dir(file, path)
 }
 
 fn changed_meta_dirs(old: &FolderSnapshot, cur: &FolderSnapshot) -> Vec<String> {
@@ -4730,11 +4764,17 @@ pub async fn check_folder_changes(app: AppHandle) -> Result<Vec<FolderChangeDto>
             let Ok(f) = state.folder(&l) else { continue };
             let files = f.files();
             let cur_ver = f.fingerprint(&files);
-            if indexed_ver.as_deref() != Some(cur_ver.as_str()) {
-                let (added, modified, removed, has_snapshot) = match load_folder_snapshot(&dir) {
+            let overlay = state.props.overlay(&l.id)?;
+            let old_snapshot = load_folder_snapshot(&dir);
+            let properties = overlay.folder_properties();
+            if indexed_ver.as_deref() != Some(cur_ver.as_str())
+                || old_snapshot.as_ref().and_then(|snap| snap.properties.as_ref()) != Some(&properties)
+            {
+                let (added, modified, removed, has_snapshot) = match old_snapshot {
                     Some(old) => {
-                        let cur = folder_snapshot_map(&f, &files);
+                        let cur = folder_snapshot_map(&f, &files, &overlay);
                         let meta_dirs = changed_meta_dirs(&old, &cur);
+                        let props_paths = changed_property_paths(old.properties.as_ref(), &properties);
                         let mut a = 0usize;
                         let mut m = 0usize;
                         let mut r = 0usize;
@@ -4743,6 +4783,7 @@ pub async fn check_folder_changes(app: AppHandle) -> Result<Vec<FolderChangeDto>
                                 None => a += 1,
                                 Some(prev) if prev != stamp => m += 1,
                                 _ if meta_dirs.iter().any(|d| file_in_dir(rel, d)) => m += 1,
+                                _ if props_paths.iter().any(|path| file_at_path(rel, path)) => m += 1,
                                 _ => {}
                             }
                         }
@@ -4755,7 +4796,6 @@ pub async fn check_folder_changes(app: AppHandle) -> Result<Vec<FolderChangeDto>
                     }
                     None => (0, 0, 0, false),
                 };
-                state.folders.write().unwrap().remove(&l.id);
                 state.titles.write().unwrap().remove(&l.id);
                 changed.push(FolderChangeDto {
                     lib: l.id,
@@ -4792,22 +4832,25 @@ pub async fn build_index(lib: String, incremental: Option<bool>, app: AppHandle,
     let lib_title = l.title.clone();
     state.titles.write().unwrap().remove(&lib);
     let folder = if l.kind == "folder" {
-        // the folder may have changed: read it afresh
-        state.folders.write().unwrap().remove(&lib);
+        // Folder contents are read fresh by the scanner.
         state.titles.write().unwrap().remove(&lib);
-        Some(state.folder(&l)?)
+        let folder = state.folder(&l)?;
+        if !folder.root.is_dir() {
+            return Err(format!("文件夹不存在：{}", folder.root.display()));
+        }
+        Some(folder)
     } else {
         None
     };
     let bc = if folder.is_some() || notes_store.is_some() || zim.is_some() { None } else { Some(state.bookcase_of(&l)?) };
     let html = if l.kind == "html" { Some(state.html_tree(&l)?) } else { None };
+    let overlay = index_overlay(&state, &l)?;
     if !state.building.lock().unwrap().insert(lib.clone()) {
         return Err("正在建立这个知识库的索引".to_string());
     }
     let dir = state.index_dir(&lib);
-    let overlay = index_overlay(&state, &l)?;
     let try_incremental = incremental.unwrap_or(false);
-    state.dirty.lock().unwrap().remove(&lib); // the build reads everything
+    let pending = state.dirty.lock().unwrap().remove(&lib).unwrap_or_default();
     // drop the open index before deleting or updating its files
     state.indexes.write().unwrap().remove(&lib);
     std::thread::spawn(move || {
@@ -4822,9 +4865,10 @@ pub async fn build_index(lib: String, incremental: Option<bool>, app: AppHandle,
                     if dir.join("smart-library-index.json").exists() {
                         if let Some(old_snap) = load_folder_snapshot(&dir) {
                             let files = f.files();
-                            let cur_snap = folder_snapshot_map(f, &files);
+                            let cur_snap = folder_snapshot_map(f, &files, &overlay);
                             let cur_ver = f.fingerprint(&files);
                             let meta_dirs = changed_meta_dirs(&old_snap, &cur_snap);
+                            let props_paths = changed_property_paths(old_snap.properties.as_ref(), cur_snap.properties.as_ref().unwrap());
                             let mut changed_files = Vec::new();
                             let mut added_count = 0usize;
                             let mut modified_count = 0usize;
@@ -4839,8 +4883,13 @@ pub async fn build_index(lib: String, incremental: Option<bool>, app: AppHandle,
                                         modified_count += 1;
                                         changed_files.push(file.clone());
                                     }
-                                    _ if meta_dirs.iter().any(|d| file_in_dir(&file.rel, d)) => {
+                                    _ if meta_dirs.iter().any(|d| file_in_dir(&file.rel, d))
+                                        || props_paths.iter().any(|path| file_at_path(&file.rel, path)) => {
                                         meta_affected_count += 1;
+                                        changed_files.push(file.clone());
+                                    }
+                                    _ if pending.contains(&file.rel) => {
+                                        modified_count += 1;
                                         changed_files.push(file.clone());
                                     }
                                     _ => {}
@@ -4855,6 +4904,7 @@ pub async fn build_index(lib: String, incremental: Option<bool>, app: AppHandle,
                             let total_changes = changed_files.len() + removed.len();
                             if total_changes == 0 {
                                 if SearchIndex::data_version(&dir).as_deref() == Some(cur_ver.as_str()) {
+                                    save_folder_snapshot(&dir, &cur_snap);
                                     return Ok("索引已是最新".into());
                                 }
                                 // Fingerprint changed with no affected files; fall through to full rebuild.
@@ -4924,7 +4974,7 @@ pub async fn build_index(lib: String, incremental: Option<bool>, app: AppHandle,
                         "data_version": f.fingerprint(&files),
                     });
                     let stats = smart_library_core::search::build_index(&dir, meta, files.len(), f.docs(&files), &overlay, progress)?;
-                    save_folder_snapshot(&dir, &folder_snapshot_map(f, &files));
+                    save_folder_snapshot(&dir, &folder_snapshot_map(f, &files, &overlay));
                     stats
                 }
                 (_, Some(bc), Some(t)) => SearchIndex::build_html(bc, t, &dir, &overlay, progress)?,
@@ -4943,6 +4993,9 @@ pub async fn build_index(lib: String, incremental: Option<bool>, app: AppHandle,
             ))
         })();
         let state = app.state::<AppState>();
+        if result.is_err() && !pending.is_empty() {
+            state.mark_dirty(&lib, pending);
+        }
         state.building.lock().unwrap().remove(&lib);
         let done = match result {
             Ok(message) => IndexDoneDto { lib: lib.clone(), ok: true, message },
@@ -5030,24 +5083,26 @@ pub async fn mark_add(
 ) -> Result<i64, String> {
     let lib_title = state.library(&lib)?.title;
     let id = state.marks.add(
-        &MarkNew { kind, lib, path, book_id, lb, quote, note, doc_title, lib_title, author },
+        &MarkNew { kind, lib: lib.clone(), path, book_id, lb, quote, note, doc_title, lib_title, author },
         &parse_tags(&tags),
     )?;
-    state.sidecar_sync();
+    state.sidecar_sync(&lib);
     Ok(id)
 }
 
 #[tauri::command]
 pub async fn mark_update(id: i64, note: Option<String>, tags: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let lib = state.marks.library_of(id)?;
     state.marks.update(id, note.as_deref(), tags.map(|t| parse_tags(&t)).as_deref())?;
-    state.sidecar_sync();
+    if let Some(lib) = lib { state.sidecar_sync(&lib); }
     Ok(())
 }
 
 #[tauri::command]
 pub async fn mark_delete(id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    let lib = state.marks.library_of(id)?;
     state.marks.delete(id)?;
-    state.sidecar_sync();
+    if let Some(lib) = lib { state.sidecar_sync(&lib); }
     Ok(())
 }
 
@@ -5120,7 +5175,7 @@ pub async fn node_tags_set(
 ) -> Result<(), String> {
     let lib_title = state.library(&lib)?.title;
     state.marks.set_node_tags(&lib, book_id.as_deref(), &path, &doc_title, &lib_title, &parse_tags(&tags))?;
-    state.sidecar_sync();
+    state.sidecar_sync(&lib);
     Ok(())
 }
 
@@ -5238,12 +5293,15 @@ pub async fn props_set(
     state: State<'_, AppState>,
 ) -> Result<PropsSaved, String> {
     let l = state.library(&lib)?;
+    if l.kind == "folder" {
+        state.folder(&l)?;
+    }
     state.props.set(&lib, book_id.as_deref(), &path, &dims)?;
     if let Some(names) = aliases {
         state.props.set_aliases(&lib, book_id.as_deref(), &path, &names)?;
         state.titles.write().unwrap().remove(&lib); // the quick search reads them again
     }
-    state.sidecar_sync();
+    state.sidecar_sync(&lib);
     let dir = state.index_dir(&lib);
     if !dir.join("smart-library-index.json").exists() {
         return Ok(PropsSaved { updating: 0 });
@@ -5252,23 +5310,20 @@ pub async fn props_set(
         // a rebuild is running: it may have read the old properties
         return Err("正在建立索引：属性已保存，索引完成后请再保存一次或重建索引".into());
     }
+    if l.kind == "folder" {
+        build_index(lib, Some(true), app, state).await?;
+        return Ok(PropsSaved { updating: 1 });
+    }
     // the documents the properties apply to
     enum Job {
         Cbeta(Arc<Bookcase>, Option<HashSet<String>>),
         Html(Arc<Bookcase>, Arc<HtmlTree>, Option<HashSet<String>>),
-        Folder(Arc<FolderLibrary>, Vec<folder::FolderFile>),
         Notes(Arc<NotesStore>, Option<HashSet<i64>>),
         Zim(Arc<Mutex<smart_library_core::zim::Zim>>, Vec<usize>),
     }
     let job = match l.kind.as_str() {
         "cbeta" => Job::Cbeta(state.bookcase_of(&l)?, if path.starts_with("@nav/") { Some(nav_targets(&state, &l, &path)?) } else if let Some(b) = &book_id { Some(nav_document_targets(&state, &l, b)?) } else { None }),
         "html" => Job::Html(state.bookcase_of(&l)?, state.html_tree(&l)?, if path.is_empty() { None } else if path.starts_with("@nav/") { Some(nav_targets(&state, &l, &path)?) } else { Some(nav_document_targets(&state, &l, &path)?) }),
-        "folder" => {
-            let f = state.folder(&l)?;
-            let prefix = format!("{}/", path);
-            let files = f.files().into_iter().filter(|x| path.is_empty() || x.rel == path || x.rel.starts_with(&prefix)).collect();
-            Job::Folder(f, files)
-        }
         "notes" => {
             let store = state.notes(&l)?;
             let ids = if path.is_empty() { None } else { Some(store.descendants(note_id(&path)?)?.into_iter().collect()) };
@@ -5294,7 +5349,6 @@ pub async fn props_set(
             match &job {
                 Job::Cbeta(bc, books) => update_docs(&dir, smart_library_core::library::cbeta_docs(bc, books.as_ref()).1, &overlay),
                 Job::Html(bc, t, paths) => update_docs(&dir, t.docs(bc, paths.as_ref()).1, &overlay),
-                Job::Folder(f, files) => update_docs(&dir, f.docs(files), &overlay),
                 Job::Notes(store, ids) => {
                     let rows: Vec<_> = store.rows()?.into_iter().filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r.id))).collect();
                     update_docs(&dir, notes::docs(&rows, &lib_title).into_iter().map(Ok), &overlay)
@@ -5735,7 +5789,7 @@ mod library_id_tests {
             &dir, serde_json::json!({"data_version": folder.fingerprint(&files)}),
             files.len(), folder.docs(&files), &Default::default(), |_, _| {},
         ).unwrap();
-        save_folder_snapshot(&dir, &folder_snapshot_map(&folder, &files));
+        save_folder_snapshot(&dir, &folder_snapshot_map(&folder, &files, &Default::default()));
 
         std::fs::write(root.join("local.md"), "内部正文改写").unwrap();
         std::fs::write(root.join("external.md"), "外部正文改写").unwrap();
@@ -5751,6 +5805,58 @@ mod library_id_tests {
         }
         assert_eq!(SearchIndex::data_version(&dir), Some(folder.fingerprint(&folder.files())));
         drop(state);
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn imported_folder_properties_refresh_index_without_file_edits() {
+        let tmp = std::env::temp_dir().join(format!("sl_sidecar_index_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let root = tmp.join("folder");
+        std::fs::create_dir_all(root.join("专题")).unwrap();
+        std::fs::write(root.join("专题/文章.md"), "受影响的文章").unwrap();
+        std::fs::write(root.join("其他.md"), "其他文章").unwrap();
+        let lib = Library {
+            id: "folder-1".into(),
+            kind: "folder".into(),
+            title: "测试文件夹".into(),
+            source: root.to_string_lossy().into_owned(),
+            tree: String::new(),
+            exts: vec!["md".into()],
+            max_mb: 0,
+            writable: true,
+            remote: String::new(),
+        };
+        let open = || AppState::new(tmp.join("cfg"), tmp.join("data"));
+        let version;
+        {
+            let state = open();
+            let folder = state.folder(&lib).unwrap();
+            let files = folder.files();
+            let overlay = props::Overlay::default();
+            let dir = state.index_dir(&lib.id);
+            version = folder.fingerprint(&files);
+            smart_library_core::search::build_index(
+                &dir, serde_json::json!({"data_version": version}), files.len(),
+                folder.docs(&files), &overlay, |_, _| {},
+            ).unwrap();
+            save_folder_snapshot(&dir, &folder_snapshot_map(&folder, &files, &overlay));
+        }
+        let props = vec![("专题".into(), Dims::from([("period".into(), vec!["唐".into()])]))];
+        smart_library_core::sidecar::write(
+            &root, &smart_library_core::sidecar::Sidecar { props, marks: vec![] },
+        ).unwrap();
+        {
+            let state = open();
+            state.flush_dirty(std::slice::from_ref(&lib));
+            let dir = state.index_dir(&lib.id);
+            assert_eq!(SearchIndex::data_version(&dir), Some(version));
+            let mut req = SearchRequest::new("");
+            req.filters = vec![Filter { root: "period".into(), values: vec!["唐".into()] }];
+            let result = SearchIndex::open(&dir).unwrap().search(&req).unwrap();
+            assert_eq!(result.hits.len(), 1);
+            assert_eq!(result.hits[0].path, "专题/文章.md");
+        }
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
@@ -5867,7 +5973,7 @@ mod library_id_tests {
             remote: String::new(),
         };
         state.libraries.write().unwrap().push(lib.clone());
-        state.sidecar_sync();
+        state.sidecar_sync(&lib.id);
         assert!(state.sidecar_write(&lib).is_err());
 
         // Existing meta.json on disk must still contain the original property
