@@ -60,7 +60,7 @@
   let gitChecking = $state(false);
   let gitEditingPath = $state(false);
   let customGitPath = $state("");
-  let gitUrl = $state("");
+  let gitSource = $state(""); // remote URL or local repo path
   let gitTitle = $state("");
   let gitBranch = $state("");
   let gitDest = $state("");
@@ -71,6 +71,17 @@
   let gitDirInfo = $state(null); // { path, exists, is_empty, is_git_repo, remote_url, branch, title, conflict }
   let gitDirError = $state("");
   const gitReusingLocal = $derived(!!(gitDirInfo?.is_git_repo && gitDirInfo?.remote_url));
+  const gitSourceIsLocal = $derived(isLocalPathInput(gitSource));
+
+  function isGitRemoteUrl(s) {
+    const v = (s || "").trim();
+    return /^(https?|ssh|git|ftps?):\/\//i.test(v) || /^[a-zA-Z0-9._-]+@[^:/\s]+:.+/.test(v);
+  }
+  function isLocalPathInput(s) {
+    const v = (s || "").trim();
+    if (!v || isGitRemoteUrl(v)) return false;
+    return /^[a-zA-Z]:[\\/]/.test(v) || /^\\\\/.test(v) || /^([/~]|\.\.?[\\/])/.test(v);
+  }
   // import package (.smartlib / .smartdir)
   let pkgPath = $state("");
   let pkgInfo = $state(null); // { kind, title, scope, files, exts, max_mb }
@@ -322,38 +333,64 @@
     await verifyCustomGit();
   }
 
-  function laterGitDefault() {
+  function onGitSourceInput() {
     clearTimeout(gitUrlTimer);
-    const u = gitUrl.trim();
-    if (!u) return;
+    clearTimeout(gitDestTimer);
+    error = "";
+    gitDirError = "";
+    const v = gitSource.trim();
+    if (!v) {
+      if (gitReusingLocal) {
+        gitDest = "";
+        gitDestEdited = false;
+      }
+      gitDirInfo = null;
+      return;
+    }
+    if (isLocalPathInput(v)) {
+      gitDest = v;
+      gitDestEdited = true;
+      gitDirInfo = null;
+      gitDestTimer = setTimeout(() => inspectGitDest(v, { fromSource: true }), 350);
+      return;
+    }
+    if (gitReusingLocal) {
+      gitDest = "";
+      gitDestEdited = false;
+      gitDirInfo = null;
+    }
     gitUrlTimer = setTimeout(async () => {
       try {
-        const r = await api.gitDefaultDir(u);
+        const r = await api.gitDefaultDir(v);
+        if (gitSource.trim() !== v) return;
         if (!gitTitleEdited) gitTitle = uniqueTitle(r.title, "远程知识库");
         if (!gitDestEdited) gitDest = r.dest;
       } catch {}
     }, 300);
   }
 
-  async function inspectGitDest(dir) {
+  async function inspectGitDest(dir, { fromSource = false } = {}) {
     const d = (dir ?? gitDest).trim();
     gitDirInfo = null;
     gitDirError = "";
     if (!d) return;
     try {
       const info = await api.gitInspectDir(d);
-      if (gitDest.trim() !== d) return;
+      if ((fromSource ? gitSource.trim() : gitDest.trim()) !== d) return;
       gitDirInfo = info;
       if (info.is_git_repo && info.remote_url) {
-        if (!gitUrl.trim()) gitUrl = info.remote_url;
         if (!gitTitleEdited && info.title) gitTitle = uniqueTitle(info.title, "远程知识库");
+      } else if (fromSource) {
+        gitDirError = info.is_git_repo
+          ? "该 Git 仓库未配置远程地址（remote），请改用「本地文件夹」添加。"
+          : "该目录不是有效的 Git 仓库根目录，请选择包含 .git 的文件夹。";
       } else if (info.exists && !info.is_empty) {
         gitDirError = info.is_git_repo
           ? "该 Git 仓库未配置远程地址（remote），无法绑定为远程知识库，请改用「本地文件夹」添加。"
           : "目标文件夹不为空且不是 Git 仓库根目录，请选择空目录或已克隆的 Git 仓库。";
       }
     } catch (e) {
-      if (gitDest.trim() === d) gitDirError = String(e);
+      if ((fromSource ? gitSource.trim() : gitDest.trim()) === d) gitDirError = String(e);
     }
   }
 
@@ -367,13 +404,31 @@
     gitDestTimer = setTimeout(() => inspectGitDest(d), 350);
   }
 
+  async function pickLocalGitRepo() {
+    if (busy) return;
+    error = "";
+    const f = await open({
+      directory: true,
+      multiple: false,
+      title: "选择本地已克隆的 Git 仓库文件夹",
+    });
+    if (f) {
+      clearTimeout(gitUrlTimer);
+      clearTimeout(gitDestTimer);
+      gitSource = f;
+      gitDest = f;
+      gitDestEdited = true;
+      await inspectGitDest(f, { fromSource: true });
+    }
+  }
+
   async function pickGitDest() {
     if (busy) return;
     error = "";
     const f = await open({
       directory: true,
       multiple: false,
-      title: "选择空文件夹或已克隆的 Git 仓库文件夹",
+      title: "选择用于存放克隆仓库的空文件夹",
     });
     if (f) {
       clearTimeout(gitDestTimer);
@@ -408,11 +463,13 @@
         return;
       }
       if (kind === "git") {
+        const url = gitSourceIsLocal ? (gitDirInfo?.remote_url || "") : gitSource.trim();
+        const dest = gitSourceIsLocal ? gitSource.trim() : gitDest.trim();
         const st = await api.addGitLibrary(
-          gitUrl,
-          gitDest,
+          url,
+          dest,
           gitTitle,
-          gitBranch,
+          gitReusingLocal ? "" : gitBranch,
           exts,
           Math.max(0, Math.floor(Number(maxMb) || 0)),
           libraryId,
@@ -504,73 +561,171 @@
         </fieldset>
       {/if}
     {:else if kind === "git"}
-      {#if gitChecking && !gitInfo}
-        <p class="muted">正在检测本机 git 命令…</p>
-      {:else if !gitInfo?.available || gitEditingPath}
-        <p class="muted">
-          {#if !gitInfo?.available}
-            未检测到可用的 <code>git</code> 命令。请先安装 Git，或手动指定本机 <code>git</code> 可执行文件的位置，验证通过后才能继续。
-          {:else}
-            指定本机 <code>git</code> 可执行文件的位置：
-          {/if}
+      <div class="gh-form">
+        <p class="gh-intro muted">
+          克隆远程 Git 仓库或绑定本地已有仓库为只读知识库，支持定期检查更新。
         </p>
-        <div class="row">
-          <input type="text" use:autofocus bind:value={customGitPath} placeholder={IS_WIN ? "C:\\Program Files\\Git\\cmd\\git.exe" : "/opt/homebrew/bin/git"} aria-label="git 可执行文件路径" disabled={gitChecking} />
-          <button type="button" onclick={pickGitExe} disabled={gitChecking}>浏览…</button>
-          <button type="button" class="primary" onclick={verifyCustomGit} disabled={!customGitPath.trim() || gitChecking}>{gitChecking ? "验证中…" : "验证"}</button>
-          {#if gitInfo?.available}
-            <button type="button" onclick={() => { gitEditingPath = false; error = ""; }} disabled={gitChecking}>取消</button>
-          {/if}
-        </div>
-        {#if error}<p class="error">{error}</p>{/if}
-      {:else}
-        <p class="muted">克隆远程 Git 仓库（默认浅克隆 <code>--depth 1</code>），或直接选择本地已克隆的 Git 仓库绑定为只读知识库，支持手动和定期检查更新。</p>
-        <p class="muted small">
-          Git 可用：{gitInfo.version}（<code>{gitInfo.path}</code>）
-          <button type="button" class="link" onclick={() => { gitEditingPath = true; customGitPath = gitInfo.path; error = ""; }} disabled={busy}>更改</button>
-        </p>
-        <label class="field">
-          仓库地址
-          <input type="text" use:autofocus bind:value={gitUrl} oninput={laterGitDefault} placeholder="https://github.com/user/repo.git（或直接下方选择本地已有 Git 仓库）" disabled={busy} />
-        </label>
-        <label class="field">
-          名称
-          <input type="text" bind:value={gitTitle} oninput={() => (gitTitleEdited = true)} placeholder="留空默认使用仓库名" disabled={busy} />
-        </label>
-        <label class="field">
-          知识库 ID（可选）
-          <input type="text" bind:value={libraryId} placeholder={ID_PLACEHOLDER} title={ID_TITLE} disabled={busy} />
-        </label>
-        {#if !gitReusingLocal}
-          <label class="field">
-            分支（可选）
-            <input type="text" bind:value={gitBranch} placeholder="留空使用仓库默认分支" disabled={busy} />
-          </label>
+
+        <section class="gh-step" class:gh-step-last={!gitInfo?.available || gitEditingPath}>
+          <div class="gh-rail" aria-hidden="true">
+            <span class="gh-badge" class:ok={gitInfo?.available && !gitEditingPath}>0</span>
+            <span class="gh-line"></span>
+          </div>
+          <div class="gh-step-body">
+            <h3 class="gh-step-title">Git 环境</h3>
+
+            {#if gitChecking && !gitInfo}
+              <div class="gh-card">
+                <div class="gh-row gh-row-slim">
+                  <span class="muted small">正在检测本机 git 命令…</span>
+                </div>
+              </div>
+            {:else if !gitInfo?.available || gitEditingPath}
+              <div class="gh-card">
+                <div class="gh-card-pad">
+                  <p class="gh-row-desc muted">
+                    {#if !gitInfo?.available}
+                      未检测到可用的 <code>git</code> 命令。请先安装 Git，或手动指定 <code>git</code> 可执行文件位置，验证通过后才能继续。
+                    {:else}
+                      指定本机 <code>git</code> 可执行文件位置：
+                    {/if}
+                  </p>
+                  <div class="input-with-btn">
+                    <input type="text" use:autofocus bind:value={customGitPath} placeholder={IS_WIN ? "C:\\Program Files\\Git\\cmd\\git.exe" : "/opt/homebrew/bin/git"} aria-label="git 可执行文件路径" disabled={gitChecking} />
+                    <button type="button" onclick={pickGitExe} disabled={gitChecking}>浏览…</button>
+                    <button type="button" class="primary" onclick={verifyCustomGit} disabled={!customGitPath.trim() || gitChecking}>{gitChecking ? "验证中…" : "验证"}</button>
+                    {#if gitInfo?.available}
+                      <button type="button" onclick={() => { gitEditingPath = false; error = ""; }} disabled={gitChecking}>取消</button>
+                    {/if}
+                  </div>
+                  {#if error}<p class="field-msg error">{error}</p>{/if}
+                </div>
+              </div>
+            {:else}
+              <div class="gh-card">
+                <div class="gh-row gh-row-slim">
+                  <div class="gh-env-status">
+                    <span class="env-dot" aria-hidden="true"></span>
+                    <span class="gh-env-ver">{gitInfo.version}</span>
+                    <span class="gh-env-path muted" title={gitInfo.path}>{gitInfo.path}</span>
+                  </div>
+                  <button type="button" class="link small" onclick={() => { gitEditingPath = true; customGitPath = gitInfo.path; error = ""; }} disabled={busy}>更改路径</button>
+                </div>
+              </div>
+            {/if}
+          </div>
+        </section>
+
+        {#if gitInfo?.available && !gitEditingPath}
+          <section class="gh-step">
+            <div class="gh-rail" aria-hidden="true">
+              <span class="gh-badge">1</span>
+              <span class="gh-line"></span>
+            </div>
+            <div class="gh-step-body">
+              <h3 class="gh-step-title">基本信息</h3>
+
+              <div class="gh-field">
+                <label for="git-source">仓库地址 <span class="req" aria-hidden="true">*</span></label>
+                <div class="input-with-btn">
+                  <input
+                    id="git-source"
+                    type="text"
+                    use:autofocus
+                    bind:value={gitSource}
+                    oninput={onGitSourceInput}
+                    placeholder="https://github.com/user/repo.git 或本地仓库路径"
+                    disabled={busy}
+                  />
+                  <button type="button" onclick={pickLocalGitRepo} disabled={busy}>本地仓库…</button>
+                </div>
+                {#if gitDirInfo?.conflict}
+                  <p class="field-msg error">{gitDirInfo.conflict}</p>
+                {:else if gitDirError}
+                  <p class="field-msg error">{gitDirError}</p>
+                {:else if gitReusingLocal}
+                  <p class="field-msg ok">
+                    已识别本地仓库：{gitDirInfo.remote_url}{gitDirInfo.branch ? `（${gitDirInfo.branch}）` : ""}，将直接绑定
+                  </p>
+                {/if}
+              </div>
+
+              <div class="gh-grid-2">
+                <div class="gh-field">
+                  <label for="git-title">名称</label>
+                  <input id="git-title" type="text" bind:value={gitTitle} oninput={() => (gitTitleEdited = true)} placeholder="留空自动使用仓库名" disabled={busy} />
+                </div>
+                <div class="gh-field">
+                  <label for="git-lib-id">知识库 ID</label>
+                  <input id="git-lib-id" type="text" bind:value={libraryId} placeholder="留空自动生成" title={ID_TITLE} disabled={busy} />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="gh-step gh-step-last">
+            <div class="gh-rail" aria-hidden="true">
+              <span class="gh-badge">2</span>
+              <span class="gh-line"></span>
+            </div>
+            <div class="gh-step-body">
+              <h3 class="gh-step-title">存储与索引配置</h3>
+
+              {#if !gitSourceIsLocal}
+                <div class="gh-card">
+                  <div class="gh-row">
+                    <div class="gh-row-info">
+                      <label class="gh-row-title" for="git-dest">本地存放位置</label>
+                      <p class="gh-row-desc muted">输入仓库地址后自动分配空目录</p>
+                    </div>
+                    <div class="gh-row-ctrl gh-ctrl-wide">
+                      <div class="input-with-btn">
+                        <input id="git-dest" type="text" bind:value={gitDest} oninput={laterInspectGitDest} placeholder="自动分配" disabled={busy} />
+                        <button type="button" onclick={pickGitDest} disabled={busy}>更改…</button>
+                      </div>
+                    </div>
+                  </div>
+                  {#if !gitReusingLocal}
+                    <div class="gh-row">
+                      <div class="gh-row-info">
+                        <label class="gh-row-title" for="git-branch">拉取分支</label>
+                        <p class="gh-row-desc muted">留空使用仓库默认分支</p>
+                      </div>
+                      <div class="gh-row-ctrl">
+                        <input id="git-branch" type="text" class="gh-ctrl-sm" bind:value={gitBranch} placeholder="默认分支" disabled={busy} />
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+
+              <div class="gh-card">
+                <div class="gh-row">
+                  <div class="gh-row-info">
+                    <label class="gh-row-title" for="git-exts">索引文件后缀</label>
+                    <p class="gh-row-desc muted">文本及 pdf/docx/pptx/odt 读全文，其余仅索引文件信息</p>
+                  </div>
+                  <div class="gh-row-ctrl gh-ctrl-med">
+                    <input id="git-exts" type="text" bind:value={exts} placeholder="txt, md, html, pdf..." disabled={busy} />
+                  </div>
+                </div>
+                <div class="gh-row">
+                  <div class="gh-row-info">
+                    <label class="gh-row-title" for="git-max-mb">单个文件上限</label>
+                    <p class="gh-row-desc muted">超过大小跳过正文索引（0 为不限制）</p>
+                  </div>
+                  <div class="gh-row-ctrl gh-ctrl-inline">
+                    <input id="git-max-mb" type="number" min="0" class="num" bind:value={maxMb} disabled={busy} />
+                    <span class="muted">MB</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {#if error}<p class="error">{error}</p>{/if}
         {/if}
-        <label class="field">
-          本地存放位置
-          <input type="text" bind:value={gitDest} oninput={laterInspectGitDest} placeholder="输入仓库地址后自动分配空目录，或选择本地已有 Git 仓库" disabled={busy} />
-          <button type="button" onclick={pickGitDest} disabled={busy}>更改…</button>
-        </label>
-        {#if gitDirInfo?.conflict}
-          <p class="error">{gitDirInfo.conflict}</p>
-        {:else if gitDirError}
-          <p class="error">{gitDirError}</p>
-        {:else if gitReusingLocal}
-          <p class="hint muted">
-            检测到本地已有 Git 仓库{gitDirInfo.branch ? `（当前分支：${gitDirInfo.branch}）` : ""}，将直接绑定而不重新克隆。
-          </p>
-        {:else}
-          <p class="hint muted">可自动分配空目录进行克隆，也可点击「更改…」选择其他空目录或本地已克隆的 Git 仓库。</p>
-        {/if}
-        <fieldset>
-          <legend>索引哪些文件</legend>
-          <label class="field">文件后缀（逗号或空格分隔）<input type="text" bind:value={exts} disabled={busy} /></label>
-          <p class="hint muted">txt、md、html 等文本，以及 pdf、docx、pptx、odt 读取全文；其他后缀只索引文件名、类型、大小与日期。</p>
-          <label class="field">单个文件最大 <input type="number" min="0" class="num" bind:value={maxMb} disabled={busy} /> MB（0 为不限制）</label>
-        </fieldset>
-        {#if error}<p class="error">{error}</p>{/if}
-      {/if}
+      </div>
     {:else if kind === "import"}
       <p class="muted">选择导出的知识库数据包（<code>.smartlib</code> 或 <code>.smartdir</code>），选好后自动识别类型。</p>
       <div class="row">
@@ -705,10 +860,10 @@
       {:else if kind === "git"}
         <button
           class="primary"
-          disabled={!gitInfo?.available || gitEditingPath || !gitDest.trim() || (!gitUrl.trim() && !gitReusingLocal) || !!gitDirInfo?.conflict || !!gitDirError || !exts.trim() || busy}
+          disabled={!gitInfo?.available || gitEditingPath || (gitSourceIsLocal ? !gitReusingLocal : !gitSource.trim() || !gitDest.trim()) || !!gitDirInfo?.conflict || !!gitDirError || !exts.trim() || busy}
           onclick={bind}
         >
-          {busy ? (gitReusingLocal ? "绑定中…" : "克隆中…") : gitReusingLocal ? "直接绑定" : "克隆并添加"}
+          {busy ? (gitSourceIsLocal || gitReusingLocal ? "绑定中…" : "克隆中…") : gitSourceIsLocal || gitReusingLocal ? "直接绑定" : "克隆并添加"}
         </button>
       {:else if kind === "import"}
         <button class="primary" disabled={!pkgInfo || (pkgInfo.kind === "smartdir" && importMode === "folder" && !importDest.trim()) || busy} onclick={bind}>{busy ? "导入中…" : "导入"}</button>
@@ -749,4 +904,103 @@
   .progress-row { display: flex; align-items: center; gap: 10px; padding: 10px 22px; border-top: 1px solid var(--line); font-size: 13px; flex: none; }
   .progress-row progress { flex: 1; height: 8px; min-width: 120px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+  /* ---- GitHub-style stepped card form for git library ---- */
+  .gh-form { display: flex; flex-direction: column; gap: 10px; }
+  .gh-intro { margin: 0 0 6px; font-size: 13px; line-height: 1.5; }
+
+  .gh-step { display: flex; gap: 14px; }
+  .gh-rail {
+    display: flex; flex-direction: column; align-items: center;
+    flex: none; width: 24px;
+  }
+  .gh-badge {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600;
+    background: var(--panel); color: var(--muted);
+    border: 1px solid var(--line);
+    flex: none;
+  }
+  .gh-badge.ok {
+    color: var(--note);
+    border-color: color-mix(in srgb, var(--note) 45%, var(--line));
+    background: color-mix(in srgb, var(--note) 10%, var(--paper));
+  }
+  .gh-line {
+    width: 1px; flex: 1; margin: 6px 0 2px;
+    background: var(--line);
+  }
+  .gh-step-last .gh-line { opacity: 0.55; }
+
+  .gh-step-body {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; gap: 12px;
+    padding-bottom: 14px;
+  }
+  .gh-step-last .gh-step-body { padding-bottom: 4px; }
+  .gh-step-title {
+    margin: 2px 0 0; font-size: 14px; font-weight: 600;
+    line-height: 20px; color: var(--ink);
+  }
+
+  .gh-field { display: flex; flex-direction: column; gap: 5px; }
+  .gh-field > label { font-size: 13px; font-weight: 600; color: var(--ink); }
+  .req { color: var(--hl); margin-left: 2px; }
+  .gh-grid-2 { display: grid; grid-template-columns: 1.25fr 1fr; gap: 12px; }
+
+  .gh-form input[type="text"],
+  .gh-form input[type="number"] {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid color-mix(in srgb, var(--line) 75%, var(--muted) 25%);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 13px;
+  }
+  .gh-form input[type="number"].num { width: 78px; padding: 5px 8px; text-align: right; }
+  .gh-form input::placeholder { color: color-mix(in srgb, var(--muted) 62%, transparent); }
+
+  .input-with-btn { display: flex; gap: 8px; align-items: center; }
+  .input-with-btn input { flex: 1; min-width: 0; }
+  .input-with-btn button { flex: none; padding: 5px 11px; font-size: 13px; }
+
+  .field-msg { margin: 2px 0 0; font-size: 12px; line-height: 1.45; }
+  .field-msg.ok { color: var(--note); }
+
+  .gh-card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--panel) 35%, var(--paper));
+    overflow: hidden;
+  }
+  .gh-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 10px 14px;
+  }
+  .gh-row-slim { padding: 8px 14px; }
+  .gh-card-pad { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; }
+  .gh-row + .gh-row { border-top: 1px solid var(--line); }
+  .gh-row-info { flex: 1; min-width: 0; }
+  .gh-row-title { display: block; font-size: 13px; font-weight: 600; color: var(--ink); line-height: 1.35; }
+  .gh-row-desc { margin: 2px 0 0; font-size: 12px; line-height: 1.4; }
+  .gh-row-ctrl { flex: none; }
+  .gh-ctrl-wide { width: 290px; }
+  .gh-ctrl-med { width: 240px; }
+  .gh-ctrl-sm { width: 160px; }
+  .gh-ctrl-inline { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+
+  .gh-env-status {
+    display: flex; align-items: center; gap: 8px;
+    min-width: 0; font-size: 13px;
+  }
+  .gh-env-ver { font-weight: 500; color: var(--ink); flex: none; }
+  .gh-env-path {
+    font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .env-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--note); flex: none;
+  }
 </style>
