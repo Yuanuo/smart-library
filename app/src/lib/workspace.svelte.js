@@ -21,7 +21,7 @@ import FolderPanel from "./FolderPanel.svelte";
 import SearchPage from "./SearchPage.svelte";
 import AiPanel from "./AiPanel.svelte";
 import StartPage from "./StartPage.svelte";
-import { addSearchScopeItems } from "./searchScope.js";
+import { addScopesToSearch } from "./searchScope.js";
 import { formatShortcut, formatCombo } from "./shortcuts.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -464,6 +464,7 @@ function searchRenderer() {
         libraryPinned: !!prm.libraryPinned,
         filters: prm.filters || {},
         scopes: prm.scopes || [],
+        scopeFeedback: "",
         tab: prm.tab || "/bulei",
         page: prm.page || 1,
         ran: !!prm.ran,
@@ -1391,7 +1392,7 @@ export function openSearch({ query = "", phrase = false, scopes = [], autorun = 
   const blank = !query && !scopes.length && !fresh;
   if (blank) {
     for (const [id, st] of Object.entries(searchStates)) {
-      if (st.ran && !st.query.trim() && !st.scopes.length && !Object.values(st.filters).some((v) => v.length)) {
+      if (st.ran && !st.libraryPinned && !st.query.trim() && !st.scopes.length && !Object.values(st.filters).some((v) => v.length)) {
         dv.getPanel(id)?.api.setActive();
         st.focus += 1;
         return id;
@@ -1399,11 +1400,15 @@ export function openSearch({ query = "", phrase = false, scopes = [], autorun = 
     }
   }
   const id = `search:${++searchSeq}`;
+  const library = scopes[0]?.lib ?? null;
   dv.addPanel({
     id,
     component: "search",
     title: "全文搜索",
-    params: { kind: "search", ...more, query, phrase, scopes, autorun: autorun || !fresh, focusOnOpen: !fresh && !query },
+    params: {
+      kind: "search", library, libraryPinned: library != null, tab: library ? "scope" : "/bulei",
+      ...more, query, phrase, scopes, autorun: autorun || !fresh, focusOnOpen: !fresh && !query,
+    },
   });
   return id;
 }
@@ -1412,13 +1417,7 @@ export function openSearch({ query = "", phrase = false, scopes = [], autorun = 
 export function addSearchScopes(items) {
   const st = lastSearchId && searchStates[lastSearchId];
   if (!st) return openSearch({ scopes: items });
-  const scopes = addSearchScopeItems(st.scopes, items);
-  if (scopes.length !== st.scopes.length) {
-    st.scopes = scopes;
-    st.filters = {};
-    st.tab = "scope";
-    st.rerun += 1;
-  }
+  if (addScopesToSearch(st, items)) st.rerun += 1;
   dv.getPanel(lastSearchId)?.api.setActive();
   return lastSearchId;
 }

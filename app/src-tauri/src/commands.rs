@@ -3758,36 +3758,38 @@ pub async fn search(
         .map(|f| Filter { root: f.root, values: f.values })
         .collect();
 
-    let mut libs = state.libraries.read().unwrap().clone();
-    // a search range: those libraries only; per library the union of its
-    // items (`None`: the whole library)
-    let ranges = ranges_of(&state, withins.unwrap_or_default())?;
-    if !ranges.is_empty() {
-        libs.retain(|l| ranges.contains_key(&l.id));
-    }
+    let libs = state.libraries.read().unwrap().clone();
     // notes edited since the last search join the index now
     if state.flush_dirty(&libs) {
         let _ = app.emit("note-index-synced", ());
     }
-    // counts per library ignore the filters (those belong to one library)
-    let mut counts = Vec::new();
+    let mut indexed = Vec::new();
     let mut unavailable_libraries = Vec::new();
     for l in &libs {
         if let Some(idx) = state.index(&l.id) {
-            let mut r = SearchRequest::new(&query);
-            r.mode = req.mode;
-            r.within = ranges.get(&l.id).cloned().flatten();
-            counts.push(LibCountDto {
-                id: l.id.clone(),
-                title: l.title.clone(),
-                count: idx.count(&r)?,
-            });
+            indexed.push((l, idx));
         } else {
             unavailable_libraries.push(l.title.clone());
         }
     }
-    if counts.is_empty() {
+    if indexed.is_empty() {
         return Err("还没有可搜索的知识库：请先为知识库建立索引".into());
+    }
+    // Each indexed library has its own range. Libraries without a range are searched in full.
+    let mut withins = withins.unwrap_or_default();
+    withins.retain(|w| indexed.iter().any(|(lib, _)| lib.id == w.lib));
+    let mut ranges = ranges_of(&state, withins)?;
+    // Counts per library ignore attribute filters (those belong to the displayed library).
+    let mut counts = Vec::new();
+    for (l, idx) in &indexed {
+        let mut r = SearchRequest::new(&query);
+        r.mode = req.mode;
+        r.within = ranges.get(&l.id).cloned().flatten();
+        counts.push(LibCountDto {
+            id: l.id.clone(),
+            title: l.title.clone(),
+            count: idx.count(&r)?,
+        });
     }
     // the asked library, else the first one with hits
     let selected = lib.as_ref()
@@ -3798,10 +3800,9 @@ pub async fn search(
     if lib.is_some_and(|id| id != selected) {
         req.filters.clear();
     }
-    req.within = ranges.get(&selected).cloned().flatten();
-    let l = state.library(&selected)?;
-    let idx = state.index(&selected).ok_or("索引不可用")?;
-    let html = if l.kind == "html" { Some(state.html_tree(&l)?) } else { None };
+    req.within = ranges.remove(&selected).flatten();
+    let (l, idx) = indexed.iter().find(|(l, _)| l.id == selected).ok_or("索引不可用")?;
+    let html = if l.kind == "html" { Some(state.html_tree(l)?) } else { None };
 
     let page = page.unwrap_or(1).max(1);
     req.offset = (page - 1) * req.limit;
@@ -3812,10 +3813,10 @@ pub async fn search(
     for h in &r.hits {
         let text = if browsing {
             Err(String::new())
-        } else if is_article(&l) {
-            article_of(&state, &l, &h.path, None).map(|a| a.search_view())
+        } else if is_article(l) {
+            article_of(&state, l, &h.path, None).map(|a| a.search_view())
         } else {
-            state.bookcase_of(&l)?.volume_text(&h.path)
+            state.bookcase_of(l)?.volume_text(&h.path)
         };
         let (occurrences, sn) = match text {
             _ if browsing => (0, Vec::new()), // no words to show
@@ -3839,7 +3840,7 @@ pub async fn search(
                 .path
                 .parse::<i64>()
                 .ok()
-                .and_then(|id| state.notes(&l).ok()?.folders_of(id).ok())
+                .and_then(|id| state.notes(l).ok()?.folders_of(id).ok())
                 .map(|f| f.join(" / "))
                 .unwrap_or_default(),
             None if l.kind == "zim" => String::new(),
@@ -3848,7 +3849,7 @@ pub async fn search(
         };
         hits.push(HitDto {
             lib: l.id.clone(),
-            book_id: if is_article(&l) { None } else { Some(h.book.clone()) },
+            book_id: if is_article(l) { None } else { Some(h.book.clone()) },
             title: h.title.clone(),
             subtitle,
             path: h.path.clone(),
@@ -3877,7 +3878,7 @@ pub async fn search(
         libraries: counts,
         unavailable_libraries,
         lib: Some(selected),
-        kind: l.kind,
+        kind: l.kind.clone(),
         total_volumes: r.total_volumes,
         total_books: r.total_books,
         page,

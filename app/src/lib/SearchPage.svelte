@@ -13,10 +13,10 @@
   import * as api from "./api.js";
   import { settings } from "./settings.svelte.js";
   import FacetPane from "./FacetPane.svelte";
-  import SearchScopeDialog from "./SearchScopeDialog.svelte";
+  import LibraryLocationDialog from "./LibraryLocationDialog.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import Icon from "./Icon.svelte";
-  import { addSearchScopeItems } from "./searchScope.js";
+  import { addScopesToSearch, scopesForLibrary, searchScope, setLibrarySearchScopes } from "./searchScope.js";
   import { searchCitation } from "./clip.js";
 
   let { s, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onsearchresult = null, onsetup = null } = $props();
@@ -36,8 +36,7 @@
   let input = $state();
   let hitsEl = $state();
   let menu = $state(null);
-  let chooseScope = $state(false);
-  let filtersOpen = $state(false);
+  let chooseScope = $state(null);
   let unavailable = $state(null);
   let selecting = $state(false);
   let picked = $state([]);
@@ -94,8 +93,7 @@
         if (error === NO_INDEX) {
           const status = await api.status().catch(() => null);
           if (my === seq && status) {
-            const scopeIds = new Set(scopes?.map((item) => item.lib));
-            unavailable = { empty: !status.libraries.length, libraries: scopes ? status.libraries.filter((item) => scopeIds.has(item.id)) : status.libraries };
+            unavailable = { empty: !status.libraries.length, libraries: status.libraries };
           }
         }
       }
@@ -127,7 +125,7 @@
   function changed(keepPicked = false) {
     if (!keepPicked) clearPicked();
     onstate?.();
-    if (s.ran || error) run(1);
+    if (s.ran || busy || error) run(1);
   }
 
   // ---------------------------------------------------------------- filters
@@ -151,56 +149,50 @@
   const chips = $derived(Object.entries(s.filters).flatMap(([root, vs]) => vs.map((name) => ({ root, name }))));
 
   function pickLibrary(id) {
-    if (id === s.lib && s.libraryPinned === (id != null)) return;
+    if (s.libraryPinned === (id != null) && (id == null || id === s.lib)) return;
     const keepPicked = !chips.length;
-    s.lib = id;
+    if (id != null) s.lib = id;
     s.libraryPinned = id != null;
     s.filters = {};
+    s.scopeFeedback = "";
     changed(keepPicked);
   }
 
   // ---------------------------------------------------------------- range
-  /** Items dragged or sent from the tree. A search is repeated when one has run. */
+  const currentLibrary = $derived(result?.libraries.find((library) => library.id === s.lib));
+  const currentScopes = $derived(scopesForLibrary(s.scopes, s.lib));
+
   function addScopes(items) {
-    const scopes = addSearchScopeItems(s.scopes, items);
-    if (scopes.length === s.scopes.length) return;
-    s.scopes = scopes;
-    s.tab = "scope";
-    s.filters = {};
+    if (addScopesToSearch(s, items)) changed();
+    else onstate?.();
+  }
+  function removeScope(scope) {
+    if (currentScopes.includes(scope)) updateScopes(currentScopes.filter((item) => item !== scope));
+  }
+  function updateScopes(scopes) {
+    setLibrarySearchScopes(s, scopes);
     changed();
   }
-  function removeScope(i) {
-    s.scopes = s.scopes.filter((_, j) => j !== i);
-    s.filters = {};
-    changed();
-  }
-  function clearScopes() {
-    s.scopes = [];
-    s.filters = {};
-    changed();
-  }
-  function scopeMenu(e, i) {
+  function scopeMenu(e, scope) {
     e.preventDefault();
-    const items = [];
-    if (i != null) items.push({ label: "移除此项", action: () => removeScope(i) });
-    items.push({ label: "移除全部", action: clearScopes, disabled: !s.scopes.length });
-    menu = { x: e.clientX, y: e.clientY, items };
+    menu = { x: e.clientX, y: e.clientY, items: [{ label: "移除此项", action: () => removeScope(scope) }] };
   }
 
   // ---------------------------------------------------------------- tabs
+  const switchingLibrary = $derived(busy && result && result.lib !== s.lib);
   const tabs = $derived.by(() => {
     const list = [];
     for (const [root, label] of DIMENSIONS) {
-      const f = result?.facets.find((x) => x.root === root);
+      const f = switchingLibrary ? null : result?.facets.find((x) => x.root === root);
       const n = selected(root).length;
       if (result && !f?.values.length && !n) continue;
       list.push({ id: root, label, n });
     }
-    list.push({ id: "scope", label: "范围", n: s.scopes.length });
+    list.push({ id: "scope", label: "范围", n: currentScopes.length });
     return list;
   });
   const activeTab = $derived(tabs.some((t) => t.id === s.tab) ? s.tab : "scope");
-  const facet = $derived(result?.facets.find((f) => f.root === activeTab));
+  const facet = $derived(switchingLibrary ? null : result?.facets.find((f) => f.root === activeTab));
 
   // ---------------------------------------------------------------- hits
   function open(h, lb) {
@@ -216,7 +208,6 @@
   const browsing = $derived(result && !ran.query);
   const totalMatches = $derived(result?.libraries.reduce((total, library) => total + library.count, 0) ?? 0);
   const otherMatch = $derived(result?.libraries.find((library) => library.id !== result.lib && library.count > 0));
-  const rangeLabel = $derived(s.scopes.length === 0 ? "全部知识库" : s.scopes.length === 1 ? s.scopes[0].label : `${s.scopes.length} 项`);
 
   const hitKey = (hit) => JSON.stringify([hit.lib, hit.path]);
   const pickedKeys = $derived(new Set(picked.map((item) => hitKey(item.hit))));
@@ -316,7 +307,7 @@
       run(s.page || 1);
     }
     const off = api.onIndexDone((event) => {
-      if (event.ok && (unavailable || error === NO_INDEX) && (!s.scopes.length || s.scopes.some((item) => item.lib === event.lib))) run(1);
+      if (event.ok && (unavailable || error === NO_INDEX)) run(1);
     });
     return () => off.then((unlisten) => unlisten());
   });
@@ -343,19 +334,7 @@
     {/if}
   </form>
 
-  <div class="range-bar" data-scope-drop onscopedrop={(event) => addScopes(event.detail)}>
-    {#if s.scopes.length}
-      <button type="button" class="range-label link" aria-label={`查看搜索范围：${rangeLabel}`} title={s.scopes.map((item) => item.label).join("；")}
-        onclick={() => { filtersOpen = true; s.tab = "scope"; onstate?.(); }}><strong>范围</strong> {rangeLabel}</button>
-    {:else}
-      <span class="range-label"><strong>范围</strong> {rangeLabel}</span>
-    {/if}
-    <button type="button" onclick={() => (chooseScope = true)}>添加范围…</button>
-    <button type="button" aria-expanded={filtersOpen} onclick={() => (filtersOpen = !filtersOpen)}>{filtersOpen ? "收起筛选" : "筛选"}{chips.length ? `（${chips.length}）` : ""}</button>
-  </div>
-
   <div class="main">
-    {#if filtersOpen}
     <aside class="side" style="width: {sideWidth}px">
       <div class="tabs" role="tablist">
         {#each tabs as t (t.id)}
@@ -366,19 +345,22 @@
       </div>
       <div class="panes">
         {#if activeTab === "scope"}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="scope" data-scope-drop onscopedrop={(e) => addScopes(e.detail)} oncontextmenu={(e) => scopeMenu(e, null)}>
+          <div class="scope" data-scope-drop data-scope-lib={s.lib} onscopedrop={(e) => addScopes(e.detail)}>
+            <div class="scope-actions">
+              <button type="button" disabled={!currentLibrary || !!error} onclick={() => (chooseScope = currentLibrary.id)}>添加范围…</button>
+              <button type="button" disabled={!currentScopes.length} onclick={() => updateScopes([])}>清空范围</button>
+            </div>
+            {#if s.scopeFeedback}<p class="scope-note" role="status">{s.scopeFeedback}</p>{/if}
             <ul>
-              {#each s.scopes as sc, i}
-                <li oncontextmenu={(e) => (e.stopPropagation(), scopeMenu(e, i))} title={sc.label}>
+              {#each currentScopes as sc (sc)}
+                <li oncontextmenu={(e) => scopeMenu(e, sc)} title={sc.label}>
                   <span class="lab">{sc.label}</span>
-                  <button class="link x" onclick={() => removeScope(i)} aria-label="移除">×</button>
+                  <button type="button" class="link x" onclick={() => removeScope(sc)} aria-label={`移除：${sc.label}`}>×</button>
                 </li>
               {:else}
-                <li class="muted empty">可从「添加范围」选库或目录，也可拖入目录树中的节点。</li>
+                <li class="muted empty">{currentLibrary ? `在「${currentLibrary.title}」中搜索全部文档。可拖入当前库的目录或文档。` : "搜索后可为当前知识库添加范围，也可直接拖入目录树中的节点。"}</li>
               {/each}
             </ul>
-            {#if s.scopes.length}<button class="link clr" onclick={clearScopes}>清空范围</button>{/if}
           </div>
         {:else if facet}
           {#key facet.root}
@@ -392,14 +374,13 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
     <div class="split" role="separator" aria-orientation="vertical" aria-label="调整筛选栏宽度" aria-valuenow={sideWidth} tabindex="0" onpointerdown={dragSide} onkeydown={resizeSide}
       ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
-    {/if}
 
     <section class="results">
       {#if result && !error && result.libraries.length > 1}
         <div class="libs" role="group" aria-label="显示哪个知识库的结果">
           <button aria-pressed={!s.libraryPinned} class:on={!s.libraryPinned} onclick={() => pickLibrary(null)}>自动选库</button>
           {#each result.libraries as l}
-            <button class:on={s.libraryPinned && l.id === result.lib} aria-pressed={s.libraryPinned && l.id === result.lib} onclick={() => pickLibrary(l.id)}>
+            <button class:on={s.libraryPinned && l.id === s.lib} aria-pressed={s.libraryPinned && l.id === s.lib} onclick={() => pickLibrary(l.id)}>
               {l.title} <span class="n">{l.count}</span>
             </button>
           {/each}
@@ -424,7 +405,7 @@
                 <button type="button" onclick={() => onsetup({ type: "note" })}>新建笔记</button>
               {/if}
             {:else}
-              <p>当前范围尚无可用的全文索引。</p>
+              <p>尚无可用的全文索引。</p>
               {#each unavailable.libraries as item (item.id)}
                 <div class="availability">
                   <strong>{item.title}</strong>
@@ -433,11 +414,12 @@
                   {:else if onsetup}<button type="button" onclick={() => onsetup({ type: "index", id: item.id })}>建立索引</button>{/if}
                 </div>
               {/each}
-              {#if s.scopes.length}<button type="button" class="link" onclick={clearScopes}>清空范围</button>{/if}
             {/if}
           </div>
         {:else if error}
           <p class="err">{error}</p>
+        {:else if switchingLibrary}
+          <p class="muted" role="status">正在载入该知识库的结果…</p>
         {:else if !result}
           <p class="muted intro">
             输入关键词后按 Enter。留空搜索可以浏览当前范围内的文档。
@@ -445,7 +427,7 @@
         {:else}
           <div class="summary muted">
             {#if result.libraries.length > 1}
-              范围内共 {totalMatches} 个命中文档{chips.length ? "（筛选前）" : ""} · {result.libraries.find((l) => l.id === result.lib)?.title}显示
+              共 {totalMatches} 个命中文档{chips.length ? "（筛选前）" : ""} · {result.libraries.find((l) => l.id === result.lib)?.title}显示
             {:else}
               {browsing ? "全部 " : "命中 "}
             {/if}
@@ -518,17 +500,15 @@
 {/if}
 
 {#if chooseScope}
-  <SearchScopeDialog onpick={(scope) => { addScopes([scope]); chooseScope = false; }} onclose={() => (chooseScope = false)} />
+  <LibraryLocationDialog title="添加搜索范围" libraryId={chooseScope} directoryAction="添加当前目录"
+    onpick={({ library, node, path }) => { addScopes([searchScope(library, node, path)]); chooseScope = null; }}
+    onclose={() => (chooseScope = null)} />
 {/if}
 
 <style>
   .page { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--paper); container-type: inline-size; }
   .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
   .q { flex: 1 1 180px; min-width: 0; font-size: 16px; }
-  .range-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
-  .range-bar:global(.scope-over) { background: var(--accent-soft); }
-  .range-label { flex: 1 1 140px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
-  button.range-label { text-align: left; padding-inline: 0; }
   .seg { display: inline-flex; flex: none; }
   .seg button { border-radius: 0; padding: 3px 12px; }
   .seg button:first-child { border-radius: 6px 0 0 6px; }
@@ -556,12 +536,13 @@
   .hint { padding: 12px; }
   .scope { padding: 8px 10px; overflow: auto; display: block; border: 2px dashed transparent; }
   .scope:global(.scope-over) { border-color: var(--accent); background: var(--accent-soft); }
+  .scope-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+  .scope-note { margin: 6px 0; color: var(--hl); font-size: 14px; }
   .scope ul { list-style: none; margin: 0; padding: 0; }
   .scope li { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
   .scope li .lab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .scope li.empty { border: none; }
   .x { font-size: 16px; color: var(--muted); }
-  .clr { margin-top: 6px; }
   .results { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .libs { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 24px 0; }
   .libs button { border-radius: 14px; font-size: 13px; padding: 2px 12px; }
