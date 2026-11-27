@@ -980,11 +980,12 @@
   .doc :global(a.src) { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
   .doc :global(a.zim-link), .doc :global(a.ext-link) { color: var(--accent); cursor: pointer; text-decoration: underline; }
   .doc :global(a.book-ref), .lines :global(a.book-ref) {
-    color: inherit; cursor: pointer; text-decoration: none;
+    color: inherit; cursor: alias; text-decoration: none;
     border-bottom: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
     border-radius: 2px; transition: color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
   }
   .doc :global(a.book-ref.book-ref-fuzzy), .lines :global(a.book-ref.book-ref-fuzzy) {
+    cursor: help;
     border-bottom: 1px dotted color-mix(in srgb, var(--muted) 45%, transparent);
   }
   .doc :global(a.book-ref:hover), .lines :global(a.book-ref:hover) {
