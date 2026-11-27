@@ -31,7 +31,10 @@
   });
   let title = $state(start.title || start.path);
   let tip = $state("");
-  let docking = false;
+  let reader = $state();
+  let ready = $state(false);
+  let closeError = $state("");
+  let closing = false;
 
   onMount(() => {
     const un1 = win.listen("popout-jump", (e) => {
@@ -48,10 +51,20 @@
         p.nonce += 1;
       }
     });
-    // closed by the user: forget this pop-out (not when the app exits)
-    const un2 = win.onCloseRequested(() => {
-      if (!docking) emit("popout-closed", { tab: start.tab });
+    const un2 = win.onCloseRequested((event) => {
+      event.preventDefault();
+      finish("popout-closed", { tab: start.tab });
     });
+    const un3 = win.listen("popout-check-draft", async ({ payload }) => {
+      let error = null;
+      try { await reader?.flushDraft(); }
+      catch (e) { error = e.message; }
+      await emit("popout-draft-checked", { tab: start.tab, id: payload.id, error });
+    });
+    Promise.all([un2, un3]).then(async () => {
+      await emit("popout-ready", { tab: start.tab });
+      ready = true;
+    }).catch((e) => { closeError = String(e); });
     // shortcuts are carried out by the main window
     const offKeys = installShortcuts((type) => {
       // about this window's document: its tags and bookmark; closing closes this window
@@ -63,6 +76,7 @@
     return () => {
       un1.then((f) => f());
       un2.then((f) => f());
+      un3.then((f) => f());
       offKeys();
     };
   });
@@ -83,10 +97,23 @@
   }
 
   let lastLb = start.lb;
-  async function dock() {
-    docking = true;
-    await emit("popout-dock", { tab: start.tab, lib: start.lib, path: start.path, bookId: start.bookId, lb: lastLb });
-    await win.close();
+  async function finish(event, payload) {
+    if (closing) return;
+    closing = true;
+    closeError = "";
+    try {
+      await reader?.flushDraft();
+      await emit(event, payload);
+      await win.destroy();
+    } catch (e) {
+      closeError = e.message || String(e);
+    } finally {
+      closing = false;
+    }
+  }
+
+  function dock() {
+    return finish("popout-dock", { tab: start.tab, lib: start.lib, path: start.path, bookId: start.bookId, lb: lastLb });
   }
 </script>
 
@@ -95,8 +122,11 @@
     <span class="title" title={tip}>{title}</span>
     <button onclick={dock} title="把当前文档放回主窗口的标签页">停靠回主窗口</button>
   </div>
+  {#if closeError}<p class="close-error" role="alert">{closeError}</p>{/if}
   <div class="body">
+    {#if ready}
     <ReaderPanel
+      bind:this={reader}
       {p}
       onopen={(req) => emit("popout-open", req)}
       onaction={forward}
@@ -109,6 +139,7 @@
         tip = tooltip;
         win.setTitle(`${t} — Smart Library`).catch(() => {});
       }} />
+    {/if}
   </div>
 </div>
 
@@ -124,4 +155,5 @@
   }
   .title { font-weight: 600; color: var(--accent); }
   .body { flex: 1; min-height: 0; }
+  .close-error { margin: 0; padding: 8px 12px; color: var(--hl); }
 </style>

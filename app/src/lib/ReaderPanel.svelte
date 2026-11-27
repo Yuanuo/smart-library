@@ -7,6 +7,7 @@
   // they open in the visual editor (it is the reader too) and are saved a
   // moment after every change. Mind maps open in the map component.
   import { onDestroy, untrack, tick } from "svelte";
+  import { ask, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import * as api from "./api.js";
   import { setLast } from "./clipTarget.js";
   import { settings, update, isAiReady } from "./settings.svelte.js";
@@ -133,6 +134,7 @@
   let seenReload = -1;
   let loadedStamp = null; // folder file stamp when last loaded or saved
   let checkingExternal = false;
+  let loadSeq = 0;
 
   function hasUnsavedEdits() {
     if (!vol?.writable) return false;
@@ -180,28 +182,33 @@
   $effect(() => {
     const { lib, bookId, path, query, phrase } = p;
     const reload = p.reload; // the note changed outside (a clipping was added)
+    const seq = ++loadSeq;
     api
       .openNode(lib, bookId, path, query || null, !!phrase)
       .then((v) => {
+        if (seq !== loadSeq) return;
+        const dirty = hasUnsavedEdits();
+        const newStamp = v.stamp ?? null;
         vol = v;
-        loadedStamp = v.stamp ?? null;
         error = "";
         // the draft is read once, and again when the note changed outside; a new
         // search or jump in the same note must not take the editor away from the user
-        if (isNote(v) && (!loaded || reload !== seenReload)) {
+        if (isNote(v) && (!loaded || !dirty && (reload !== seenReload || newStamp !== loadedStamp))) {
           draft = v.raw ?? "";
           loaded = true;
           seenReload = reload;
           editSeq = 0;
           savedSeq = 0;
+          savedCopy = -1;
           ver += 1;
         }
+        if (!dirty) loadedStamp = newStamp;
         // the tab shows the title; its tooltip also the id, author and path
         const t = v.label ? `${v.title} ${v.label}` : v.title;
         const who = [v.book_id, v.author].filter(Boolean).join(" · ");
         ontitle?.(t, [t, who, v.path].filter(Boolean).join("\n"), { author: v.author || "" });
       })
-      .catch((e) => (error = String(e)));
+      .catch((e) => { if (seq === loadSeq && !hasUnsavedEdits()) error = String(e); });
   });
 
   // a jump requested from outside (search hit, tree, restore) wins over a
@@ -215,35 +222,91 @@
   let editSeq = 0;
   let savedSeq = 0;
   let status = $state("");
+  let saveError = $state("");
+  let draftNotice = $state("");
   let saveTimer = null;
+  let saving = null;
+  let savedCopy = -1;
 
   function changed(md) {
     draft = md;
     editSeq += 1;
     status = "未保存";
+    draftNotice = "";
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 1000);
   }
 
-  async function saveNow() {
+  function saveNow() {
     clearTimeout(saveTimer);
-    if (editSeq === savedSeq || !vol) return;
-    const targetSeq = editSeq;
+    if (saving) return saving;
+    saving = (async () => {
+      while (hasDraft()) {
+        const targetSeq = editSeq;
+        try {
+          status = "保存中…";
+          const nextStamp = await api.saveNote(p.lib, p.path, draft, loadedStamp);
+          if (nextStamp) loadedStamp = nextStamp;
+          if (vol.kind === "notes") setLast({ lib: p.lib, id: p.path, title: vol.title });
+          savedSeq = targetSeq;
+          saveError = "";
+        } catch (e) {
+          status = "保存失败";
+          saveError = String(e);
+          return false;
+        }
+      }
+      if (status) status = "已保存";
+      return true;
+    })().finally(() => { saving = null; });
+    return saving;
+  }
+
+  export const hasDraft = () => isNote(vol) && editSeq !== savedSeq;
+
+  export async function flushDraft() {
+    if ((hasDraft() || saving) && !(await saveNow()) && savedCopy !== editSeq) {
+      throw new Error(`「${p.retitled ?? vol.title}」的草稿仍在编辑器中。${saveError}`);
+    }
+  }
+
+  async function copyDraft() {
+    try {
+      await navigator.clipboard.writeText(draft);
+      draftNotice = "已复制草稿";
+    } catch (e) {
+      draftNotice = `复制失败：${String(e)}`;
+    }
+  }
+
+  async function exportDraft() {
+    const seq = editSeq;
     const text = draft;
     try {
-      const nextStamp = await api.saveNote(p.lib, p.path, text);
-      if (nextStamp) loadedStamp = nextStamp;
-      if (vol.kind === "notes") setLast({ lib: p.lib, id: p.path, title: vol.title }); // the note clippings go to by default
-      if (savedSeq < targetSeq) savedSeq = targetSeq;
-      if (editSeq === savedSeq) status = "已保存";
+      const name = (p.retitled ?? vol.title).replace(/[\\/:*?"<>|]/g, "_");
+      const path = await saveDialog({ defaultPath: `${name} - 草稿.md`, filters: [{ name: "Markdown", extensions: ["md"] }] });
+      if (!path) return;
+      await api.saveBytes(path, new TextEncoder().encode(text));
+      savedCopy = seq;
+      draftNotice = seq === editSeq ? "草稿已另存，可以关闭标签。" : "已另存先前的草稿，编辑器中还有更新的修改。";
     } catch (e) {
-      if (editSeq === targetSeq) status = "保存失败：" + String(e);
+      draftNotice = `另存失败：${String(e)}`;
     }
+  }
+
+  async function reloadSaved() {
+    if (!(await ask("放弃当前草稿，并重新读取已保存的内容？", { title: "重新载入", kind: "warning" }))) return;
+    clearTimeout(saveTimer);
+    if (saving) await saving;
+    savedSeq = editSeq;
+    saveError = "";
+    draftNotice = "";
+    status = "";
+    p.reload = (p.reload ?? 0) + 1;
   }
 
   onDestroy(() => {
     clearTimeout(saveTimer);
-    if (editSeq !== savedSeq && vol) api.saveNote(p.lib, p.path, draft).catch(() => {});
   });
 
   // the workspace asks whether this note is open in its editor (then a clipping goes into it)
@@ -476,6 +539,18 @@
           <button class:on={!visual} onclick={() => visual && setVisual(false)} title="直接编辑 Markdown 源码">源码</button>
         </div>
       </div>
+      {#if saveError}
+        <div class="draft-recovery">
+          <p role="alert">{saveError} 草稿仍在编辑器中。</p>
+          <div>
+            <button type="button" onclick={saveNow}>重试保存</button>
+            <button type="button" onclick={copyDraft}>复制草稿</button>
+            <button type="button" onclick={exportDraft}>另存草稿…</button>
+            <button type="button" class="link" onclick={reloadSaved}>重新载入…</button>
+          </div>
+          {#if draftNotice}<p class="muted" role="status">{draftNotice}</p>{/if}
+        </div>
+      {/if}
       <div class="body">
         {#key `${ver}-${isAiReady()}`}
           {#if visual}
@@ -566,6 +641,9 @@
 {/if}
 
 <style>
+  .draft-recovery { padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .draft-recovery p { margin: 0 0 6px; overflow-wrap: anywhere; }
+  .draft-recovery div { display: flex; flex-wrap: wrap; gap: 6px; }
   .error { padding: 24px; color: var(--hl); }
   .editor { display: flex; flex-direction: column; height: 100%; }
   .body { flex: 1; min-height: 0; display: flex; flex-direction: column; }

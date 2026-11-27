@@ -103,7 +103,7 @@ export const saveBytes = (path, bytes) => invoke("save_bytes", bytes, { headers:
 /** The bytes (an ArrayBuffer) of a picture of a library's notes. */
 export const notePicture = (lib, name) => invoke("note_picture", { lib, name });
 export const noteAppend = (lib, id, text) => invoke("note_append", { lib, id, text });
-export const saveNote = (lib, id, content) => invoke("save_note", { lib, id, content });
+export const saveNote = (lib, id, content, expectedStamp = null) => invoke("save_note", { lib, id, content, expectedStamp });
 export const deleteNote = (lib, id) => invoke("delete_note", { lib, id });
 export const noteMoveTargets = (lib, id) => invoke("note_move_targets", { lib, id });
 export const moveNote = (lib, id, parent, index) => invoke("move_note", { lib, id, parent, index });

@@ -534,7 +534,7 @@ impl FolderLibrary {
         }
         if let Some(e) = expect {
             if self.stamp(rel)? != e {
-                return Err("文件在本程序之外被修改过，没有保存。请关闭这个标签再重新打开，查看最新内容。".into());
+                return Err("原文件已在本程序之外被修改。本次写入已停止。".into());
             }
         }
         let name = rel.rsplit('/').next().unwrap_or(rel);

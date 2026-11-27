@@ -35,8 +35,11 @@ let hostEl = null; // the element holding the dockview
 let hooks = {};
 let progress = {}; // tab -> { lb, mode, t }
 let popouts = {}; // tab -> { label, lib, bookId, path, title }
+const readyPopouts = new Set();
+let draftCheckSeq = 0;
 let tooltips = {}; // tab -> tooltip of its tab (title, author, path)
 let states = {}; // tab -> the reactive state of its panel (for notes changed from outside)
+const readerClose = new Map(); // panel id -> editor and the original Dockview close action
 let appendSeq = 0;
 let searchStates = {}; // tab -> the reactive state of a search page
 let searchSeq = 0; // search tabs are `search:<n>`
@@ -262,6 +265,15 @@ function readerRenderer() {
           },
         },
       });
+      const close = panelApi.close.bind(panelApi);
+      readerClose.set(panelApi.id, { editor: instance, close });
+      // Dockview's close button and keyboard navigation both call this action.
+      panelApi.close = () => {
+        if (!instance?.hasDraft()) return close();
+        return prepareClose([panelApi.id]).then(() => {
+          if (readerClose.has(panelApi.id)) close();
+        }).catch((e) => hooks.onaction?.({ type: "error", text: e.message }));
+      };
     },
     update(event) {
       const q = event.params || {};
@@ -280,6 +292,7 @@ function readerRenderer() {
     },
     dispose() {
       if (panelApi) {
+        readerClose.delete(panelApi.id);
         delete states[panelApi.id];
         delete tooltips[panelApi.id];
         delete infos[panelApi.id];
@@ -689,7 +702,13 @@ async function createPopout({ tab, lib, bookId, path, title }) {
 async function popOut(panel) {
   const prm = panel.params || {};
   const title = panel.title || prm.path;
-  panel.api.close();
+  try {
+    await prepareClose([panel.id]);
+  } catch (e) {
+    hooks.onaction?.({ type: "error", text: e.message });
+    return;
+  }
+  closePrepared(panel);
   await createPopout({ tab: panel.id, lib: prm.lib, bookId: prm.bookId, path: prm.path, title });
 }
 
@@ -736,6 +755,7 @@ function listenToPopouts() {
   listen("popout-progress", (e) => recordProgress(e.payload.tab, e.payload.lb, e.payload.mode));
   listen("popout-closed", (e) => {
     const w = popouts[e.payload.tab];
+    readyPopouts.delete(e.payload.tab);
     delete popouts[e.payload.tab];
     scheduleSave();
     if (w) {
@@ -744,9 +764,11 @@ function listenToPopouts() {
   });
   listen("popout-dock", (e) => {
     const q = e.payload;
+    readyPopouts.delete(q.tab);
     delete popouts[q.tab];
     openVolume({ lib: q.lib, bookId: q.bookId, path: q.path, lb: q.lb });
   });
+  listen("popout-ready", (e) => readyPopouts.add(e.payload.tab));
   listen("popout-open", async (e) => {
     // from a reader or search window: the document opens here, so show this window
     const w = getCurrentWindow();
@@ -1222,16 +1244,68 @@ export function refreshDocument(lib, id) {
   if (st) st.reload += 1;
 }
 
-/** Close the tab of one document (a deleted note). */
-export function closeDocument(lib, path) {
-  dv?.getPanel(`${lib}|${path}`)?.api.close();
+async function prepareClose(ids) {
+  for (const id of ids) {
+    try {
+      await readerClose.get(id)?.editor.flushDraft();
+    } catch (e) {
+      dv?.getPanel(id)?.api.setActive();
+      throw e;
+    }
+  }
+}
+
+function closePrepared(panel) {
+  const reader = readerClose.get(panel.id);
+  if (reader) reader.close();
+  else panel.api.close();
+}
+
+async function preparePopout(tab, info) {
+  const win = await WebviewWindow.getByLabel(info.label);
+  if (!win || !readyPopouts.has(tab)) return win;
+  const id = ++draftCheckSeq;
+  let resolve;
+  const result = new Promise((done) => { resolve = done; });
+  const off = await listen("popout-draft-checked", ({ payload }) => {
+    if (payload.id === id && payload.tab === tab) resolve(payload.error);
+  });
+  try {
+    const offClosed = await win.once("tauri://destroyed", () => resolve(null));
+    try {
+      await emitTo(info.label, "popout-check-draft", { id });
+      const error = await result;
+      if (error) {
+        await win.setFocus().catch(() => {});
+        throw new Error(error);
+      }
+    } finally {
+      offClosed();
+    }
+  } finally {
+    off();
+  }
+  return win;
+}
+
+export async function flushDrafts() {
+  await prepareClose(readerClose.keys());
+  for (const [tab, info] of Object.entries(popouts)) await preparePopout(tab, info);
+}
+
+/** Close one document before its source is removed. */
+export async function closeDocument(lib, path) {
+  const panel = dv?.getPanel(`${lib}|${path}`);
+  if (!panel) return;
+  await prepareClose([panel.id]);
+  closePrepared(panel);
   scheduleSave();
 }
 
 /**
  * Close the tabs of a file or of the files below a folder (before it is renamed
  * or moved: their editors save while closing). Resolves to the paths that were
- * open, and the one that was active, once the saves have had time to finish.
+ * open, and the one that was active, after saving their drafts.
  */
 export async function closeUnder(lib, path) {
   const open = (dv?.panels || []).filter((p) => !isFolderTab(p.id) && p.params?.lib === lib && (p.params.path === path || p.params.path?.startsWith(path + "/")));
@@ -1242,12 +1316,10 @@ export async function closeUnder(lib, path) {
   });
   const active = ws.current?.lib === lib ? ws.current.path : null;
   const paths = open.map((p) => p.params.path);
-  open.forEach((p) => p.api.close());
+  await prepareClose(open.map((p) => p.id));
+  open.forEach(closePrepared);
   openFolders.forEach((p) => p.api.close());
-  if (open.length || openFolders.length) {
-    scheduleSave();
-    if (open.length) await new Promise((r) => setTimeout(r, 400));
-  }
+  if (open.length || openFolders.length) scheduleSave();
   return { paths, active: active && paths.includes(active) ? active : null };
 }
 
@@ -1259,11 +1331,9 @@ export async function reopenLibrary(lib, change) {
   const open = (dv?.panels || []).filter((p) => p.params?.lib === lib && p.params.path != null);
   const active = ws.current?.lib === lib ? ws.current.path : null;
   const paths = open.map((p) => p.params.path);
-  open.forEach((p) => p.api.close()); // their editors save while closing
-  if (open.length) {
-    scheduleSave();
-    await new Promise((r) => setTimeout(r, 400));
-  }
+  await prepareClose(open.map((p) => p.id));
+  open.forEach(closePrepared);
+  if (open.length) scheduleSave();
   try {
     await change();
   } finally {
@@ -1281,14 +1351,17 @@ export function retitle(lib, path, title) {
 
 /** Close every tab and pop-out window of a library (after unbinding it). */
 export async function closeLibrary(lib) {
-  for (const panel of [...(dv?.panels || [])]) {
-    if (panel.params?.lib === lib) panel.api.close();
+  const panels = (dv?.panels || []).filter((p) => p.params?.lib === lib);
+  await prepareClose(panels.map((p) => p.id));
+  const windows = [];
+  for (const [tab, info] of Object.entries(popouts)) {
+    if (info.lib === lib) windows.push([tab, await preparePopout(tab, info)]);
   }
-  for (const [tab, w] of Object.entries(popouts)) {
-    if (w.lib === lib) {
-      (await WebviewWindow.getByLabel(w.label))?.close();
-      delete popouts[tab];
-    }
+  panels.forEach(closePrepared);
+  for (const [tab, win] of windows) {
+    await win?.destroy();
+    delete popouts[tab];
+    readyPopouts.delete(tab);
   }
   scheduleSave();
 }

@@ -459,8 +459,8 @@
         await workspace.closeUnder(lib, node.rel); // the editors of what is inside save first
         await api.deleteFolderDir(lib, node.rel);
       } else {
+        await workspace.closeDocument(lib, node.rel);
         await api.deleteNote(lib, node.rel);
-        workspace.closeDocument(lib, node.rel);
       }
       if (selected?.lib === lib && selected.key.startsWith(key)) selected = null;
       await refresh(lib, parentKey(key) || null);

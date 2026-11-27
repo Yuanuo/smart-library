@@ -805,13 +805,29 @@
       else error = `${l?.title ?? d.lib}：${d.message}`;
       refresh();
     });
-    const flush = () => workspace.flush();
+    let closing = false;
+    const win = getCurrentWindow();
+    const offClose = win.onCloseRequested(async (event) => {
+      event.preventDefault();
+      if (closing) return;
+      closing = true;
+      try {
+        await workspace.flushDrafts();
+        await workspace.flush();
+        await win.destroy();
+      } catch (e) {
+        error = e.message || String(e);
+        closing = false;
+      }
+    });
+    const flush = () => { if (!closing) workspace.flush(); };
     window.addEventListener("beforeunload", flush);
     return () => {
       un0a.then((f) => f());
       un0b.then((f) => f());
       un1.then((f) => f());
       un2.then((f) => f());
+      offClose.then((f) => f());
       window.removeEventListener("beforeunload", flush);
       offKeys();
       offs.forEach((p) => p.then((f) => f()));

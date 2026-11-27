@@ -1759,14 +1759,15 @@ pub async fn rename_note(lib: String, id: String, title: String, state: State<'_
 }
 
 #[tauri::command]
-pub async fn save_note(lib: String, id: String, content: String, state: State<'_, AppState>) -> Result<Option<String>, String> {
+pub async fn save_note(lib: String, id: String, content: String, expected_stamp: Option<String>, state: State<'_, AppState>) -> Result<Option<String>, String> {
     if let Some(f) = rw_folder(&state, &lib)? {
         let key = format!("{}|{}", lib, id);
-        let seen = state.stamps.lock().unwrap().get(&key).cloned();
+        let mut stamps = state.stamps.lock().unwrap();
+        let seen = expected_stamp.as_ref().or_else(|| stamps.get(&key));
         // pictures: kept in the note's own folder, a Markdown note links to them (other programs show them too)
         let content = f.prepare_save(&id, &content)?;
-        let stamp = f.write_edit(&id, &content, seen.as_deref())?;
-        state.stamps.lock().unwrap().insert(key, stamp.clone());
+        let stamp = f.write_edit(&id, &content, seen.map(String::as_str))?;
+        stamps.insert(key, stamp.clone());
         state.mark_dirty(&lib, [id]);
         return Ok(Some(stamp));
     }
@@ -5161,7 +5162,7 @@ pub async fn restore_snapshot(id: i64, state: State<'_, AppState>) -> Result<Sna
     if rec.kind == "deleted" {
         return Err("已删除的笔记请在知识库的「回收站…」里恢复".into());
     }
-    save_note(rec.lib.clone(), rec.doc_id.clone(), rec.content.clone(), state).await?;
+    save_note(rec.lib.clone(), rec.doc_id.clone(), rec.content.clone(), None, state).await?;
     Ok(rec)
 }
 

@@ -945,7 +945,7 @@ pub async fn exec_tool_with_policy(
                 } else {
                     content
                 };
-                if let Err(e) = commands::save_note(lib_id.clone(), doc_id.clone(), body, state).await {
+                if let Err(e) = commands::save_note(lib_id.clone(), doc_id.clone(), body, None, state).await {
                     return err_res(format!("文档已创建（id={}），但写入内容失败：{}", doc_id, e));
                 }
             }
@@ -984,7 +984,7 @@ pub async fn exec_tool_with_policy(
                     smart_library_core::mindmap::append_outline_or_json(&existing_raw, &content, &title)
                 };
                 match next_json {
-                    Ok(body) => commands::save_note(lib.clone(), id.clone(), body, state).await.map(|_| ()),
+                    Ok(body) => commands::save_note(lib.clone(), id.clone(), body, None, state).await.map(|_| ()),
                     Err(e) => Err(e),
                 }
             } else if content_type == smart_library_core::whiteboard::TYPE {
@@ -993,14 +993,14 @@ pub async fn exec_tool_with_policy(
                 } else {
                     match serde_json::from_str::<Value>(&content) {
                         Ok(v) if v.is_object() && v.get("elements").is_some_and(Value::is_array) => {
-                            commands::save_note(lib.clone(), id.clone(), content, state).await.map(|_| ())
+                            commands::save_note(lib.clone(), id.clone(), content, None, state).await.map(|_| ())
                         }
                         Ok(_) => Err("白板 JSON 缺少 elements 数组，已阻止覆写".into()),
                         Err(e) => Err(format!("白板 JSON 解析失败，已阻止覆写：{}", e)),
                     }
                 }
             } else if mode == "replace" {
-                commands::save_note(lib.clone(), id.clone(), content, state).await.map(|_| ())
+                commands::save_note(lib.clone(), id.clone(), content, None, state).await.map(|_| ())
             } else if lib_info.kind == "folder" {
                 let base = existing_raw.trim_end();
                 let next = if base.is_empty() {
@@ -1008,7 +1008,7 @@ pub async fn exec_tool_with_policy(
                 } else {
                     format!("{}\n\n{}", base, content.trim_start())
                 };
-                commands::save_note(lib.clone(), id.clone(), next, state).await.map(|_| ())
+                commands::save_note(lib.clone(), id.clone(), next, None, state).await.map(|_| ())
             } else {
                 commands::note_append(lib.clone(), id.clone(), content, state).await
             };
