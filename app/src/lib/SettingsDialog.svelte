@@ -9,7 +9,7 @@
   import { MOD_KEY } from "./platform.js";
   import DialogHeader from "./DialogHeader.svelte";
 
-  let { onclose, dataDir = "", configDir = "", webviewDir = "", initialTab = "appearance", onmcpchange = null } = $props();
+  let { onclose, dataDir = "", configDir = "", initialTab = "appearance", onmcpchange = null } = $props();
 
   const TABS = [
     ["appearance", "外观"],
@@ -1288,14 +1288,9 @@
               <h4>导出知识库</h4>
               <p class="muted">在知识库菜单选择「导出知识库」。通用数据包（.smartlib）用于带走所选文档、目录结构和支持的附件。文件夹数据包（.smartdir）保留所选目录结构、原文件和引用的附件，回收站需另行备份。</p>
               <h4>完整备份或换电脑</h4>
-              <p class="muted">退出 Smart Library 后复制下方目录，以及外部绑定的文件夹和资料包。笔记、收藏、快照及工作区等保存在应用数据目录中。位于该目录内的子目录会一并复制。迁移后，可以用知识库菜单中的「重新定位资料源」找回移动的外部资料。</p>
+              <p class="muted">退出 Smart Library 后复制下方应用数据目录与应用配置目录，以及外部绑定的文件夹和资料包。笔记、阅读进度、收藏、快照、AI 对话及工作区保存在应用数据目录；外观排版、快捷键、AI 模型预设及知识库配置保存在应用配置目录（均跨平台通用）。迁移后，可以用知识库菜单中的「重新定位资料源」找回移动的外部资料。</p>
               {#if dataDir}<label>应用数据目录<input type="text" readonly value={dataDir} onclick={(event) => event.currentTarget.select()} /></label>{/if}
               {#if configDir && configDir !== dataDir}<label>应用配置目录<input type="text" readonly value={configDir} onclick={(event) => event.currentTarget.select()} /></label>{/if}
-              {#if webviewDir && webviewDir !== dataDir && webviewDir !== configDir}
-                <label>界面偏好（WebView 数据目录）<input type="text" readonly value={webviewDir} onclick={(event) => event.currentTarget.select()} /></label>
-              {:else if !webviewDir}
-                <p class="muted">界面偏好由系统 WebView 存储。跨系统迁移后可在设置中重新配置。</p>
-              {/if}
             </div>
           </div>
           <div class="card">

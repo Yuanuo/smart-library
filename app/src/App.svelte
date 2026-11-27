@@ -1477,7 +1477,6 @@
   <SettingsDialog
     dataDir={appInfo?.data_dir ?? ""}
     configDir={appInfo?.config_dir ?? ""}
-    webviewDir={appInfo?.webview_dir ?? ""}
     initialTab={settingsTab}
     onmcpchange={(next) => (mcpState = { ...mcpState, ...next })}
     onclose={() => { settingsBox = false; refreshMcpStatus(); }} />

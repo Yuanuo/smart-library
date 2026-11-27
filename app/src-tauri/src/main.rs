@@ -253,6 +253,8 @@ fn main() {
             commands::check_folder_changes,
             commands::load_workspace,
             commands::save_workspace,
+            commands::load_settings,
+            commands::save_settings,
             commands::ai_stream,
             commands::ai_abort,
             commands::ai_tool_definitions,

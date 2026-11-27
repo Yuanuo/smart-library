@@ -88,6 +88,7 @@ pub struct AppState {
     workspace_file: PathBuf,
     window_file: PathBuf,
     window_state: Mutex<Option<WindowState>>,
+    settings_lock: Mutex<()>,
     libraries: RwLock<Vec<Library>>,
     sources: RwLock<HashMap<String, Arc<Bookcase>>>,
     html: RwLock<HashMap<String, Arc<HtmlTree>>>,
@@ -166,6 +167,7 @@ impl AppState {
             workspace_file: data_dir.join("workspace.json"),
             window_file,
             window_state: Mutex::new(window_state),
+            settings_lock: Mutex::new(()),
             config_dir,
             data_dir,
             libraries: RwLock::new(libraries),
@@ -5151,6 +5153,39 @@ pub async fn save_workspace(workspace: serde_json::Value, state: State<'_, AppSt
     std::fs::rename(&tmp, file).map_err(|e| e.to_string())
 }
 
+// ------------------------------------------------------------ user settings
+
+/// Load user settings from `<config_dir>/settings.json`, or `null` if not yet created.
+#[tauri::command]
+pub async fn load_settings(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let file = state.config_dir.join("settings.json");
+    match std::fs::read_to_string(&file) {
+        Ok(s) => Ok(serde_json::from_str(&s).unwrap_or(serde_json::Value::Null)),
+        Err(_) => Ok(serde_json::Value::Null),
+    }
+}
+
+/// Atomically persist user settings to `<config_dir>/settings.json` and broadcast
+/// `settings-changed` so all open windows stay in sync.
+#[tauri::command]
+pub async fn save_settings(
+    settings: serde_json::Value,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    {
+        let _guard = state.settings_lock.lock().unwrap();
+        std::fs::create_dir_all(&state.config_dir).map_err(|e| e.to_string())?;
+        let file = state.config_dir.join("settings.json");
+        let tmp = state.config_dir.join("settings.json.tmp");
+        let bytes = serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?;
+        std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &file).map_err(|e| e.to_string())?;
+    }
+    let _ = app.emit("settings-changed", &settings);
+    Ok(())
+}
+
 // ------------------------------------------------------------ program info, fonts, find
 
 #[derive(Serialize)]
@@ -5160,7 +5195,6 @@ pub struct AppInfo {
     version: String,
     data_dir: String,
     config_dir: String,
-    webview_dir: Option<String>,
     /// the address the `sl` protocol is reached by (pictures of notes)
     asset_prefix: String,
 }
@@ -5177,20 +5211,12 @@ fn display_version() -> String {
 }
 
 #[tauri::command]
-pub async fn app_info(app: AppHandle, state: State<'_, AppState>) -> Result<AppInfo, String> {
-    let webview_dir = if cfg!(windows) {
-        std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").map(PathBuf::from).or_else(|| app.path().app_local_data_dir().ok())
-    } else if cfg!(target_os = "linux") {
-        app.path().app_local_data_dir().ok()
-    } else {
-        None
-    };
+pub async fn app_info(state: State<'_, AppState>) -> Result<AppInfo, String> {
     Ok(AppInfo {
         name: "Smart Library".into(),
         version: display_version(),
         data_dir: state.data_dir.display().to_string(),
         config_dir: state.config_dir.display().to_string(),
-        webview_dir: webview_dir.map(|dir| dir.display().to_string()),
         asset_prefix: ASSET_PREFIX.to_string(),
     })
 }

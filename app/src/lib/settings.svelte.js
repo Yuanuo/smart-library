@@ -1,9 +1,10 @@
-// User settings: theme, fonts, sizes. Kept in the webview's local storage
-// (which lives in the portable data folder) and applied as CSS variables, so
-// every window (the main one and the pop-out readers) looks the same; a
-// change in one window reaches the others through the `storage` event.
+// User settings: theme, fonts, sizes, shortcuts, AI presets. Persisted in
+// `<config_dir>/settings.json` (portable across platforms, independent of
+// WebView storage) and cached in `localStorage` for zero-flash startup.
+// Changes in any window are broadcast via Tauri's `settings-changed` event.
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { PLATFORM, MOD_KEY } from "./platform.js";
+import { loadSettings, saveSettings, onSettingsChanged } from "./api.js";
 
 // Font presets. `default` means "the face the platform itself uses", and that
 // differs by OS: Segoe UI + 微软雅黑 on Windows, San Francisco + 苹方 on macOS,
@@ -156,50 +157,69 @@ const DEFAULTS = {
   shortcuts: {}, // { [actionId]: comboString } overrides
 };
 
+function normalize(parsed) {
+  const safe = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  const raw = { ...DEFAULTS, ...safe };
+  if (!raw.shortcuts || typeof raw.shortcuts !== "object" || Array.isArray(raw.shortcuts)) {
+    raw.shortcuts = {};
+  }
+  if (!["window", "ask", "browser"].includes(raw.externalLink)) {
+    raw.externalLink = "window";
+  }
+  if (!WEIGHTS[raw.readerWeight]) {
+    raw.readerWeight = "std";
+  }
+  // "sans" used to be a preset; the default is the platform's sans now
+  if (raw.uiFont === "sans") {
+    raw.uiFont = "default";
+  }
+  if (raw.readerFont === "sans") {
+    raw.readerFont = "default";
+  }
+  raw.readerStructureStyle = raw.readerStructureStyle !== false;
+  raw.readerKepanLinks = raw.readerKepanLinks !== false;
+  if (typeof raw.readerCustomCss !== "string") {
+    raw.readerCustomCss = "";
+  }
+  if (!SELECT_LOOKUP_MODES.some(([v]) => v === raw.selectLookup)) {
+    raw.selectLookup = "ctrl";
+  }
+  if (!Array.isArray(raw.aiPresets) || !raw.aiPresets.length) {
+    raw.aiPresets = [{ ...DEFAULT_AI_PRESET }];
+  } else {
+    raw.aiPresets = raw.aiPresets.map((p) => ({
+      ...DEFAULT_AI_PRESET,
+      ...p,
+      models: Array.isArray(p?.models) ? p.models.filter((m) => typeof m === "string" && m.trim()) : [],
+      effortByModel: p?.effortByModel && typeof p.effortByModel === "object" && !Array.isArray(p.effortByModel)
+        ? p.effortByModel
+        : {},
+    }));
+  }
+  if (!raw.aiPresets.some((p) => p.id === raw.aiActiveId)) {
+    raw.aiActiveId = raw.aiPresets[0].id;
+  }
+  return raw;
+}
+
+function readLocalCache() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalCache(snapshot) {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(snapshot));
+  } catch {}
+}
+
 function load() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(KEY) || "{}");
-    const raw = { ...DEFAULTS, ...parsed };
-    if (!raw.shortcuts || typeof raw.shortcuts !== "object" || Array.isArray(raw.shortcuts)) {
-      raw.shortcuts = {};
-    }
-    if (!["window", "ask", "browser"].includes(raw.externalLink)) {
-      raw.externalLink = "window";
-    }
-    if (!WEIGHTS[raw.readerWeight]) {
-      raw.readerWeight = "std";
-    }
-    // "sans" used to be a preset; the default is the platform's sans now
-    if (raw.uiFont === "sans") {
-      raw.uiFont = "default";
-    }
-    if (raw.readerFont === "sans") {
-      raw.readerFont = "default";
-    }
-    raw.readerStructureStyle = raw.readerStructureStyle !== false;
-    raw.readerKepanLinks = raw.readerKepanLinks !== false;
-    if (typeof raw.readerCustomCss !== "string") {
-      raw.readerCustomCss = "";
-    }
-    if (!SELECT_LOOKUP_MODES.some(([v]) => v === raw.selectLookup)) {
-      raw.selectLookup = "ctrl";
-    }
-    if (!Array.isArray(raw.aiPresets) || !raw.aiPresets.length) {
-      raw.aiPresets = [{ ...DEFAULT_AI_PRESET }];
-    } else {
-      raw.aiPresets = raw.aiPresets.map((p) => ({
-        ...DEFAULT_AI_PRESET,
-        ...p,
-        models: Array.isArray(p?.models) ? p.models.filter((m) => typeof m === "string" && m.trim()) : [],
-        effortByModel: p?.effortByModel && typeof p.effortByModel === "object" && !Array.isArray(p.effortByModel)
-          ? p.effortByModel
-          : {},
-      }));
-    }
-    if (!raw.aiPresets.some((p) => p.id === raw.aiActiveId)) {
-      raw.aiActiveId = raw.aiPresets[0].id;
-    }
-    return raw;
+    return normalize(readLocalCache());
   } catch {
     return { ...DEFAULTS, aiPresets: [{ ...DEFAULT_AI_PRESET }] };
   }
@@ -290,24 +310,70 @@ export function apply() {
   }
 }
 
+let pendingSave = null;
+let saving = false;
+let lastSavedJson = "";
+let dirtyBeforeHydrate = false;
+let initialized = false;
+
+function queueDiskSave(snapshot) {
+  pendingSave = snapshot;
+  if (saving) return;
+  saving = true;
+  (async () => {
+    try {
+      while (pendingSave) {
+        const next = pendingSave;
+        pendingSave = null;
+        lastSavedJson = JSON.stringify(next);
+        await saveSettings(next).catch(() => {});
+      }
+    } finally {
+      saving = false;
+    }
+  })();
+}
+
 export function update(patch) {
+  dirtyBeforeHydrate = true;
   Object.assign(settings, patch);
-  try {
-    localStorage.setItem(KEY, JSON.stringify({ ...settings }));
-  } catch {}
+  const snapshot = $state.snapshot(settings);
+  writeLocalCache(snapshot);
   apply();
+  queueDiskSave(snapshot);
 }
 
 export function reset() {
-  update({ ...DEFAULTS });
+  update({ ...DEFAULTS, aiPresets: [{ ...DEFAULT_AI_PRESET }] });
 }
 
 export function initSettings() {
+  if (initialized) return;
+  initialized = true;
   apply();
-  window.addEventListener("storage", (e) => {
-    if (e.key === KEY) {
-      Object.assign(settings, load());
-      apply();
-    }
-  });
+  onSettingsChanged((incoming) => {
+    if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) return;
+    const normalized = normalize(incoming);
+    const serialized = JSON.stringify(normalized);
+    if (serialized === lastSavedJson || serialized === JSON.stringify($state.snapshot(settings))) return;
+    lastSavedJson = serialized;
+    Object.assign(settings, normalized);
+    writeLocalCache(normalized);
+    apply();
+  }).catch(() => {});
+  loadSettings()
+    .then((disk) => {
+      if (disk && typeof disk === "object" && !Array.isArray(disk)) {
+        if (dirtyBeforeHydrate) return;
+        const normalized = normalize(disk);
+        lastSavedJson = JSON.stringify(normalized);
+        Object.assign(settings, normalized);
+        writeLocalCache(normalized);
+        apply();
+      } else if (!dirtyBeforeHydrate && readLocalCache() !== null) {
+        // One-time migration from legacy WebView localStorage to `<config_dir>/settings.json`.
+        queueDiskSave($state.snapshot(settings));
+      }
+    })
+    .catch(() => {});
 }

@@ -142,6 +142,9 @@ export const onTitlesProgress = (fn) => listen("titles-progress", (e) => fn(e.pa
 export const onTitlesDone = (fn) => listen("titles-done", (e) => fn(e.payload));
 export const loadWorkspace = () => invoke("load_workspace");
 export const saveWorkspace = (workspace) => invoke("save_workspace", { workspace });
+export const loadSettings = () => invoke("load_settings");
+export const saveSettings = (settings) => invoke("save_settings", { settings });
+export const onSettingsChanged = (fn) => listen("settings-changed", (e) => fn(e.payload));
 export const aiStream = (reqId, config, system, messages, reasoningEffort = null, tools = null) =>
   invoke("ai_stream", { reqId, config, system, messages, reasoningEffort, tools });
 export const aiAbort = (reqId) => invoke("ai_abort", { reqId });
