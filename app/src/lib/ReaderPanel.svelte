@@ -237,11 +237,13 @@
     saveTimer = setTimeout(saveNow, 1000);
   }
 
+  const hasNoteDraft = () => isNote(vol) && editSeq !== savedSeq;
+
   function saveNow() {
     clearTimeout(saveTimer);
     if (saving) return saving;
     saving = (async () => {
-      while (hasDraft()) {
+      while (hasNoteDraft()) {
         const targetSeq = editSeq;
         try {
           status = "保存中…";
@@ -262,10 +264,18 @@
     return saving;
   }
 
-  export const hasDraft = () => isNote(vol) && editSeq !== savedSeq;
+  export const hasDraft = () => hasUnsavedEdits();
 
   export async function flushDraft() {
-    if ((hasDraft() || saving) && !(await saveNow()) && savedCopy !== editSeq) {
+    if (vol?.writable && vol.content_type === "mindmap") {
+      await mindRef?.flush?.();
+      return;
+    }
+    if (vol?.writable && vol.content_type === "whiteboard") {
+      await boardRef?.flush?.();
+      return;
+    }
+    if ((hasNoteDraft() || saving) && !(await saveNow()) && savedCopy !== editSeq) {
       throw new Error(`「${p.retitled ?? vol.title}」的草稿仍在编辑器中。${saveError}`);
     }
   }

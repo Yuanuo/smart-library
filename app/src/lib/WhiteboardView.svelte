@@ -60,18 +60,36 @@
     timer = setTimeout(save, 1000);
   }
 
-  async function save() {
+  let saving = null;
+  function save() {
     clearTimeout(timer);
-    if (readonly || blocked || !dirty || !pending || !serialize) return;
-    dirty = false;
-    const [elements, appState, files] = pending;
-    try {
-      const nextStamp = await api.saveNote(lib, path, serialize(elements, appState, files, "local"));
-      if (nextStamp) onsaved?.(nextStamp);
-      if (!gone) status = "已保存";
-    } catch (e) {
-      dirty = true;
-      error = String(e);
+    if (saving) return saving;
+    if (readonly || blocked || !dirty || !pending || !serialize) return Promise.resolve(true);
+    saving = (async () => {
+      while (dirty && !readonly && !blocked && pending && serialize) {
+        dirty = false;
+        const [elements, appState, files] = pending;
+        try {
+          const nextStamp = await api.saveNote(lib, path, serialize(elements, appState, files, "local"));
+          if (nextStamp) onsaved?.(nextStamp);
+          if (!gone) {
+            status = "已保存";
+            error = "";
+          }
+        } catch (e) {
+          dirty = true;
+          error = String(e);
+          return false;
+        }
+      }
+      return true;
+    })().finally(() => { saving = null; });
+    return saving;
+  }
+
+  export async function flush() {
+    if ((isDirty() || saving) && !(await save())) {
+      throw new Error(`「${title}」尚未保存。${error}`);
     }
   }
 
@@ -199,7 +217,7 @@
     gone = true;
     watch?.disconnect();
     window.removeEventListener("scroll", unscroll, true);
-    if (!readonly && dirty) save();
+    if (!readonly && dirty && !saving) save();
     // let the last save go out before the component is taken down
     setTimeout(() => root?.unmount(), 0);
   });

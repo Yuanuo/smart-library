@@ -42,16 +42,35 @@
     timer = setTimeout(save, 800);
   }
 
-  async function save() {
-    if (readonly || blocked || !mind || !dirty) return;
-    dirty = false;
-    try {
-      const nextStamp = await api.saveNote(lib, path, dataText());
-      if (nextStamp) onsaved?.(nextStamp);
-      if (!gone) status = "已保存";
-    } catch (e) {
-      dirty = true;
-      error = String(e);
+  let saving = null;
+  function save() {
+    clearTimeout(timer);
+    if (saving) return saving;
+    if (readonly || blocked || !mind || !dirty) return Promise.resolve(true);
+    saving = (async () => {
+      while (dirty && !readonly && !blocked && mind) {
+        dirty = false;
+        try {
+          const nextStamp = await api.saveNote(lib, path, dataText());
+          if (nextStamp) onsaved?.(nextStamp);
+          if (!gone) {
+            status = "已保存";
+            error = "";
+          }
+        } catch (e) {
+          dirty = true;
+          error = String(e);
+          return false;
+        }
+      }
+      return true;
+    })().finally(() => { saving = null; });
+    return saving;
+  }
+
+  export async function flush() {
+    if ((isDirty() || saving) && !(await save())) {
+      throw new Error(`「${title}」尚未保存。${error}`);
     }
   }
 
@@ -397,7 +416,7 @@
     wait?.disconnect();
     gone = true;
     clearTimeout(timer);
-    if (!readonly && !blocked && mind && dirty) api.saveNote(lib, path, dataText()).catch(() => {});
+    if (!readonly && !blocked && mind && dirty && !saving) api.saveNote(lib, path, dataText()).catch(() => {});
     mind?.destroy?.();
   });
 
