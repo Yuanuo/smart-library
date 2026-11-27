@@ -172,13 +172,14 @@
   const libraries = $derived.by(() => {
     const counts = new Map((!error ? result?.libraries ?? [] : []).map((l) => [l.id, l.count]));
     return (catalog ?? windowCatalog ?? result?.libraries ?? [])
-      .map(({ id, title, index_ready }) => ({ id, title, index_ready, count: counts.get(id) }))
+      .map(({ id, title, index_ready, building, error: libError }) => ({ id, title, index_ready, building, error: libError, count: counts.get(id) }))
       .sort((a, b) => Number(b.count > 0) - Number(a.count > 0));
   });
   const libraryTitles = $derived(new Map(libraries.map(({ id, title }) => [id, title])));
   const scopedLibraries = $derived(new Set(shownScopes.filter((scope) => !scope.whole).map((scope) => scope.lib)));
 
   function addScopes(items, followLibrary = false) {
+    if (items.length) filtersOpen = true;
     if (addScopesToSearch(s, items, followLibrary)) changed();
     else onstate?.();
   }
@@ -191,7 +192,7 @@
   }
 
   // ---------------------------------------------------------------- tabs
-  let filtersOpen = $state(false);
+  let filtersOpen = $state(untrack(() => s.scopes.length > 0));
   const switchingLibrary = $derived(busy && result && result.lib !== s.lib);
   const tabs = $derived.by(() => {
     const list = [];
@@ -334,7 +335,10 @@
     const n = s.rerun ?? 0; // the host changed the range (or filters): search again
     if (n !== lastRerun) {
       lastRerun = n;
-      untrack(() => changed());
+      untrack(() => {
+        if (s.tab === "scope" && s.scopes.length) filtersOpen = true;
+        changed();
+      });
     }
   });
   $effect(() => {
@@ -482,10 +486,17 @@
             输入关键词后按 Enter。留空搜索可以浏览当前范围内的文档。
           </p>
         {:else if result.index_unavailable}
+          {@const currentLib = libraries.find((l) => l.id === result.lib)}
           <p>「{libraryTitles.get(result.lib)}」的全文索引暂不可用。</p>
-          {#if onsetup}<button type="button" onclick={() => onsetup({ type: "index", id: result.lib })}>查看索引…</button>{/if}
+          {#if currentLib?.error}
+            <p class="muted">{currentLib.error}</p>
+          {:else if currentLib?.building}
+            <p class="muted" role="status">正在建立索引，完成后会自动刷新结果…</p>
+          {:else if onsetup}
+            <button type="button" onclick={() => onsetup({ type: "index", id: result.lib })}>建立索引</button>
+          {/if}
         {:else}
-          {#if result.unavailable_libraries.length}
+          {#if result.lib == null && result.unavailable_libraries.length}
             <p class="muted unsearched">未参与全文搜索：{result.unavailable_libraries.join("、")}</p>
           {/if}
           {#each result.hits as h}
@@ -574,7 +585,7 @@
 
 {#if chooseScope}
   <LibraryLocationDialog title="添加搜索范围" directoryAction="添加当前目录" rootAction="添加整个知识库"
-    onpick={({ library, node, path, depth }) => { addScopes([searchScope(library, node, path, depth)]); chooseScope = false; }}
+    onpick={({ library, node, path, depth }) => { addScopes([searchScope(library, node, path, depth)], true); chooseScope = false; }}
     onclose={() => (chooseScope = false)} />
 {/if}
 
