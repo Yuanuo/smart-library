@@ -5006,25 +5006,24 @@ pub async fn props_get(lib: String, book_id: Option<String>, path: String, state
     let mut derived = derived_dims(&state, &l, book_id.as_deref(), &path).unwrap_or_default();
     if book_id.is_some() || !path.is_empty() {
         let overlay = index_overlay(&state, &l)?;
-        let parents: Vec<(String, String)> = match l.kind.as_str() {
-            "cbeta" | "html" if path.starts_with("@nav/") => {
-                let mut current = "@nav".to_string();
-                let mut parts: Vec<_> = path.trim_start_matches("@nav/").split('/').collect();
-                parts.pop();
-                parts.into_iter().map(|part| { current.push('/'); current.push_str(part); (String::new(), current.clone()) }).collect()
-            }
-            "cbeta" | "html" => overlay.nav_ancestors(book_id.as_deref().unwrap_or(&path)),
-            "folder" => {
-                let mut cur = String::new();
-                let mut parts: Vec<_> = path.split('/').collect();
-                parts.pop();
-                parts.into_iter().map(|part| { if !cur.is_empty() { cur.push('/'); } cur.push_str(part); (String::new(), cur.clone()) }).collect()
-            }
-            "notes" => state.notes(&l)?.rows()?.into_iter().find(|r| r.id.to_string() == path)
-                .map(|r| r.ancestors.into_iter().map(|id| (String::new(), id.to_string())).collect()).unwrap_or_default(),
-            _ => Vec::new(),
+        let inherited = if l.kind == "folder" {
+            state.folder(&l)?.inherited_properties(&path, &overlay)
+        } else {
+            let parents: Vec<(String, String)> = match l.kind.as_str() {
+                "cbeta" | "html" if path.starts_with("@nav/") => {
+                    let mut current = "@nav".to_string();
+                    let mut parts: Vec<_> = path.trim_start_matches("@nav/").split('/').collect();
+                    parts.pop();
+                    parts.into_iter().map(|part| { current.push('/'); current.push_str(part); (String::new(), current.clone()) }).collect()
+                }
+                "cbeta" | "html" => overlay.nav_ancestors(book_id.as_deref().unwrap_or(&path)),
+                "notes" => state.notes(&l)?.rows()?.into_iter().find(|r| r.id.to_string() == path)
+                    .map(|r| r.ancestors.into_iter().map(|id| (String::new(), id.to_string())).collect()).unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            overlay.merged(&parents)
         };
-        for (dim, values) in overlay.merged(&parents) {
+        for (dim, values) in inherited {
             if props::is_dim(&dim) || dim == "index_content" { derived.insert(dim, values); }
         }
     }
@@ -5588,6 +5587,68 @@ mod library_id_tests {
             let result = SearchIndex::open(&dir).unwrap().search(&req).unwrap();
             assert_eq!(result.hits.len(), 1);
             assert_eq!(result.hits[0].path, "专题/文章.md");
+        }
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn old_folder_index_recovers_people_from_more_specific_source_metadata() {
+        let tmp = std::env::temp_dir().join(format!("sl_layered_props_test_{}", std::process::id()));
+        let root = tmp.join("folder");
+        std::fs::create_dir_all(root.join("专题")).unwrap();
+        for path in ["默认.md", "专题/目录.md", "专题/条目.md", "专题/编辑.md"] {
+            std::fs::write(root.join(path), "正文").unwrap();
+        }
+        std::fs::write(
+            root.join("专题/.meta.json"),
+            r#"{"*":{"person":"目录人物"},"list":[{"name":"条目.md","person":"条目人物"},{"name":"编辑.md","person":"资料原值"}]}"#,
+        ).unwrap();
+        let lib = Library {
+            id: "folder".into(),
+            kind: "folder".into(),
+            title: "测试文件夹".into(),
+            source: root.to_string_lossy().into_owned(),
+            tree: String::new(),
+            exts: vec!["md".into()],
+            max_mb: 0,
+            writable: false,
+            remote: String::new(),
+        };
+        let open = || AppState::new(tmp.join("cfg"), tmp.join("data"));
+        {
+            let state = open();
+            for (path, name) in [("", "默认人物"), ("专题/编辑.md", "本地编辑")] {
+                state.props.set(&lib.id, None, path, &Dims::from([("person".into(), vec![name.into()])])).unwrap();
+            }
+            let folder = state.folder(&lib).unwrap();
+            let files = folder.files();
+            let overlay = state.props.overlay(&lib.id).unwrap();
+            let dir = state.index_dir(&lib.id);
+            smart_library_core::search::build_index(
+                &dir, serde_json::json!({"data_version": folder.fingerprint(&files)}),
+                files.len(), folder.docs(&files), &overlay, |_, _| {},
+            ).unwrap();
+            let mut old = serde_json::to_value(folder_snapshot_map(&folder, &files, &overlay)).unwrap();
+            old.as_object_mut().unwrap().remove("layered_properties");
+            std::fs::write(dir.join("folder-snapshot.json"), serde_json::to_vec(&old).unwrap()).unwrap();
+        }
+        {
+            let state = open();
+            state.flush_dirty(std::slice::from_ref(&lib));
+            let dir = state.index_dir(&lib.id);
+            let index = SearchIndex::open(&dir).unwrap();
+            for (name, path) in [
+                ("默认人物", "默认.md"),
+                ("目录人物", "专题/目录.md"),
+                ("条目人物", "专题/条目.md"),
+                ("本地编辑", "专题/编辑.md"),
+            ] {
+                let mut req = SearchRequest::new("");
+                req.filters = vec![Filter { root: "person".into(), values: vec![name.into()] }];
+                let result = index.search(&req).unwrap();
+                assert_eq!(result.hits.len(), 1, "{name}");
+                assert_eq!(result.hits[0].path, path);
+            }
         }
         std::fs::remove_dir_all(&tmp).unwrap();
     }

@@ -1,10 +1,10 @@
 <script>
   // A compact context menu at (x, y). Items:
-  //   { label, action, disabled, badge, sub, children } or "separator".
+  //   { label, action, disabled, badge, checked, sub, children } or "separator".
   // Closes on choice, outside click or Escape.
   import { onMount, tick } from "svelte";
 
-  let { x, y, items, onclose } = $props();
+  let { x, y, items, onclose, anchor = null } = $props();
   let el = $state();
   let subEl = $state();
   let pos = $state({ left: 0, top: 0 });
@@ -12,7 +12,7 @@
 
   function clampPos(rect, px, py) {
     return {
-      left: Math.max(8, Math.min(px, window.innerWidth - rect.width - 8)),
+      left: Math.max(8, Math.min(anchor ? px - rect.width : px, window.innerWidth - rect.width - 8)),
       top: Math.max(8, Math.min(py, window.innerHeight - rect.height - 8)),
     };
   }
@@ -28,18 +28,38 @@
 
   onMount(() => {
     pos = clampPos(el.getBoundingClientRect(), x, y);
-    el.querySelector("button:not([disabled])")?.focus();
+    (el.querySelector('[aria-checked="true"]:not([disabled])') ?? el.querySelector("button:not([disabled])"))?.focus();
     const away = (e) => {
-      if (!el?.contains(e.target) && !subEl?.contains(e.target)) onclose();
+      if (!el?.contains(e.target) && !subEl?.contains(e.target) && !anchor?.contains(e.target)) onclose();
     };
     const key = (e) => {
-      if (e.key === "Escape") onclose();
+      if (e.key === "Escape") {
+        if (anchor) {
+          e.stopPropagation();
+          anchor.focus();
+        }
+        onclose();
+      } else if (anchor && el.contains(e.target)) {
+        const buttons = [...el.querySelectorAll("button:not([disabled])")];
+        const i = buttons.indexOf(e.target);
+        let next;
+        if (e.key === "ArrowDown") next = (i + 1) % buttons.length;
+        else if (e.key === "ArrowUp") next = (i + buttons.length - 1) % buttons.length;
+        else if (e.key === "Home") next = 0;
+        else if (e.key === "End") next = buttons.length - 1;
+        else return;
+        e.preventDefault();
+        buttons[next]?.focus();
+      }
     };
-    setTimeout(() => window.addEventListener("mousedown", away), 0);
-    window.addEventListener("keydown", key);
+    const timer = setTimeout(() => window.addEventListener("mousedown", away), 0);
+    if (anchor) window.addEventListener("focusin", away);
+    window.addEventListener("keydown", key, Boolean(anchor));
     return () => {
+      clearTimeout(timer);
       window.removeEventListener("mousedown", away);
-      window.removeEventListener("keydown", key);
+      window.removeEventListener("focusin", away);
+      window.removeEventListener("keydown", key, Boolean(anchor));
     };
   });
 
@@ -68,6 +88,7 @@
     }
     onclose();
     item.action?.();
+    anchor?.focus();
   }
 </script>
 
@@ -77,7 +98,8 @@
       <div class="sep"></div>
     {:else}
       <button
-        role="menuitem"
+        role={item.checked != null ? "menuitemradio" : "menuitem"}
+        aria-checked={item.checked}
         aria-haspopup={item.children?.length ? "menu" : undefined}
         aria-expanded={item.children?.length ? openSub?.index === i : undefined}
         class:has-sub={Boolean(item.sub)}

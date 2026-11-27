@@ -5,6 +5,8 @@
   // typing, sorted by count or by pinyin, and (by pinyin) jumped to by letter.
   import { onMount } from "svelte";
   import * as api from "./api.js";
+  import ContextMenu from "./ContextMenu.svelte";
+  import Icon from "./Icon.svelte";
   let { facet, selected = [], ontoggle, onclear } = $props();
 
   // periods are ordered by the first year of the table of periods (names and other names)
@@ -52,6 +54,19 @@
     try {
       localStorage.setItem(`facet.sort${facet.root}`, v);
     } catch {}
+  }
+  const sortOptions = { count: "按命中数量排序", pinyin: "按拼音排序", time: "按年代排序" };
+  let sortButton = $state();
+  let sortMenu = $state(null);
+  const sortItems = $derived((isPeriod ? ["count", "pinyin", "time"] : ["count", "pinyin"]).map((mode) => ({
+    label: sortOptions[mode],
+    checked: sort === mode,
+    badge: sort === mode ? "✓" : "",
+    action: () => setSort(mode),
+  })));
+  function toggleSortMenu(event) {
+    const { right, bottom } = event.currentTarget.getBoundingClientRect();
+    sortMenu = sortMenu ? null : { x: right, y: bottom + 4 };
   }
 
   let text = $state("");
@@ -140,6 +155,7 @@
   $effect(() => {
     text; // a new filter text starts at the top
     sort;
+    scrollTop = 0;
     if (box) box.scrollTop = 0;
   });
 </script>
@@ -147,14 +163,13 @@
 <div class="pane">
   <div class="head">
     <input type="search" placeholder="在 {facet.label} 中查找" bind:value={text} aria-label="筛选 {facet.label} 项" />
-    <span class="seg" role="radiogroup" aria-label="排序">
-      <button type="button" class:on={sort === "count"} onclick={() => setSort("count")} title="按命中数从多到少">数量</button>
-      <button type="button" class:on={sort === "pinyin"} onclick={() => setSort("pinyin")} title="按拼音 A–Z">拼音</button>
-      {#if isPeriod}<button type="button" class:on={sort === "time"} onclick={() => setSort("time")} title="按时域表里的起始年份，先古后今">年代</button>{/if}
-    </span>
   </div>
   <div class="sub muted">
-    共 {all.length} 项{#if selected.length}　已选 {selected.length}　<button type="button" class="link" onclick={onclear}>清除</button>{/if}
+    <span>共 {all.length} 项{#if selected.length}　已选 {selected.length}　<button type="button" class="link" onclick={onclear}>清除</button>{/if}</span>
+    <button type="button" class="sort-tool" bind:this={sortButton} aria-haspopup="menu" aria-expanded={!!sortMenu}
+      aria-label={`筛选项排序（当前${sortOptions[sort]}）`} title={`当前${sortOptions[sort]}`} onclick={toggleSortMenu}>
+      <Icon name="sort" size={16} />
+    </button>
   </div>
   <div class="body">
     <div class="list" bind:this={box} bind:clientHeight={height} onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}>
@@ -181,16 +196,17 @@
   </div>
 </div>
 
+{#if sortMenu}
+  <ContextMenu x={sortMenu.x} y={sortMenu.y} items={sortItems} anchor={sortButton} onclose={() => (sortMenu = null)} />
+{/if}
+
 <style>
   .pane { display: flex; flex-direction: column; min-height: 0; height: 100%; }
   .head { display: flex; gap: 6px; align-items: center; padding: 6px 8px 2px; }
   .head input { flex: 1; min-width: 0; font-size: 13px; }
-  .seg { display: inline-flex; flex: none; }
-  .seg button { font-size: 12px; padding: 2px 8px; border-radius: 0; }
-  .seg button:first-child { border-radius: 6px 0 0 6px; }
-  .seg button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
-  .seg button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
-  .sub { font-size: 12px; padding: 2px 10px 4px; }
+  .sub { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; padding: 2px 8px 2px 10px; }
+  .sort-tool { display: grid; place-items: center; flex: none; width: 26px; height: 24px; padding: 0; color: var(--accent); background: none; border-color: transparent; }
+  .sort-tool:hover, .sort-tool[aria-expanded="true"] { background: var(--accent-soft); }
   .body { flex: 1; min-height: 0; display: flex; }
   .list { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; position: relative; }
   .space { position: relative; }

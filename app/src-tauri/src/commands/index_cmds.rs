@@ -225,14 +225,14 @@ fn sync_folder_documents(
     overlay: &props::Overlay,
 ) -> Result<usize, String> {
     let mut issues = Vec::new();
-    let docs: Vec<_> = source.docs_with_issues(files, |issue| issues.push(issue)).filter_map(Result::ok).collect();
+    let docs: Vec<_> = source.docs_with_properties(files, Some(overlay), |issue| issues.push(issue)).filter_map(Result::ok).collect();
     let report = read_index_report(dir).ok().flatten().map(|mut report| {
         let affected: HashSet<_> = removed.iter().map(String::as_str).chain(files.iter().map(|f| f.rel.as_str())).collect();
         report.retain(|issue| !affected.contains(issue.path.as_str()));
         report
     });
     removed.extend(issues.iter().filter(|issue| !issue.metadata_only).map(|issue| issue.path.clone()));
-    let written = smart_library_core::search::sync_docs(dir, docs.into_iter().map(Ok), &removed, version, overlay)?;
+    let written = smart_library_core::search::sync_docs(dir, docs.into_iter().map(Ok), &removed, version, &props::Overlay::default())?;
     if let Some(mut report) = report {
         report.extend(issues);
         save_index_report(dir, &report);
@@ -268,6 +268,8 @@ pub(super) struct FolderSnapshot {
     metas: HashMap<String, (u64, u64)>,
     #[serde(default)]
     properties: Option<std::collections::BTreeMap<String, Dims>>,
+    #[serde(default)]
+    layered_properties: bool,
 }
 
 pub(super) fn folder_snapshot_map(
@@ -317,6 +319,7 @@ pub(super) fn folder_snapshot_map(
         files: file_map,
         metas: meta_map,
         properties: Some(overlay.folder_properties()),
+        layered_properties: true,
     }
 }
 
@@ -383,6 +386,13 @@ impl<'a> FolderDelta<'a> {
             .as_ref()
             .map(|props| changed_property_paths(old.properties.as_ref(), props))
             .unwrap_or_default();
+        // Older indexes applied all local properties after reading source metadata.
+        // Refresh only metadata-bearing folders affected by the old precedence.
+        let layered_paths: Vec<_> = if !old.layered_properties {
+            current.properties.iter().flat_map(|props| props.keys().map(String::as_str)).collect()
+        } else {
+            Vec::new()
+        };
         for (rel, stamp) in &current.files {
             match old.files.get(rel) {
                 None => {
@@ -392,7 +402,9 @@ impl<'a> FolderDelta<'a> {
                     delta.modified.insert(rel);
                 }
                 _ if meta_dirs.iter().any(|dir| file_in_dir(rel, dir))
-                    || prop_paths.iter().any(|path| file_at_path(rel, path)) =>
+                    || prop_paths.iter().any(|path| file_at_path(rel, path))
+                    || (layered_paths.iter().any(|path| file_at_path(rel, path))
+                        && current.metas.keys().any(|dir| file_in_dir(rel, dir))) =>
                 {
                     delta.metadata.insert(rel);
                 }
@@ -704,8 +716,8 @@ pub async fn build_index(
                         &dir,
                         meta,
                         files.len(),
-                        f.docs_with_issues(&files, |issue| issues.push(issue)),
-                        &overlay,
+                        f.docs_with_properties(&files, Some(&overlay), |issue| issues.push(issue)),
+                        &props::Overlay::default(),
                         progress,
                     )?;
                     save_folder_snapshot(&dir, &folder_snapshot_map(f, &files, &overlay));
@@ -868,7 +880,8 @@ pub async fn props_set(
                     update_docs(&dir, t.docs(bc, paths.as_ref()).1, &overlay)
                 }
                 Job::Folder(f, files, prop_path) => {
-                    let n = update_docs(&dir, f.docs(files), &overlay)?;
+                    let docs = f.docs_with_properties(files, Some(&overlay), |_| {});
+                    let n = update_docs(&dir, docs, &props::Overlay::default())?;
                     if let Some(mut snap) = load_folder_snapshot(&dir) {
                         let cur_props = overlay.folder_properties();
                         if prop_path.is_empty() {

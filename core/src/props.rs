@@ -322,6 +322,10 @@ impl Overlay {
         self.map.is_empty()
     }
 
+    pub(crate) fn folder_at(&self, path: &str) -> Option<&Dims> {
+        self.map.get(&(String::new(), path.to_owned()))
+    }
+
     /// What applies to a document: the properties of its nodes, from the top
     /// down (`keys`, itself last); a lower node replaces a higher one.
     pub fn merged(&self, keys: &[(String, String)]) -> Dims {
@@ -345,17 +349,20 @@ impl Overlay {
         let lookup = if doc.keys.iter().any(|(book, _)| !book.is_empty()) { &doc.book } else { &doc.path };
         let mut keys = self.nav.get(lookup).cloned().unwrap_or_default();
         keys.extend(doc.keys.iter().cloned());
-        for (dim, values) in self.merged(&keys) {
-            if dim == "index_content" {
-                if values.first().is_some_and(|v| v == "off") { doc.text.clear(); }
-                continue;
-            }
-            doc.facets.retain(|f| f.first().map(String::as_str) != Some(dim.as_str()));
-            for v in values {
-                if let Some(p) = facet_path(&dim, &v) {
-                    // a two-level value also counts for its first level
-                    doc.facets.push(p);
-                }
+        apply_index_dims(doc, self.merged(&keys));
+    }
+}
+
+pub(crate) fn apply_index_dims(doc: &mut IndexDoc, dims: Dims) {
+    for (dim, values) in dims {
+        if dim == "index_content" {
+            if values.first().is_some_and(|v| v == "off") { doc.text.clear(); }
+            continue;
+        }
+        doc.facets.retain(|f| f.first().map(String::as_str) != Some(dim.as_str()));
+        for v in values {
+            if let Some(p) = facet_path(&dim, &v) {
+                doc.facets.push(p);
             }
         }
     }

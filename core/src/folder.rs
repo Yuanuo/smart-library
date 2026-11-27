@@ -1254,6 +1254,15 @@ impl FolderLibrary {
     pub fn docs_with_issues<'a>(
         &'a self,
         files: &'a [FolderFile],
+        on_issue: impl FnMut(FolderIndexIssue) + 'a,
+    ) -> impl Iterator<Item = Result<IndexDoc, String>> + 'a {
+        self.docs_with_properties(files, None, on_issue)
+    }
+
+    pub fn docs_with_properties<'a>(
+        &'a self,
+        files: &'a [FolderFile],
+        overlay: Option<&'a crate::props::Overlay>,
         mut on_issue: impl FnMut(FolderIndexIssue) + 'a,
     ) -> impl Iterator<Item = Result<IndexDoc, String>> + 'a {
         let mut meta_cache: std::collections::HashMap<String, Option<DirMeta>> = std::collections::HashMap::new();
@@ -1285,13 +1294,16 @@ impl FolderLibrary {
                 facets.push(vec!["kind".to_string(), ext]);
             }
             let mut text = a.text.text;
-            if let Some(dims) = self.resolve_dir_meta(&folders, &f.name, &mut meta_cache) {
-                if dims.get("index_content").and_then(|v| v.first()).map(String::as_str) == Some("off") {
+            let (meta, local) = self.resolve_dir_meta(&folders, Some(&f.name), &mut meta_cache, |path| {
+                overlay.and_then(|o| o.folder_at(path))
+            });
+            if let Some(dims) = meta {
+                if !local.contains_key("index_content") && dims.get("index_content").and_then(|v| v.first()).is_some_and(|v| v == "off") {
                     text.clear();
                 }
                 apply_dir_meta_facets(&mut facets, &dims);
             }
-            Ok(IndexDoc {
+            let mut doc = IndexDoc {
                 path: f.rel.clone(),
                 book,
                 juan: 0,
@@ -1299,7 +1311,9 @@ impl FolderLibrary {
                 text,
                 facets,
                 keys: path_keys(&f.rel),
-            })
+            };
+            crate::props::apply_index_dims(&mut doc, local);
+            Ok(doc)
         })
     }
 
@@ -1362,27 +1376,44 @@ impl FolderLibrary {
 
     /// Resolved `.meta.json` dimensions (including `index_content`) for a file or folder path.
     pub fn dir_meta_dims(&self, rel: &str) -> Option<crate::props::Dims> {
-        let mut cache = std::collections::HashMap::new();
-        let is_dir = self.abs(rel).ok().is_some_and(|p| p.is_dir());
-        if is_dir {
-            let folders: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
-            self.resolve_dir_meta(&folders, "", &mut cache)
-        } else {
-            let mut folders: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
-            let file_name = folders.pop().unwrap_or("");
-            self.resolve_dir_meta(&folders, file_name, &mut cache)
-        }
+        self.folder_dims(rel, |_| None).0
     }
 
-    fn resolve_dir_meta(
+    /// The local properties that still apply after reading the source metadata,
+    /// excluding the selected node's editable values.
+    pub fn inherited_properties(&self, rel: &str, overlay: &crate::props::Overlay) -> crate::props::Dims {
+        self.folder_dims(rel, |path| if path == rel { None } else { overlay.folder_at(path) }).1
+    }
+
+    fn folder_dims<'a>(
+        &self,
+        rel: &str,
+        local_at: impl FnMut(&str) -> Option<&'a crate::props::Dims>,
+    ) -> (Option<crate::props::Dims>, crate::props::Dims) {
+        let mut cache = std::collections::HashMap::new();
+        let is_dir = self.abs(rel).ok().is_some_and(|p| p.is_dir());
+        let mut folders: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
+        let file_name = if is_dir { None } else { folders.pop() };
+        self.resolve_dir_meta(&folders, file_name, &mut cache, local_at)
+    }
+
+    fn resolve_dir_meta<'a>(
         &self,
         folders: &[&str],
-        file_name: &str,
+        file_name: Option<&str>,
         cache: &mut std::collections::HashMap<String, Option<DirMeta>>,
-    ) -> Option<crate::props::Dims> {
+        mut local_at: impl FnMut(&str) -> Option<&'a crate::props::Dims>,
+    ) -> (Option<crate::props::Dims>, crate::props::Dims) {
         let mut found_any = false;
-        let mut merged = crate::props::Dims::new();
-        // Walk from root ("") down to the document's parent folder
+        let mut meta = crate::props::Dims::new();
+        let mut local = crate::props::Dims::new();
+        // At each node, source metadata can replace inherited values, and local edits win at that node.
+        let mut merge_meta = |dims: &crate::props::Dims, local: &mut crate::props::Dims| {
+            for (dim, vals) in dims {
+                local.remove(dim);
+                meta.insert(dim.clone(), vals.clone());
+            }
+        };
         let mut rel_dir = String::new();
         for depth in 0..=folders.len() {
             if depth > 0 {
@@ -1401,22 +1432,23 @@ impl FolderLibrary {
             });
             if let Some(dm) = entry {
                 found_any = true;
-                if let Some(star) = dm.get("*") {
-                    for (dim, vals) in star {
-                        merged.insert(dim.clone(), vals.clone());
-                    }
+                if let Some(star) = dm.get("*") { merge_meta(star, &mut local); }
+            }
+            if let Some(dims) = local_at(&rel_dir) {
+                local.extend(dims.clone());
+            }
+            if let Some(name) = file_name.filter(|_| depth == folders.len()) {
+                if let Some(own) = entry.as_ref().and_then(|dm| dm.get(name).or_else(|| dm.get(stem_of(name)))) {
+                    merge_meta(own, &mut local);
                 }
-                if depth == folders.len() {
-                    let specific = dm.get(file_name).or_else(|| dm.get(stem_of(file_name)));
-                    if let Some(own) = specific {
-                        for (dim, vals) in own {
-                            merged.insert(dim.clone(), vals.clone());
-                        }
-                    }
+                if !rel_dir.is_empty() { rel_dir.push('/'); }
+                rel_dir.push_str(name);
+                if let Some(dims) = local_at(&rel_dir) {
+                    local.extend(dims.clone());
                 }
             }
         }
-        found_any.then_some(merged)
+        (found_any.then_some(meta), local)
     }
 }
 

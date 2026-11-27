@@ -486,6 +486,7 @@ function searchRenderer() {
         target: element,
         props: {
           s: st,
+          get libraries() { return startState.libraries; },
           onopen: (req) => openVolume(req).catch((e) => hooks.onaction?.({ type: "error", text: String(e) })),
           onstate: () => {
             panelApi.updateParameters(searchSnapshot(st));

@@ -19,9 +19,12 @@
   import { addScopesToSearch, normalizeSearchScopes, searchScope } from "./searchScope.js";
   import { clipMarkdown, searchClip } from "./clip.js";
 
-  let { s, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onclip = null, onsearchresult = null, onsetup = null } = $props();
+  let { s, libraries: catalog = null, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onclip = null, onsearchresult = null, onsetup = null } = $props();
+  const pageId = $props.id();
+  const filterPanelId = `${pageId}-filters`;
   const NO_INDEX = "还没有可搜索的知识库：请先为知识库建立索引";
   const PAGE_SIZE = 20;
+  const EXACT_HELP = "勾选后按连续短语匹配，忽略标点。未勾选时使用宽松匹配，关键词可出现在文档的不同位置。";
 
   const DIMENSIONS = [
     ["/bulei", "部类"],
@@ -38,7 +41,9 @@
   let hitsEl = $state();
   let chooseScope = $state(false);
   let unavailable = $state(null);
+  let windowCatalog = $state(null);
   let picked = $state([]);
+  let selectionHeight = $state(0);
   let sharing = $state(false);
   let shareMessage = $state("");
   let ran = $state({ query: "", phrase: false }); // what the shown results were searched for
@@ -164,7 +169,12 @@
 
   // ---------------------------------------------------------------- range
   const shownScopes = $derived(normalizedScopes ?? s.scopes);
-  const libraries = $derived(result ? [...result.libraries].sort((a, b) => Number(b.count > 0) - Number(a.count > 0)) : []);
+  const libraries = $derived.by(() => {
+    const counts = new Map((!error ? result?.libraries ?? [] : []).map((l) => [l.id, l.count]));
+    return (catalog ?? windowCatalog ?? result?.libraries ?? [])
+      .map(({ id, title, index_ready }) => ({ id, title, index_ready, count: counts.get(id) }))
+      .sort((a, b) => Number(b.count > 0) - Number(a.count > 0));
+  });
   const libraryTitles = $derived(new Map(libraries.map(({ id, title }) => [id, title])));
   const scopedLibraries = $derived(new Set(shownScopes.filter((scope) => !scope.whole).map((scope) => scope.lib)));
 
@@ -181,19 +191,41 @@
   }
 
   // ---------------------------------------------------------------- tabs
+  let filtersOpen = $state(false);
   const switchingLibrary = $derived(busy && result && result.lib !== s.lib);
   const tabs = $derived.by(() => {
-    const list = [{ id: "scope", label: "范围", n: shownScopes.length }];
+    const list = [];
     for (const [root, label] of DIMENSIONS) {
       const f = switchingLibrary ? null : result?.facets.find((x) => x.root === root);
       const n = selected(root).length;
       if (!f?.values.length && !n) continue;
       list.push({ id: root, label, n });
     }
+    list.push({ id: "scope", label: "范围", n: shownScopes.length });
     return list;
   });
-  const activeTab = $derived(tabs.some((t) => t.id === s.tab) ? s.tab : "scope");
+  const activeTab = $derived(tabs.some((t) => t.id === s.tab) ? s.tab : tabs[0].id);
   const facet = $derived(switchingLibrary ? null : result?.facets.find((f) => f.root === activeTab));
+
+  function openFilter(id) {
+    filtersOpen = !filtersOpen || id !== activeTab;
+    s.tab = id;
+    onstate?.();
+  }
+
+  function filterKeys(event, index) {
+    const { key, currentTarget } = event;
+    let next;
+    if (key === "ArrowUp") next = (index + tabs.length - 1) % tabs.length;
+    else if (key === "ArrowDown") next = (index + 1) % tabs.length;
+    else if (key === "Home") next = 0;
+    else if (key === "End") next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    s.tab = tabs[next].id;
+    onstate?.();
+    currentTarget.parentElement.children[next]?.focus();
+  }
 
   // ---------------------------------------------------------------- hits
   function open(h, lb) {
@@ -208,7 +240,6 @@
   }
   const browsing = $derived(result && !ran.query);
   const otherMatch = $derived(result?.lib && libraries.find((library) => library.id !== result.lib && library.count > 0));
-  const showResultTools = $derived(result && !error && !switchingLibrary && !result.index_unavailable);
   const firstOnPage = $derived(result?.hits.length ? (result.page - 1) * PAGE_SIZE + 1 : 0);
   const allMatches = $derived(result?.libraries.reduce((sum, library) => sum + library.count, 0) ?? 0);
 
@@ -317,85 +348,101 @@
     }
   });
   onMount(() => {
+    // Older search tabs used "scope" as their default even when no scope was set.
+    if (s.tab === "scope" && !s.scopes.length) s.tab = null;
     ontitle?.(title());
     if (s.focusOnOpen || !s.ran && !s.autorun) input?.focus();
     if (s.ran || s.autorun) {
       s.autorun = false;
       run(s.page || 1);
     }
+    function refreshWindowCatalog() {
+      api.status().then((status) => (windowCatalog = status.libraries)).catch(() => {});
+    }
+    if (catalog === null) {
+      refreshWindowCatalog();
+      window.addEventListener("focus", refreshWindowCatalog);
+    }
     const off = api.onIndexDone((event) => {
+      if (catalog === null) refreshWindowCatalog();
       if (event.ok && (unavailable || error === NO_INDEX || result?.index_unavailable && result.lib === event.lib)) run(1);
     });
-    return () => off.then((unlisten) => unlisten());
+    return () => {
+      window.removeEventListener("focus", refreshWindowCatalog);
+      off.then((unlisten) => unlisten());
+    };
   });
 </script>
 
-<div class="page">
-  <form class="bar" onsubmit={submit}>
-    <input type="search" class="q" bind:this={input} bind:value={s.query} oninput={() => onstate?.()}
-      placeholder="输入关键词，留空浏览全部" aria-label="全文搜索" />
-    <span class="mode" role="group" aria-label="匹配方式">
-      <button type="button" class:on={!s.phrase} aria-pressed={!s.phrase} onclick={() => setMode(false)}
-        title="用空格分隔关键词，各组可以出现在文档的不同位置">宽松匹配</button>
-      <button type="button" class:on={s.phrase} aria-pressed={s.phrase} onclick={() => setMode(true)}
-        title="整句连续出现（忽略标点）">精确短语</button>
-    </span>
-    <button class="primary submit" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
-    <div class="view-tools">
-      {#if settings.aiOn && onai}
-        <button type="button" class="view-action" onclick={() => onai({ toggle: true })} title="打开 / 收起右侧 AI 助手栏（F1）">
-          <Icon name="sparkles" size={16} /> AI 助手
+<div class="page" class:docked={!!onpopout}>
+  {#if libraries.length}
+    <div class="libs" role="group" aria-label="选择要搜索的知识库">
+      <button type="button" aria-pressed={!s.libraryPinned} class:on={!s.libraryPinned} onclick={() => pickLibrary(null)}>
+        全部{#if result && !error}<span class="n">{allMatches}</span>{/if}
+      </button>
+      {#each libraries as l (l.id)}
+        <button type="button" class:on={s.libraryPinned && l.id === s.lib} aria-pressed={s.libraryPinned && l.id === s.lib} onclick={() => pickLibrary(l.id)}
+          title={scopedLibraries.has(l.id) ? "已限定搜索范围" : l.index_ready === false ? "全文索引暂不可用" : undefined}>
+          {l.title}{scopedLibraries.has(l.id) ? "*" : ""}{#if l.count != null}<span class="n">{l.count}</span>{/if}
         </button>
-      {/if}
-      {#if onpopout}
-        <button type="button" class="view-action" onclick={onpopout} title="在新窗口打开这个搜索">
-          <Icon name="open-window" size={15} /> 新窗口
-        </button>
-      {/if}
+      {/each}
     </div>
+  {/if}
+
+  <form class="bar" onsubmit={submit}>
+    <div class="query-tools">
+      <input type="search" class="q" bind:this={input} bind:value={s.query} oninput={() => onstate?.()}
+        placeholder="输入关键词" aria-label="全文搜索" title="留空可浏览全部文档" />
+      <button class="primary submit" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
+      <label class="exact" title={EXACT_HELP}>
+        <input type="checkbox" checked={s.phrase} title={EXACT_HELP} onchange={(event) => setMode(event.currentTarget.checked)} />
+        精确
+      </label>
+    </div>
+    {#if onpopout}
+      <button type="button" class="view-action" onclick={onpopout} title="在新窗口打开这个搜索">
+        <Icon name="open-window" size={15} /> 新窗口
+      </button>
+    {/if}
   </form>
 
-  <div class="main">
-    <aside class="side" style="width: {sideWidth}px">
-      <div class="tabs" role="tablist">
-        {#each tabs as t (t.id)}
-          <button role="tab" aria-selected={activeTab === t.id} class:on={activeTab === t.id} onclick={() => ((s.tab = t.id), onstate?.())}
+  <div class="main" class:filters-open={filtersOpen} style="--search-side-width: {sideWidth}px">
+    <div class="filter-rail">
+      <button type="button" class="filter-toggle" class:expanded={filtersOpen} aria-expanded={filtersOpen} aria-controls={filterPanelId}
+        aria-label={filtersOpen ? "收起筛选面板" : "展开筛选面板"} title={filtersOpen ? "收起筛选面板" : "展开筛选面板"}
+        onclick={() => (filtersOpen = !filtersOpen)}>
+        <Icon name="chevron-right" size={14} />
+      </button>
+      <div class="tabs" role="tablist" aria-label="筛选类别" aria-orientation="vertical">
+        {#each tabs as t, i (t.id)}
+          <button type="button" role="tab" id={`${filterPanelId}-${i}`} aria-selected={filtersOpen && activeTab === t.id} aria-controls={filterPanelId}
+            tabindex={activeTab === t.id ? 0 : -1} class:on={filtersOpen && activeTab === t.id} onclick={() => openFilter(t.id)}
+            onkeydown={(e) => filterKeys(e, i)}
             data-scope-drop={t.id === "scope" ? "" : null} onscopedrop={(e) => addScopes(e.detail, true)}>
-            {t.label}{#if t.n}<span class="dot">{t.n}</span>{/if}
+            <span class="tab-label">{t.label}</span>{#if t.n}<span class="dot">{t.n}</span>{/if}
           </button>
         {/each}
       </div>
-      <div class="panes">
-        {#if activeTab === "scope"}
-          <SearchScopePane scopes={shownScopes} {libraryTitles} onchoose={() => (chooseScope = true)}
-            onadd={(items) => addScopes(items, true)} onremove={removeScope} onclear={() => updateScopes([])} />
-        {:else if facet}
-          {#key facet.root}
-            <FacetPane {facet} selected={selected(facet.root)} ontoggle={(n) => toggle(facet.root, n)} onclear={() => clearDim(facet.root)} />
-          {/key}
-        {:else}
-          <p class="muted hint">点「搜索」后，这里列出可以用来过滤的{DIMENSIONS.map((d) => d[1]).join("、")}。</p>
-        {/if}
-      </div>
-    </aside>
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-    <div class="split" role="separator" aria-orientation="vertical" aria-label="调整筛选栏宽度" aria-valuenow={sideWidth} tabindex="0" onpointerdown={dragSide} onkeydown={resizeSide}
-      ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
+    </div>
+    <div class="side" role="tabpanel" id={filterPanelId} aria-labelledby={`${filterPanelId}-${tabs.findIndex((t) => t.id === activeTab)}`} hidden={!filtersOpen}>
+      {#if activeTab === "scope"}
+        <SearchScopePane scopes={shownScopes} {libraryTitles} onchoose={() => (chooseScope = true)}
+          onadd={(items) => addScopes(items, true)} onremove={removeScope} onclear={() => updateScopes([])} />
+      {:else if facet}
+        {#key facet.root}
+          <FacetPane {facet} selected={selected(facet.root)} ontoggle={(n) => toggle(facet.root, n)} onclear={() => clearDim(facet.root)} />
+        {/key}
+      {:else}
+        <p class="muted hint">点「搜索」后，这里列出可以用来过滤的{DIMENSIONS.map((d) => d[1]).join("、")}。</p>
+      {/if}
+    </div>
+    {#if filtersOpen}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+      <div class="split" role="separator" aria-orientation="vertical" aria-label="调整筛选栏宽度" aria-valuenow={sideWidth} tabindex="0" onpointerdown={dragSide} onkeydown={resizeSide}
+        ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
+    {/if}
 
     <section class="results" aria-busy={busy}>
-      {#if result && !error && result.libraries.length > 1}
-        <div class="libs" role="group" aria-label="显示哪个知识库的结果">
-          <button aria-pressed={!s.libraryPinned} class:on={!s.libraryPinned} onclick={() => pickLibrary(null)}>
-            全部知识库 <span class="n">{allMatches.toLocaleString()}</span>
-          </button>
-          {#each libraries as l (l.id)}
-            <button class:on={s.libraryPinned && l.id === s.lib} aria-pressed={s.libraryPinned && l.id === s.lib} onclick={() => pickLibrary(l.id)}
-              title={scopedLibraries.has(l.id) ? "已限定搜索范围" : null}>
-              {l.title}{scopedLibraries.has(l.id) ? "*" : ""} <span class="n">{l.count}</span>
-            </button>
-          {/each}
-        </div>
-      {/if}
       {#if chips.length}
         <div class="chips">
           {#each chips as c (c.root + c.name)}
@@ -405,18 +452,7 @@
           <button class="link" onclick={clearFilters}>清除过滤</button>
         </div>
       {/if}
-      {#if picked.length}
-        <div class="selection-bar" role="group" aria-label="已选摘录">
-          <span class="selection-count" aria-live="polite">已选择 {picked.length} 条</span>
-          <button type="button" onclick={() => shareClips("copy")} disabled={sharing}>复制摘录</button>
-          {#if onclip}<button type="button" onclick={() => shareClips("note")} disabled={sharing}>加入笔记…</button>{/if}
-          {#if onai && settings.aiOn}<button type="button" onclick={() => shareClips("ai")} disabled={sharing}>加入 AI 会话</button>{/if}
-          <button type="button" onclick={() => shareClips("export")} disabled={sharing}>导出 Markdown…</button>
-          <button type="button" class="link" onclick={clearPicked} disabled={sharing}>清空选择</button>
-          {#if shareMessage}<span class="muted share-message" role="status">{shareMessage}</span>{/if}
-        </div>
-      {/if}
-      <div class="hits" bind:this={hitsEl}>
+      <div class="hits" bind:this={hitsEl} style:--selection-space={picked.length ? `${selectionHeight + 10}px` : "0px"}>
         {#if unavailable}
           <div class="empty-state">
             {#if unavailable.empty}
@@ -464,12 +500,14 @@
               {#each h.snippets as sn}
                 {@const checked = pickedKeys.has(snippetKey(h, sn))}
                 <div class="snippet-row" class:checked>
-                  <input type="checkbox" class="snippet-check" {checked}
-                    aria-label={`选择《${h.title}》${sn.lb} 第${sn.pos}字的摘录`}
-                    onchange={(event) => pickSnippet(h, sn, event.currentTarget.checked)} />
+                  <label class="snippet-select">
+                    <input type="checkbox" class="snippet-check" {checked}
+                      aria-label={`选择《${h.title}》${sn.lb} 第${sn.pos}字的摘录`}
+                      onchange={(event) => pickSnippet(h, sn, event.currentTarget.checked)} />
+                  </label>
                   <button class="snippet" onclick={() => open(h, sn.lb)}>
                     <span class="where muted">{sn.lb} 第{sn.pos}字</span>
-                    <span>…{#each sn.parts as p}{#if p.hl}<span class="hl">{p.t}</span>{:else}{p.t}{/if}{/each}…</span>
+                    <span class="excerpt">…{#each sn.parts as p}{#if p.hl}<span class="hl">{p.t}</span>{:else}{p.t}{/if}{/each}…</span>
                   </button>
                 </div>
               {/each}
@@ -484,38 +522,51 @@
               <p class="muted">{browsing ? "此范围没有可浏览的文档。" : "此范围没有匹配结果。试试更短的关键词或扩大搜索范围。"}</p>
             {/if}
           {/each}
+          <footer class="pager">
+            <span class="page-range" aria-live="polite">
+              {#if firstOnPage}第 {firstOnPage}–{firstOnPage + result.hits.length - 1} 条 · {/if}
+              {#if result.kind === "cbeta"}
+                共 <strong>{result.total_books}</strong> 部、<strong>{result.total_volumes}</strong> 卷
+              {:else}
+                共 <strong>{result.total_volumes}</strong> {browsing ? "篇文档" : "篇匹配文档"}
+              {/if}
+            </span>
+            {#if result.pages > 1}
+              <form class="page-controls" aria-label="搜索结果分页" onsubmit={goToPage}>
+                <button type="button" aria-label="首页" title="首页" disabled={result.page <= 1 || busy} onclick={() => run(1)}>
+                  <Icon name="page-first" size={16} />
+                </button>
+                <button type="button" aria-label="上一页" title="上一页" disabled={result.page <= 1 || busy} onclick={() => run(result.page - 1)}>
+                  <Icon name="arrow-left" size={16} />
+                </button>
+                <label class="page-number">第
+                  {#key result.page}
+                    <input type="text" inputmode="numeric" name="page" value={result.page} disabled={busy} aria-label="页码"
+                      title="输入页码，按 Enter 跳转" onfocus={(event) => event.currentTarget.select()} />
+                  {/key}
+                  / {result.pages} 页
+                </label>
+                <button type="button" aria-label="下一页" title="下一页" disabled={result.page >= result.pages || busy} onclick={() => run(result.page + 1)}>
+                  <Icon name="arrow-right" size={16} />
+                </button>
+                <button type="button" aria-label="末页" title="末页" disabled={result.page >= result.pages || busy} onclick={() => run(result.pages)}>
+                  <Icon name="page-last" size={16} />
+                </button>
+              </form>
+            {/if}
+          </footer>
         {/if}
       </div>
-      {#if showResultTools}
-        <footer class="pager">
-          <span class="page-range" aria-live="polite">
-            {#if firstOnPage}第 {firstOnPage.toLocaleString()}–{(firstOnPage + result.hits.length - 1).toLocaleString()} 条 · {/if}
-            {#if result.kind === "cbeta"}
-              共 <strong>{result.total_books.toLocaleString()}</strong> 部、<strong>{result.total_volumes.toLocaleString()}</strong> 卷
-            {:else}
-              共 <strong>{result.total_volumes.toLocaleString()}</strong> {browsing ? "篇文档" : "篇匹配文档"}
-            {/if}
-          </span>
-          {#if result.pages > 1}
-            <form class="page-controls" aria-label="搜索结果分页" onsubmit={goToPage}>
-              <button type="button" aria-label="首页" title="首页" disabled={result.page <= 1 || busy} onclick={() => run(1)}>«</button>
-              <button type="button" aria-label="上一页" title="上一页" disabled={result.page <= 1 || busy} onclick={() => run(result.page - 1)}>
-                <Icon name="arrow-left" size={15} />
-              </button>
-              <label class="page-number">第
-                {#key result.page}
-                  <input type="text" inputmode="numeric" name="page" value={result.page} disabled={busy} aria-label="页码"
-                    title="输入页码，按 Enter 跳转" onfocus={(event) => event.currentTarget.select()} />
-                {/key}
-                / {result.pages.toLocaleString()} 页
-              </label>
-              <button type="button" aria-label="下一页" title="下一页" disabled={result.page >= result.pages || busy} onclick={() => run(result.page + 1)}>
-                <Icon name="arrow-right" size={15} />
-              </button>
-              <button type="button" aria-label="末页" title="末页" disabled={result.page >= result.pages || busy} onclick={() => run(result.pages)}>»</button>
-            </form>
-          {/if}
-        </footer>
+      {#if picked.length}
+        <div class="selection-bar" role="group" aria-label="已选摘录" bind:offsetHeight={selectionHeight}>
+          <span class="selection-count" aria-live="polite">已选择 {picked.length} 条</span>
+          <button type="button" onclick={() => shareClips("copy")} disabled={sharing}>复制摘录</button>
+          {#if onclip}<button type="button" onclick={() => shareClips("note")} disabled={sharing}>加入笔记…</button>{/if}
+          {#if onai && settings.aiOn}<button type="button" onclick={() => shareClips("ai")} disabled={sharing}>加入 AI 会话</button>{/if}
+          <button type="button" onclick={() => shareClips("export")} disabled={sharing}>导出 Markdown…</button>
+          <button type="button" class="link" onclick={clearPicked} disabled={sharing}>清空选择</button>
+          {#if shareMessage}<span class="muted share-message" role="status">{shareMessage}</span>{/if}
+        </div>
       {/if}
     </section>
   </div>
@@ -528,50 +579,77 @@
 {/if}
 
 <style>
-  .page { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--paper); container-type: inline-size; }
-  .bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  .q { flex: 1 1 180px; min-width: 0; height: 34px; font-size: 16px; }
-  .mode { display: inline-flex; flex: none; }
-  .mode button { border-radius: 0; padding: 4px 10px; font-size: 14px; }
-  .mode button:first-child { border-radius: 6px 0 0 6px; }
-  .mode button:last-child { border-radius: 0 6px 6px 0; margin-inline-start: -1px; }
-  .mode button.on { position: relative; background: var(--accent); border-color: var(--accent); color: var(--paper); }
-  .submit { flex: none; min-width: 67px; padding: 4px 8px; font-size: 14px; }
-  .view-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-inline-start: auto; }
-  .view-tools:empty { display: none; }
-  .view-action { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-color: transparent; background: transparent; color: var(--accent); font-size: 13px; }
-  .view-action:hover { background: var(--accent-soft); }
-  .main { flex: 1; display: flex; min-height: 0; }
-  .side { flex: none; display: flex; flex-direction: column; background: var(--panel); min-height: 0; min-width: 0; max-width: 42%; }
-  .split { flex: none; width: 5px; cursor: col-resize; border-left: 1px solid var(--line); background: var(--panel); touch-action: none; }
-  .split:hover, .split:focus-visible { background: var(--accent-soft); outline: none; }
-  .tabs { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 6px 8px 0; border-bottom: 1px solid var(--line); }
-  .tabs button {
-    border: none; background: none; padding: 5px 8px; color: var(--accent); font-size: 14px;
-    border-bottom: 2px solid transparent; border-radius: 0; opacity: 0.8;
+  .page { --rail-width: 34px; --result-gutter: 20px; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--paper); container-type: inline-size; }
+  .page.docked { border-block-start: 1px solid var(--line); }
+  .libs, .bar, .filter-rail, .side, .split { background: var(--panel); }
+  .libs, .bar { flex: none; border-bottom: 1px solid var(--line); }
+  .libs { display: flex; gap: 2px; padding-block-start: 4px; overflow-x: auto; scrollbar-width: thin; }
+  .libs button {
+    flex: none; white-space: nowrap; padding: 6px 10px; font-size: 13px; color: var(--muted);
+    border: none; border-bottom: 2px solid transparent; border-radius: 5px 5px 0 0; background: none;
   }
-  .tabs button.on { border-bottom-color: var(--accent); opacity: 1; font-weight: 600; }
-  .tabs button:hover { background: var(--accent-soft); }
-  .tabs button:global(.scope-over) { background: var(--accent-soft); outline: 1px solid var(--accent); }
-  .dot { margin-left: 3px; font-size: 11px; background: var(--accent); color: var(--paper); border-radius: 8px; padding: 0 5px; }
-  .panes { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .panes > :global(*) { flex: 1; min-height: 0; }
+  .libs button:hover { color: var(--ink); background: var(--accent-soft); }
+  .libs button.on { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+  .libs .n { color: var(--muted); margin-inline-start: 6px; font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; min-width: 0; padding: 10px var(--rail-width); }
+  .query-tools { display: flex; flex: 1 1 260px; align-items: center; gap: 8px; min-width: 0; }
+  .q { flex: 1 1 0; min-width: 0; height: 34px; font-size: 16px; }
+  .submit { flex: none; min-width: 67px; padding: 4px 8px; font-size: 14px; }
+  .exact { display: inline-flex; flex: none; align-items: center; gap: 5px; min-height: 30px; padding-inline: 4px; font-size: 13px; cursor: pointer; }
+  .exact input { margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .view-action { display: inline-flex; flex: none; align-items: center; gap: 5px; margin-inline-start: auto; padding: 4px 8px; border-color: transparent; background: transparent; color: var(--accent); font-size: 13px; }
+  .view-action:hover { background: var(--accent-soft); }
+  .main {
+    position: relative; flex: 1; display: grid; min-height: 0;
+    grid-template: "rail results" minmax(0, 1fr) / var(--rail-width) minmax(0, 1fr);
+  }
+  .main.filters-open {
+    grid-template: "rail filters divider results" minmax(0, 1fr) /
+      var(--rail-width) min(var(--search-side-width), 42%) 5px minmax(0, 1fr);
+  }
+  .filter-rail {
+    grid-area: rail; display: flex; flex-direction: column; align-items: stretch; min-height: 0;
+    border-inline-end: 1px solid var(--line);
+  }
+  .filter-toggle {
+    display: grid; place-items: center; flex: none; margin: 5px; height: 28px; padding: 0;
+    color: var(--muted); border-color: transparent; background: none;
+  }
+  .filter-toggle.expanded > :global(svg) { transform: rotate(180deg); }
+  .filter-toggle:hover, .tabs button:hover { background: var(--accent-soft); color: var(--accent); }
+  .side { grid-area: filters; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .side[hidden] { display: none; }
+  .side > :global(*) { flex: 1; min-height: 0; }
+  .split { grid-area: divider; cursor: col-resize; border-inline-start: 1px solid var(--line); touch-action: none; }
+  .split:hover, .split:focus-visible { background: var(--accent-soft); outline: none; }
+  .tabs { display: flex; flex-direction: column; gap: 2px; padding: 3px 0; overflow: auto; scrollbar-width: thin; }
+  .tabs button {
+    position: relative; flex: none; display: grid; place-items: center; min-height: 46px; padding: 4px 0;
+    border: none; border-inline-start: 2px solid transparent; border-radius: 0;
+    background: none; color: var(--muted); font-size: 13px;
+  }
+  .tabs button.on { border-inline-start-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+  .tabs button:focus-visible, .tabs button:global(.scope-over) { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .tabs button:global(.scope-over) { background: var(--accent-soft); }
+  .tab-label { writing-mode: vertical-rl; letter-spacing: .12em; }
+  .dot { position: absolute; inset-block-start: 2px; inset-inline-end: 2px; font-size: 9px; line-height: 1.3; background: var(--accent); color: var(--paper); border-radius: 8px; padding: 0 3px; }
   .hint { padding: 12px; }
-  .results { --result-gutter: 20px; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-  .libs { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px var(--result-gutter) 6px; }
-  .libs button { border-radius: 14px; font-size: 13px; padding: 2px 12px; }
-  .libs button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
-  .libs .n { opacity: 0.75; margin-left: 4px; }
+  .results { position: relative; grid-area: results; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--paper); }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 8px var(--result-gutter) 0; font-size: 13px; }
   .chip { background: var(--accent-soft); border-radius: 12px; padding: 1px 4px 1px 10px; }
   .chip .link { padding: 0 4px; }
-  .hits { flex: 1; min-height: 0; overflow: auto; padding: 4px var(--result-gutter) 14px; }
+  .hits { flex: 1; min-height: 0; overflow: auto; padding: 4px var(--result-gutter) calc(14px + var(--selection-space)); scroll-padding-block-end: var(--selection-space); }
   .intro, .err { padding-top: 8px; }
   .empty-state { padding: 8px 0; }
   .availability { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .err { color: var(--hl); white-space: pre-wrap; }
   .unsearched { font-size: 13px; margin: 8px 0; overflow-wrap: anywhere; }
-  .selection-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 7px var(--result-gutter); border-bottom: 1px solid var(--line); background: var(--accent-soft); font-size: 13px; }
+  .selection-bar {
+    position: absolute; z-index: 1; inset-inline: var(--result-gutter); inset-block-end: 10px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+    box-shadow: 0 3px 12px #0002; font-size: 13px;
+  }
   .selection-bar button { padding: 3px 8px; }
   .selection-count { white-space: nowrap; font-weight: 600; color: var(--accent); }
   .share-message { font-size: 12px; }
@@ -580,37 +658,53 @@
   .source { padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); font-size: 12px; font-weight: normal; }
   .source:hover { text-decoration: underline; }
   .id { font-size: 13px; font-weight: normal; }
-  .snippet-row { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; border-radius: 4px; }
-  .snippet-check { place-self: start center; margin: 8px 0 0; accent-color: var(--accent); cursor: pointer; }
+  .snippet-row {
+    --snippet-line: 1.75rem; --snippet-padding: 4px;
+    display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; border-radius: 4px;
+  }
+  .snippet-select { display: grid; place-items: center; height: var(--snippet-line); margin-block-start: var(--snippet-padding); cursor: pointer; }
+  .snippet-check { margin: 0; accent-color: var(--accent); cursor: pointer; }
   @media (hover: hover) {
     .snippet-check { opacity: 0; }
     .snippet-row:hover .snippet-check, .snippet-row:focus-within .snippet-check, .snippet-row.checked .snippet-check { opacity: 1; }
   }
   .snippet-row:hover, .snippet-row.checked { background: var(--accent-soft); }
   .snippet {
-    display: flex; gap: 12px; width: 100%; text-align: left; border: none; background: none;
-    padding: 4px 6px; line-height: 1.8; font-size: 16px; border-radius: 4px;
+    display: grid; grid-template-columns: 110px minmax(0, 1fr); align-items: start; gap: 12px;
+    text-align: left; border: none; background: none; border-radius: 4px;
+    padding: var(--snippet-padding) 6px; line-height: var(--snippet-line); font-size: 16px;
   }
-  .where { flex: none; width: 110px; font-size: 12px; font-family: ui-monospace, Consolas, monospace; padding-top: 4px; }
-  .pager { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; padding: 7px var(--result-gutter); border-top: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+  .where { font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+  .excerpt { overflow-wrap: anywhere; }
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; margin-top: 8px; padding: 8px 0 0; font-size: 13px; }
   .page-range { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .page-controls { display: flex; align-items: center; gap: 4px; margin-inline-start: auto; }
-  .page-controls button { display: grid; place-items: center; padding: 0; width: 30px; height: 28px; color: var(--accent); font-size: 17px; }
+  .page-controls button { display: grid; place-items: center; padding: 0; width: 30px; height: 28px; color: var(--accent); }
   .page-controls button:disabled, .selection-bar button:disabled { opacity: .48; cursor: default; }
   .page-range strong { color: var(--accent); }
   .page-number { display: flex; align-items: center; gap: 5px; padding: 0 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .page-number input { width: 5ch; height: 28px; padding: 2px; text-align: center; }
   @container (width < 700px) {
-    .main { flex-direction: column; }
-    .side { width: 100% !important; max-width: none; max-height: min(30vh, 220px); min-height: 100px; border-bottom: 1px solid var(--line); }
+    .main { --result-gutter: 12px; }
+    .snippet { grid-template-columns: minmax(0, 1fr); gap: 2px; padding-inline: 0; }
+    .excerpt { grid-row: 1; }
+    .where { grid-row: 2; line-height: 1.4; }
+  }
+  @container (width < 620px) {
+    .main.filters-open { grid-template: "rail results" minmax(0, 1fr) / var(--rail-width) minmax(0, 1fr); }
+    .side {
+      position: absolute; z-index: 2; grid-area: auto; inset-block: 0; inset-inline-start: var(--rail-width);
+      width: min(var(--search-side-width), calc(100% - var(--rail-width) - 24px));
+      border-inline-end: 1px solid var(--line); box-shadow: 5px 0 14px #0002;
+    }
     .split { display: none; }
-    .results { --result-gutter: 12px; }
-    .snippet { flex-direction: column; gap: 0; padding-inline: 0; }
-    .where { width: auto; padding-top: 0; }
   }
   @container (width < 420px) {
-    .bar { padding-inline: 10px; }
-    .view-tools { margin-inline-start: 0; }
+    .view-action { margin-inline-start: 0; }
     .page-controls { margin-inline-start: 0; }
+  }
+  @container (width < 360px) {
+    .query-tools { flex-wrap: wrap; }
+    .q { flex-basis: 100%; }
   }
 </style>
