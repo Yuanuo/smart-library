@@ -81,7 +81,7 @@
   // external folder
   let folder = $state(null); // { path, name, conflict }
   let folderTitle = $state("");
-  let exts = $state("txt, md, html, htm, pdf, docx");
+  let exts = $state("txt, md, html, htm, pdf, docx, pptx, odt");
   let maxMb = $state(50);
   let writable = $state(false); // read-write mode: the user must accept the rules (confirmWritable)
   let path = $state("");
@@ -487,9 +487,9 @@
         <label class="field">名称 <input type="text" use:autofocus={{ select: true }} bind:value={folderTitle} /></label>
         <label class="field">知识库 ID（可选）<input type="text" bind:value={libraryId} placeholder={ID_PLACEHOLDER} title={ID_TITLE} /></label>
         <fieldset>
-          <legend>索引哪些文件</legend>
+          <legend>文件收录规则</legend>
           <label class="field">文件后缀（逗号或空格分隔）<input type="text" bind:value={exts} /></label>
-          <p class="hint muted">txt、md、html 等文本，以及 pdf、docx、pptx、odt 读取全文（旧的 .doc 不支持；扫描的 PDF 没有文字）；其他后缀（mp3、mp4 等）只用文件名、类型、大小、日期作为内容。</p>
+          <p class="hint muted">此规则用于目录显示和全文索引。扫描版 PDF 等无法提取正文的资料只收录文件信息。绑定后可在知识库菜单修改规则。</p>
           <label class="field">单个文件最大 <input type="number" min="0" class="num" bind:value={maxMb} /> MB（0 为不限制）</label>
         </fieldset>
         <fieldset>

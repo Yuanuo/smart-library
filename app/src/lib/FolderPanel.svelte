@@ -7,9 +7,10 @@
 
   const VIEW_STORAGE_KEY = "sl.folderViewMode";
 
-  let { p, getLibrary, onnavigate, onopen, onlocate = null, ontitle = null } = $props();
+  let { p, getLibrary, onnavigate, onopen, onlocate = null, ontitle = null, onrules = null } = $props();
 
   let items = $state([]); // { node, childKey }[]
+  let excluded = $state([]);
   let crumbs = $state([]); // { title, rel, key }[]
   let seen = $state({ books: new Set(), paths: new Set() });
   let loading = $state(false);
@@ -73,6 +74,7 @@
     loading = true;
     error = "";
     filter = "";
+    excluded = [];
 
     const libObj = getLibrary?.(lib);
     const libTitle = libObj?.title || lib;
@@ -89,8 +91,10 @@
     (async () => {
       try {
         if (kind === "folder" || kind === "notes") {
-          const list = await api.folderChildren(lib, rel);
+          const directory = kind === "folder" ? await api.folderDirectory(lib, rel) : null;
+          const list = directory?.nodes ?? await api.folderChildren(lib, rel);
           if (seq !== loadSeq) return;
+          excluded = directory?.excluded ?? [];
           const nextCrumbs = [{ title: libTitle, rel: "", key: "" }];
           if (kind === "folder" && rel) {
             const parts = rel.split("/").filter(Boolean);
@@ -233,6 +237,17 @@
   </div>
 
   <div class="scroll">
+    {#if excluded.length}
+      <details class="excluded">
+        <summary>{excluded.length} 个文件被收录规则排除</summary>
+        <ul>
+          {#each excluded as file (file.path)}
+            <li>{file.path.split("/").at(-1)} <span class="muted">· {file.reason}</span></li>
+          {/each}
+        </ul>
+        {#if onrules}<button type="button" onclick={() => onrules(p.lib)}>修改收录规则</button>{/if}
+      </details>
+    {/if}
     {#if error}
       <p class="error state-msg">{error}</p>
     {:else if loading && !items.length}
@@ -242,6 +257,8 @@
         <Icon name="folder-open" size={36} />
         {#if libKind === "zim"}
           <p class="muted">ZIM 知识库不包含目录树，请使用标题快搜或全文搜索浏览文章。</p>
+        {:else if excluded.length}
+          <p class="muted">此目录没有符合当前收录规则的文件。</p>
         {:else}
           <p class="muted">此目录暂无内容</p>
         {/if}
@@ -309,6 +326,9 @@
 </div>
 
 <style>
+  .excluded { margin: 12px 20px 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+  .excluded summary { cursor: pointer; color: var(--accent); }
+  .excluded ul { overflow-wrap: anywhere; padding-left: 20px; }
   .folder-panel {
     display: flex;
     flex-direction: column;

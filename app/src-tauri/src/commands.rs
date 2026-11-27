@@ -551,14 +551,52 @@ impl AppState {
     }
 
     fn save_registry(&self) -> Result<(), String> {
+        let libs = self.libraries.write().unwrap();
+        self.write_registry(&libs)
+    }
+
+    fn write_registry(&self, libs: &[Library]) -> Result<(), String> {
         std::fs::create_dir_all(&self.config_dir).map_err(|e| e.to_string())?;
-        let libs = self.libraries.read().unwrap().clone();
         let json = serde_json::json!({ "libraries": libs });
-        std::fs::write(
-            self.config_dir.join("libraries.json"),
-            serde_json::to_string_pretty(&json).unwrap(),
-        )
-        .map_err(|e| format!("保存知识库设置失败：{}", e))
+        let temp = self.config_dir.join("libraries.json.tmp");
+        let path = self.config_dir.join("libraries.json");
+        std::fs::write(&temp, serde_json::to_string_pretty(&json).unwrap())
+            .and_then(|()| std::fs::rename(&temp, &path))
+            .map_err(|e| format!("保存知识库设置失败：{}", e))
+    }
+
+    /// Source settings change what the derived index can contain. Keep a
+    /// marker on disk so a restart cannot reopen an index for the old rules.
+    fn edit_library_source(&self, id: &str, update: impl FnOnce(&[Library], &mut Library) -> Result<bool, String>) -> Result<(), String> {
+        let building = self.building.lock().unwrap();
+        if building.contains(id) {
+            return Err("正在建立这个知识库的索引，请完成后再修改资料源设置".into());
+        }
+        let mut libs = self.libraries.write().unwrap();
+        let pos = libs.iter().position(|l| l.id == id).ok_or("找不到这个知识库")?;
+        let mut next = libs[pos].clone();
+        if !update(&libs, &mut next)? {
+            return Ok(());
+        }
+        let dir = self.index_dir(id);
+        let marker = dir.join("rebuild-required");
+        let marked = dir.is_dir() && !marker.exists();
+        if marked {
+            std::fs::write(&marker, b"").map_err(|e| format!("无法标记旧索引：{}", e))?;
+        }
+        let old = std::mem::replace(&mut libs[pos], next);
+        if let Err(e) = self.write_registry(&libs) {
+            libs[pos] = old;
+            if marked {
+                let _ = std::fs::remove_file(&marker);
+            }
+            return Err(e);
+        }
+        self.indexes.write().unwrap().remove(id);
+        self.folders.write().unwrap().remove(id);
+        self.titles.write().unwrap().remove(id);
+        self.checked_folder_indexes.lock().unwrap().remove(id);
+        Ok(())
     }
 }
 
@@ -1165,6 +1203,26 @@ pub async fn add_folder(
         });
     }
     state.save_registry()?;
+    Ok(status_of(&state))
+}
+
+#[tauri::command]
+pub async fn set_folder_filter(id: String, exts: String, max_mb: u64, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    let exts = FolderFilter::parse_exts(&exts);
+    if exts.is_empty() {
+        return Err("请至少填写一种文件后缀".into());
+    }
+    state.edit_library_source(&id, |_, l| {
+        if l.kind != "folder" {
+            return Err("只有文件夹知识库可以修改收录规则".into());
+        }
+        if l.exts == exts && l.max_mb == max_mb {
+            return Ok(false);
+        }
+        l.exts = exts;
+        l.max_mb = max_mb;
+        Ok(true)
+    })?;
     Ok(status_of(&state))
 }
 
@@ -2282,7 +2340,11 @@ fn note_nodes(n: &NotesStore, parent: Option<i64>) -> Result<Vec<NodeDto>, Strin
 }
 
 fn folder_nodes(f: &FolderLibrary, rel: &str) -> Result<Vec<NodeDto>, String> {
-    Ok(f.children(rel)?
+    Ok(folder_entry_nodes(f.children(rel)?))
+}
+
+fn folder_entry_nodes(entries: Vec<folder::FolderEntry>) -> Vec<NodeDto> {
+    entries
         .into_iter()
         .map(|e| {
             // in read-write mode a map or board shows with its own icon
@@ -2302,7 +2364,23 @@ fn folder_nodes(f: &FolderLibrary, rel: &str) -> Result<Vec<NodeDto>, String> {
                 children: Vec::new(),
             }
         })
-        .collect())
+        .collect()
+}
+
+#[derive(Serialize)]
+pub struct FolderDirectoryDto {
+    nodes: Vec<NodeDto>,
+    excluded: Vec<folder::FolderIndexIssue>,
+}
+
+#[tauri::command]
+pub async fn folder_directory(lib: String, rel: String, state: State<'_, AppState>) -> Result<FolderDirectoryDto, String> {
+    let l = state.library(&lib)?;
+    if l.kind != "folder" {
+        return Err("只有文件夹知识库提供磁盘目录信息".into());
+    }
+    let (entries, excluded) = state.folder(&l)?.children_with_exclusions(&rel)?;
+    Ok(FolderDirectoryDto { nodes: folder_entry_nodes(entries), excluded })
 }
 
 /// One level of a folder library, loaded when its folder is opened.

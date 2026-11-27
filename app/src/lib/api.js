@@ -8,6 +8,7 @@ export const bindLibraries = (path, cbetaTree, htmlTrees, libraryIds = {}) =>
   invoke("bind_libraries", { path, cbetaTree, htmlTrees, libraryIds });
 export const inspectFolder = (path) => invoke("inspect_folder", { path });
 export const addFolder = (path, title, exts, maxMb, writable = false, libraryId = "") => invoke("add_folder", { path, title, exts, maxMb, writable, libraryId });
+export const setFolderFilter = (id, exts, maxMb) => invoke("set_folder_filter", { id, exts, maxMb });
 /** Read-write mode of a folder library on or off (ask the user to accept the rules first: writable.js). */
 export const setFolderWritable = (id, writable) => invoke("set_folder_writable", { id, writable });
 export const addZim = (path, libraryId = "") => invoke("add_zim", { path, libraryId });
@@ -47,6 +48,7 @@ export const fileNameRules = () => invoke("file_name_rules");
 /** Rejects with the reason when `name` cannot be a local file name. */
 export const checkFileName = (name) => invoke("check_file_name", { name });
 export const folderChildren = (lib, rel) => invoke("folder_children", { lib, rel });
+export const folderDirectory = (lib, rel) => invoke("folder_directory", { lib, rel });
 export const createNotesLibrary = (title, libraryId = "") => invoke("create_notes_library", { title, libraryId });
 export const createNote = (lib, parent, title) => invoke("create_note", { lib, parent, title });
 export const noteTargets = (query) => invoke("note_targets", { query });
@@ -127,6 +129,7 @@ export const pinyinConvert = (text) => invoke("pinyin_convert", { text });
 export const pinyinText = () => invoke("pinyin_text");
 export const setPinyinText = (text) => invoke("set_pinyin_text", { text });
 export const buildIndex = (lib, incremental = false) => invoke("build_index", { lib, incremental });
+export const indexReport = (lib) => invoke("index_report", { lib });
 export const checkFolderChanges = () => invoke("check_folder_changes");
 export const onIndexProgress = (fn) => listen("index-progress", (e) => fn(e.payload));
 export const onIndexDone = (fn) => listen("index-done", (e) => fn(e.payload));

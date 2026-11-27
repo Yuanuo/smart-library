@@ -57,9 +57,18 @@ impl FolderFilter {
         v
     }
 
-    fn accepts(&self, name: &str, size: u64) -> bool {
-        let ext = ext_of(name);
-        self.exts.contains(&ext) && (self.max_mb == 0 || size <= self.max_mb * 1024 * 1024)
+    fn exclusion(&self, name: &str, size: u64) -> Option<String> {
+        if !self.exts.contains(&ext_of(name)) {
+            return Some("文件类型未列入收录规则".into());
+        }
+        if self.too_large(size) {
+            return Some(format!("超过单个文件 {} MB 的限制", self.max_mb));
+        }
+        None
+    }
+
+    fn too_large(&self, size: u64) -> bool {
+        self.max_mb != 0 && size > self.max_mb.saturating_mul(1024 * 1024)
     }
 }
 
@@ -214,6 +223,14 @@ pub struct FolderFile {
     pub size: u64,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FolderIndexIssue {
+    pub path: String,
+    pub reason: String,
+    /// The index contains the file's information, but not its document text.
+    pub metadata_only: bool,
+}
+
 pub struct FolderLibrary {
     pub root: PathBuf,
     pub filter: FolderFilter,
@@ -274,6 +291,17 @@ impl FolderLibrary {
     /// One level of the tree: folders first, then the files that pass the
     /// filter; hidden entries (`.git` …) are left out.
     pub fn children(&self, rel: &str) -> Result<Vec<FolderEntry>, String> {
+        self.scan_children(rel, None)
+    }
+
+    pub fn children_with_exclusions(&self, rel: &str) -> Result<(Vec<FolderEntry>, Vec<FolderIndexIssue>), String> {
+        let mut excluded = Vec::new();
+        let entries = self.scan_children(rel, Some(&mut excluded))?;
+        excluded.sort_by(|a, b| natural_cmp(&a.path, &b.path));
+        Ok((entries, excluded))
+    }
+
+    fn scan_children(&self, rel: &str, mut excluded: Option<&mut Vec<FolderIndexIssue>>) -> Result<Vec<FolderEntry>, String> {
         let dir = self.abs(rel)?;
         let mut dirs = Vec::new();
         let mut files = Vec::new();
@@ -293,7 +321,12 @@ impl FolderLibrary {
                 let size = e.metadata().map(|m| m.len()).unwrap_or(0);
                 // the files the program edits are always listed, also in read-only mode
                 // (where a map or board shows its texts); the suffix filter is for the rest
-                if self.filter.accepts(&name, size) || EditKind::of(&name).is_some() {
+                let exclusion = if EditKind::of(&name).is_some() { None } else { self.filter.exclusion(&name, size) };
+                if let Some(reason) = exclusion {
+                    if let Some(list) = excluded.as_deref_mut() {
+                        list.push(FolderIndexIssue { path: child, reason, metadata_only: false });
+                    }
+                } else {
                     files.push(FolderEntry { name, rel: child, is_dir: false });
                 }
             }
@@ -390,19 +423,30 @@ impl FolderLibrary {
     /// Read a file as an article (paragraph view). Binary / media files give
     /// their "media information".
     pub fn article(&self, rel: &str, render: Option<&RenderOptions>) -> Result<Article, String> {
+        self.article_with_issue(rel, render, |_| {})
+    }
+
+    fn article_with_issue(&self, rel: &str, render: Option<&RenderOptions>, on_issue: impl FnOnce(String)) -> Result<Article, String> {
         let path = self.abs(rel)?;
         let name = rel.rsplit('/').next().unwrap_or(rel);
         let ext = ext_of(name);
         if crate::doctext::is_document(&ext) {
             // a PDF or office document: its text (when it has none, or cannot be read: what is known of the file)
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            if self.filter.max_mb != 0 && size > self.filter.max_mb * 1024 * 1024 {
+            if self.filter.too_large(size) {
                 return Err(format!("{}: 文件太大", rel));
             }
             return match crate::doctext::extract(&path, &ext) {
                 Ok(text) if !text.trim().is_empty() => Ok(read_article(&plain_html(&text), "", render)),
-                Ok(_) => Ok(read_article(&info_html(&path, rel, name, &ext), "", render)),
+                Ok(_) => {
+                    let reason = "没有可提取的正文";
+                    on_issue(reason.into());
+                    let mut lines = info_lines(&path, rel, name, &ext);
+                    lines.push(format!("（{}，仅收录文件信息）", reason));
+                    Ok(read_article(&plain_html(&lines.join("\n")), "", render))
+                }
                 Err(e) => {
+                    on_issue(format!("无法提取正文：{}", e));
                     let mut lines = info_lines(&path, rel, name, &ext);
                     lines.push(format!("（文字读不出来：{}）", e));
                     Ok(read_article(&plain_html(&lines.join("\n")), "", render))
@@ -420,7 +464,7 @@ impl FolderLibrary {
             return Ok(read_article(&plain_html(&text), "", render));
         }
         let size = std::fs::metadata(&path).map_err(|e| format!("{}: {}", rel, e))?.len();
-        if self.filter.max_mb != 0 && size > self.filter.max_mb * 1024 * 1024 {
+        if self.filter.too_large(size) {
             return Err(format!("{}: 文件太大", rel));
         }
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {}", rel, e))?;
@@ -1188,9 +1232,23 @@ impl FolderLibrary {
         &'a self,
         files: &'a [FolderFile],
     ) -> impl Iterator<Item = Result<IndexDoc, String>> + 'a {
+        self.docs_with_issues(files, |_| {})
+    }
+
+    pub fn docs_with_issues<'a>(
+        &'a self,
+        files: &'a [FolderFile],
+        mut on_issue: impl FnMut(FolderIndexIssue) + 'a,
+    ) -> impl Iterator<Item = Result<IndexDoc, String>> + 'a {
         let mut meta_cache: std::collections::HashMap<String, Option<DirMeta>> = std::collections::HashMap::new();
         files.iter().map(move |f| {
-            let a = self.article(&f.rel, None)?;
+            let article = self.article_with_issue(&f.rel, None, |reason| {
+                on_issue(FolderIndexIssue { path: f.rel.clone(), reason, metadata_only: true });
+            });
+            let a = article.map_err(|reason| {
+                on_issue(FolderIndexIssue { path: f.rel.clone(), reason: reason.clone(), metadata_only: false });
+                reason
+            })?;
             let folders: Vec<&str> = {
                 let mut v: Vec<&str> = f.rel.split('/').collect();
                 v.pop();
@@ -1776,6 +1834,11 @@ mod tests {
         let a: Vec<_> = lib.children("a").unwrap().into_iter().map(|e| (e.rel, e.is_dir)).collect();
         assert_eq!(a[0], ("a/b".to_string(), true));
         assert!(!a.iter().any(|(r, _)| r.ends_with("skip.bin")));
+        let (entries, excluded) = lib.children_with_exclusions("a").unwrap();
+        assert_eq!(entries.len(), a.len());
+        assert_eq!(excluded.len(), 1);
+        assert_eq!(excluded[0].path, "a/skip.bin");
+        assert_eq!(excluded[0].reason, "文件类型未列入收录规则");
         let files = lib.files();
         assert_eq!(files.len(), 3);
         let docs: Vec<IndexDoc> = lib.docs(&files).map(|d| d.unwrap()).collect();

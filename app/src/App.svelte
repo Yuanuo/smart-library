@@ -4,6 +4,7 @@
   import * as api from "./lib/api.js";
   import * as workspace from "./lib/workspace.svelte.js";
   import LibraryPanel from "./lib/LibraryPanel.svelte";
+  import LibraryIndexDialog from "./lib/LibraryIndexDialog.svelte";
   import BindDialog from "./lib/BindDialog.svelte";
   import QuickSearch from "./lib/QuickSearch.svelte";
   import { openDictWindow } from "./lib/dictWindow.js";
@@ -95,6 +96,18 @@
   });
 
   let progress = $state({}); // lib id -> { done, total }
+  let indexDialog = $state(null);
+  const indexDialogLibrary = $derived(libraries.find((l) => l.id === indexDialog?.id));
+
+  function openIndexDialog(id, mode) {
+    indexDialog = { id, mode };
+  }
+
+  async function updateFolderRules(id, exts, maxMb) {
+    st = await api.setFolderFilter(id, exts, maxMb);
+    await startIndex(id);
+    await libPanel?.refreshFolderRules(id);
+  }
   let titlesProgress = $state({}); // lib id -> { done, total }: title list being built
   let binding = $state(null); // null, or { path } for the bind dialog
   let quick = $state(false); // title quick search popup
@@ -786,7 +799,9 @@
     const un2 = api.onIndexDone((d) => {
       delete progress[d.lib];
       const l = libraries.find((x) => x.id === d.lib);
-      if (d.ok) notice = `${l?.title ?? d.lib}：${d.message}`;
+      if (d.ok) push("notice", `${l?.title ?? d.lib}：${d.message}`, [
+        { label: "查看索引报告", onClick: () => openIndexDialog(d.lib, "report") },
+      ]);
       else error = `${l?.title ?? d.lib}：${d.message}`;
       refresh();
     });
@@ -829,6 +844,7 @@
         oncopypath: copyTabPath,
         ontreepath: (d) => libPanel?.treePath(d),
         onnodepath: (v) => libPanel?.nodePath(v.lib, { bookId: v.book_id ?? null, path: v.path }) || "",
+        onindexdialog: openIndexDialog,
         startActions: {
           onbind: (kind = "") => (binding = { path: "", kind }),
           onsearch: () => openSearch(),
@@ -1215,6 +1231,7 @@
             onrebind={(l) => (binding = { path: l.source, kind: "" })}
             onunbind={unbind}
             onindex={startIndex}
+            onindexdialog={openIndexDialog}
             onupdate={updateRemoteLibrary}
             ongitstatus={(fetch) => checkGitStatus(fetch, false)}
             onsearchfrom={searchFrom}
@@ -1360,6 +1377,14 @@
 {#if exportDlg}
   <ExportDialog lib={exportDlg.lib} sel={exportDlg.sel} label={exportDlg.label} name={exportDlg.name} nodePath={exportDlg.nodePath}
     ondone={(r) => (notice = `已导出 ${r.docs} 项：${r.path}`)} onclose={() => (exportDlg = null)} />
+{/if}
+
+{#if indexDialogLibrary}
+  {#key `${indexDialog.id}:${indexDialog.mode}`}
+    <LibraryIndexDialog library={indexDialogLibrary} mode={indexDialog.mode}
+      building={!!progress[indexDialog.id] || indexDialogLibrary.building}
+      onapply={updateFolderRules} onclose={() => (indexDialog = null)} />
+  {/key}
 {/if}
 
 {#if importing}

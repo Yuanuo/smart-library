@@ -22,7 +22,7 @@
   import { matchesShortcut, formatShortcut, formatCombo } from "./shortcuts.js";
   import { IS_MAC, IS_WIN } from "./platform.js";
 
-  let { libraries, progress, titles = {}, gitStatus = {}, gitUpdating = {}, onopen, onbind, onrebind, onunbind, onindex, onupdate = null, ongitstatus = null, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onnotice = null, onerror = null } = $props();
+  let { libraries, progress, titles = {}, gitStatus = {}, gitUpdating = {}, onopen, onbind, onrebind, onunbind, onindex, onindexdialog, onupdate = null, ongitstatus = null, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onnotice = null, onerror = null } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -210,6 +210,11 @@
   export async function reloadNode(lib, key) {
     open[lib] = true;
     await refresh(lib, key);
+  }
+
+  export async function refreshFolderRules(lib) {
+    if (nodes[lib]) await reconcile(lib, null);
+    workspace.refreshFolderTabs(lib);
   }
 
   async function refresh(lib, key) {
@@ -1446,6 +1451,8 @@
           { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { lib: l.id, label: l.title, within: null }), disabled: !l.index_ready },
           { label: "加入每日一句来源", action: () => onsearchfrom("daily-add", { lib: l.id, label: l.title, within: null }), disabled: !l.index_ready },
           { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
+          { label: "索引报告…", action: () => onindexdialog(l.id, "report") },
+          ...(l.kind === "folder" ? [{ label: "收录规则…", action: () => onindexdialog(l.id, "rules"), disabled: building || !!l.error }] : []),
         ],
         [
           ...(l.kind === "folder" || l.kind === "zim" ? [] : [{ label: "添加知识库…", action: () => onrebind(l) }]),

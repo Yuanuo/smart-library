@@ -335,6 +335,7 @@ function folderRenderer() {
           onopen: (req) => openVolume(req),
           onlocate: () =>
             hooks.onlocate?.({ lib: state.lib, rel: state.rel, key: state.key, isFolder: true }),
+          onrules: (id) => hooks.onindexdialog?.(id, "rules"),
           ontitle: (t, tooltip) => {
             panelApi?.setTitle(t);
             state.title = t;

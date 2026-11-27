@@ -53,6 +53,7 @@ impl AppState {
         for l in libs {
             let dir = self.index_dir(&l.id);
             if !dir.join("smart-library-index.json").exists()
+                || dir.join("rebuild-required").exists()
                 || self.building.lock().unwrap().contains(&l.id)
             {
                 continue; // no index to update yet, or a build is running; keep dirty paths for later
@@ -111,11 +112,11 @@ impl AppState {
                     .filter(|file| changed.remove(&file.rel))
                     .collect();
                 let removed: Vec<_> = changed.into_iter().collect();
-                let docs = f.docs(&files).collect::<Result<Vec<_>, _>>()?;
-                smart_library_core::search::sync_docs(
+                sync_folder_documents(
                     &dir,
-                    docs.into_iter().map(Ok),
-                    &removed,
+                    &f,
+                    &files,
+                    removed,
                     version.as_deref(),
                     &overlay,
                 )?;
@@ -169,21 +170,73 @@ impl AppState {
 
     pub(super) fn index(&self, id: &str) -> Option<Arc<SearchIndex>> {
         let lib = self.library(id).ok()?;
+        let dir = self.index_dir(id);
+        if dir.join("rebuild-required").exists() {
+            return None;
+        }
         if lib.kind == "zim"
-            && (zim_version(&lib.source).ok()? != SearchIndex::data_version(&self.index_dir(id))?)
+            && (zim_version(&lib.source).ok()? != SearchIndex::data_version(&dir)?)
         {
             return None;
         }
         if let Some(i) = self.indexes.read().unwrap().get(id) {
             return Some(i.clone());
         }
-        let idx = Arc::new(SearchIndex::open(&self.index_dir(id)).ok()?);
+        let idx = Arc::new(SearchIndex::open(&dir).ok()?);
         self.indexes
             .write()
             .unwrap()
             .insert(id.to_string(), idx.clone());
         Some(idx)
     }
+}
+
+const INDEX_REPORT: &str = "coverage.json";
+
+fn read_index_report(dir: &Path) -> Result<Option<Vec<folder::FolderIndexIssue>>, String> {
+    match std::fs::read(dir.join(INDEX_REPORT)) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn save_index_report(dir: &Path, issues: &[folder::FolderIndexIssue]) {
+    let path = dir.join(INDEX_REPORT);
+    let bytes = serde_json::to_vec(issues).expect("index report contains only strings and booleans");
+    if let Err(e) = std::fs::write(path, bytes) {
+        eprintln!("failed to save index coverage: {e}");
+    }
+}
+
+#[tauri::command]
+pub async fn index_report(lib: String, state: State<'_, AppState>) -> Result<Option<Vec<folder::FolderIndexIssue>>, String> {
+    state.library(&lib)?;
+    read_index_report(&state.index_dir(&lib))
+}
+
+fn sync_folder_documents(
+    dir: &Path,
+    source: &FolderLibrary,
+    files: &[folder::FolderFile],
+    mut removed: Vec<String>,
+    version: Option<&str>,
+    overlay: &props::Overlay,
+) -> Result<usize, String> {
+    let mut issues = Vec::new();
+    let docs: Vec<_> = source.docs_with_issues(files, |issue| issues.push(issue)).filter_map(Result::ok).collect();
+    let report = read_index_report(dir).ok().flatten().map(|mut report| {
+        let affected: HashSet<_> = removed.iter().map(String::as_str).chain(files.iter().map(|f| f.rel.as_str())).collect();
+        report.retain(|issue| !affected.contains(issue.path.as_str()));
+        report
+    });
+    removed.extend(issues.iter().filter(|issue| !issue.metadata_only).map(|issue| issue.path.clone()));
+    let written = smart_library_core::search::sync_docs(dir, docs.into_iter().map(Ok), &removed, version, overlay)?;
+    if let Some(mut report) = report {
+        report.extend(issues);
+        save_index_report(dir, &report);
+    }
+    Ok(written)
 }
 
 pub(super) fn index_overlay(state: &AppState, l: &Library) -> Result<props::Overlay, String> {
@@ -484,21 +537,26 @@ pub async fn build_index(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let l = state.library(&lib)?;
-    let source = IndexSource::open(&state, &l)?;
-    let zim_stamp = if matches!(&source, IndexSource::Zim(_)) {
-        zim_version(&l.source)?
-    } else {
-        String::new()
-    };
-    let lib_title = l.title.clone();
-    state.titles.write().unwrap().remove(&lib);
-    let overlay = index_overlay(&state, &l)?;
     if !state.building.lock().unwrap().insert(lib.clone()) {
         return Err("正在建立这个知识库的索引".to_string());
     }
+    let setup = (|| -> Result<_, String> {
+        let l = state.library(&lib)?;
+        let source = IndexSource::open(&state, &l)?;
+        let zim_stamp = if matches!(&source, IndexSource::Zim(_)) { zim_version(&l.source)? } else { String::new() };
+        let overlay = index_overlay(&state, &l)?;
+        Ok((source, zim_stamp, overlay, l.title))
+    })();
+    let (source, zim_stamp, overlay, lib_title) = match setup {
+        Ok(setup) => setup,
+        Err(e) => {
+            state.building.lock().unwrap().remove(&lib);
+            return Err(e);
+        }
+    };
+    state.titles.write().unwrap().remove(&lib);
     let dir = state.index_dir(&lib);
-    let try_incremental = incremental.unwrap_or(false);
+    let try_incremental = incremental.unwrap_or(false) && !dir.join("rebuild-required").exists();
     let pending = state.dirty.lock().unwrap().remove(&lib).unwrap_or_default();
     // drop the open index before deleting or updating its files
     state.indexes.write().unwrap().remove(&lib);
@@ -560,10 +618,12 @@ pub async fn build_index(
                             } else if total_changes <= INCREMENTAL_INDEX_MAX_CHANGES {
                                 progress(0, total_changes);
                                 let start = std::time::Instant::now();
-                                if smart_library_core::search::sync_docs(
+                                let removed_count = removed.len();
+                                if sync_folder_documents(
                                     &dir,
-                                    f.docs(&changed_files),
-                                    &removed,
+                                    f,
+                                    &changed_files,
+                                    removed,
                                     Some(&cur_ver),
                                     &overlay,
                                 )
@@ -582,8 +642,8 @@ pub async fn build_index(
                                         parts
                                             .push(format!("元数据更新 {} 篇", meta_affected_count));
                                     }
-                                    if !removed.is_empty() {
-                                        parts.push(format!("删除 {} 篇", removed.len()));
+                                    if removed_count > 0 {
+                                        parts.push(format!("删除 {} 篇", removed_count));
                                     }
                                     return Ok(format!(
                                         "已增量更新索引（{}），用时 {:.1} 秒",
@@ -600,6 +660,7 @@ pub async fn build_index(
             if dir.exists() {
                 std::fs::remove_dir_all(&dir).map_err(|e| format!("无法删除旧索引：{}", e))?;
             }
+            let mut issues = Vec::new();
             let stats = match &source {
                 IndexSource::Zim(archive) => {
                     let mut z = archive.lock().unwrap();
@@ -642,7 +703,7 @@ pub async fn build_index(
                         &dir,
                         meta,
                         files.len(),
-                        f.docs(&files),
+                        f.docs_with_issues(&files, |issue| issues.push(issue)),
                         &overlay,
                         progress,
                     )?;
@@ -654,6 +715,12 @@ pub async fn build_index(
                 }
                 IndexSource::Cbeta(bc) => SearchIndex::build(bc, &dir, &overlay, progress)?,
             };
+            if !matches!(source, IndexSource::Folder(_)) {
+                issues.extend(stats.skipped.iter().map(|reason| folder::FolderIndexIssue {
+                    path: String::new(), reason: reason.clone(), metadata_only: false,
+                }));
+            }
+            save_index_report(&dir, &issues);
             Ok(format!(
                 "已索引 {} 篇，用时 {:.0} 秒{}",
                 stats.volumes,
