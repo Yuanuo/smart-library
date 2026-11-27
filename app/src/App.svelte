@@ -890,10 +890,6 @@
           onbind: (kind = "") => (binding = { path: "", kind }),
           onsearch: () => openSearch(),
           onquick: () => openQuickSearch(),
-          onindex: startIndex,
-          onrecent: openRecent,
-          onopenrecent: openRecentItem,
-          onopenlib: (library) => openNode(library, null),
           onai: () => {
             if (!settings.aiOn) updateSettings({ aiOn: true });
             setAiOpen(true);
