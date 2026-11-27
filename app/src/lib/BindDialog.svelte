@@ -110,7 +110,6 @@
   const htmlTrees = $derived(src ? src.trees.filter((t) => t.group === "html") : []);
   const otherTrees = $derived(src ? src.trees.filter((t) => t.group === "other") : []);
   const cbetaBound = $derived(cbetaTrees.some((t) => t.bound_as));
-  const ID_PLACEHOLDER = "留空自动生成（仅小写字母、数字、-、_，创建后不可改）";
   const ID_TITLE = "知识库 ID 只能使用小写字母、数字、连字符或下划线，创建后不可更改";
 
   // what the window is waiting for right now: { label, done, total }
@@ -528,38 +527,142 @@
         </div>
       {/each}
     {:else if kind === "notes"}
-      <p class="muted">新建一个空的知识库，之后在目录树里右键添加笔记。内容保存在本程序的数据目录里（一个 SQLite 文件）；它是你自己写的内容，没有原始数据可以重新导入，请注意备份。</p>
-      <label class="field">名称 <input type="text" use:autofocus={{ select: true }} bind:value={notesTitle} placeholder="例如：读书笔记" /></label>
-      <label class="field">知识库 ID（可选）<input type="text" bind:value={libraryId} placeholder={ID_PLACEHOLDER} title={ID_TITLE} /></label>
-      {#if error}<p class="error">{error}</p>{/if}
-    {:else if kind === "folder"}
-      <p class="muted">链接一个本机文件夹，子目录会按真实结构显示在目录树里。默认只读，Smart Library 不会修改其中的文件；也可以选择读写模式，直接编辑里面的笔记。</p>
-      <div class="row">
-        <input type="text" readonly value={folder ? folder.path : ""} placeholder="尚未选择文件夹" aria-label="文件夹" />
-        <button type="button" onclick={pickLibFolder}>选择文件夹…</button>
+      <div class="gh-form">
+        <p class="gh-intro muted">
+          新建一个空的知识库，之后在目录树里右键添加笔记。内容保存在程序数据目录（SQLite 文件）中，请注意备份。
+        </p>
+
+        <section class="gh-step">
+          <div class="gh-rail" aria-hidden="true">
+            <span class="gh-badge" class:ok={!!notesTitle.trim()}>1</span>
+            <span class="gh-line"></span>
+          </div>
+          <div class="gh-step-body">
+            <h3 class="gh-step-title">基本信息</h3>
+
+            <div class="gh-field">
+              <label for="notes-title">名称 <span class="req" aria-hidden="true">*</span></label>
+              <input id="notes-title" type="text" use:autofocus={{ select: true }} bind:value={notesTitle} placeholder="例如：读书笔记" disabled={busy} />
+            </div>
+          </div>
+        </section>
+
+        <section class="gh-step gh-step-last">
+          <div class="gh-rail" aria-hidden="true">
+            <span class="gh-badge">2</span>
+            <span class="gh-line"></span>
+          </div>
+          <div class="gh-step-body">
+            <h3 class="gh-step-title">知识库标识</h3>
+
+            <div class="gh-card">
+              <div class="gh-row">
+                <div class="gh-row-info">
+                  <label class="gh-row-title" for="notes-lib-id">知识库 ID</label>
+                  <p class="gh-row-desc muted">固定 ID 便于跨库引用与长期维护，留空自动生成（创建后不可改）</p>
+                </div>
+                <div class="gh-row-ctrl">
+                  <input id="notes-lib-id" type="text" class="gh-ctrl-sm" bind:value={libraryId} placeholder="留空自动生成" title={ID_TITLE} disabled={busy} />
+                </div>
+              </div>
+            </div>
+            {#if error}<p class="field-msg error">{error}</p>{/if}
+          </div>
+        </section>
       </div>
-      {#if folder?.conflict}<p class="error">{folder.conflict}</p>{/if}
-      {#if error}<p class="error">{error}</p>{/if}
-      {#if folder && !folder.conflict}
-        <label class="field">名称 <input type="text" use:autofocus={{ select: true }} bind:value={folderTitle} /></label>
-        <label class="field">知识库 ID（可选）<input type="text" bind:value={libraryId} placeholder={ID_PLACEHOLDER} title={ID_TITLE} /></label>
-        <fieldset>
-          <legend>文件收录规则</legend>
-          <label class="field">文件后缀（逗号或空格分隔）<input type="text" bind:value={exts} /></label>
-          <p class="hint muted">此规则用于目录显示和全文索引。扫描版 PDF 等无法提取正文的资料只收录文件信息。绑定后可在知识库菜单修改规则。</p>
-          <label class="field">单个文件最大 <input type="number" min="0" class="num" bind:value={maxMb} /> MB（0 为不限制）</label>
-        </fieldset>
-        <fieldset>
-          <legend>读写模式</legend>
-          <label class="opt">
-            <input type="checkbox" bind:checked={writable} />
-            允许在软件里编辑这个文件夹里的笔记（.md、脑图 .map.json、白板 .wbd.json）
-          </label>
-          <p class="hint muted">
-            {writable ? "点「绑定」时会先说明规则和风险，需要你确认。之后也可以在知识库的右键菜单里随时切换。" : "不勾选则保持只读：不会新建、修改或删除任何文件。"}
-          </p>
-        </fieldset>
-      {/if}
+    {:else if kind === "folder"}
+      <div class="gh-form">
+        <p class="gh-intro muted">
+          链接本机文件夹，按真实目录结构展示；默认只读，也可开启读写模式直接编辑笔记。
+        </p>
+
+        <section class="gh-step" class:gh-step-last={!folder || !!folder.conflict}>
+          <div class="gh-rail" aria-hidden="true">
+            <span class="gh-badge" class:ok={folder && !folder.conflict}>1</span>
+            <span class="gh-line"></span>
+          </div>
+          <div class="gh-step-body">
+            <h3 class="gh-step-title">基本信息</h3>
+
+            <div class="gh-field">
+              <label for="folder-path">文件夹 <span class="req" aria-hidden="true">*</span></label>
+              <div class="input-with-btn">
+                <input id="folder-path" type="text" readonly value={folder ? folder.path : ""} placeholder="尚未选择文件夹" />
+                <button type="button" onclick={pickLibFolder} disabled={busy}>选择文件夹…</button>
+              </div>
+              {#if folder?.conflict}<p class="field-msg error">{folder.conflict}</p>{/if}
+              {#if error}<p class="field-msg error">{error}</p>{/if}
+            </div>
+
+            {#if folder && !folder.conflict}
+              <div class="gh-grid-2">
+                <div class="gh-field">
+                  <label for="folder-title">名称</label>
+                  <input id="folder-title" type="text" use:autofocus={{ select: true }} bind:value={folderTitle} disabled={busy} />
+                </div>
+                <div class="gh-field">
+                  <label for="folder-lib-id">知识库 ID</label>
+                  <input id="folder-lib-id" type="text" bind:value={libraryId} placeholder="留空自动生成" title={ID_TITLE} disabled={busy} />
+                </div>
+              </div>
+            {/if}
+          </div>
+        </section>
+
+        {#if folder && !folder.conflict}
+          <section class="gh-step gh-step-last">
+            <div class="gh-rail" aria-hidden="true">
+              <span class="gh-badge">2</span>
+              <span class="gh-line"></span>
+            </div>
+            <div class="gh-step-body">
+              <h3 class="gh-step-title">收录与权限配置</h3>
+
+              <div class="gh-card">
+                <div class="gh-row">
+                  <div class="gh-row-info">
+                    <label class="gh-row-title" for="folder-exts">索引文件后缀</label>
+                    <p class="gh-row-desc muted">用于目录显示和全文索引，绑定后可在菜单修改</p>
+                  </div>
+                  <div class="gh-row-ctrl gh-ctrl-med">
+                    <input id="folder-exts" type="text" bind:value={exts} placeholder="txt, md, html, pdf..." disabled={busy} />
+                  </div>
+                </div>
+                <div class="gh-row">
+                  <div class="gh-row-info">
+                    <label class="gh-row-title" for="folder-max-mb">单个文件上限</label>
+                    <p class="gh-row-desc muted">扫描版 PDF 等仅收录文件信息（0 为不限制）</p>
+                  </div>
+                  <div class="gh-row-ctrl gh-ctrl-inline">
+                    <input id="folder-max-mb" type="number" min="0" class="num" bind:value={maxMb} disabled={busy} />
+                    <span class="muted">MB</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="gh-card">
+                <div class="gh-row">
+                  <div class="gh-row-info">
+                    <label class="gh-row-title" for="folder-writable">允许编辑笔记</label>
+                    <p class="gh-row-desc muted">
+                      {writable
+                        ? "点「绑定」时会先说明规则和风险并需确认，之后可随时切换（.md、脑图、白板）。"
+                        : "关闭则保持只读：不会新建、修改或删除文件夹中的任何文件。"}
+                    </p>
+                  </div>
+                  <div class="gh-row-ctrl">
+                    <label class="gh-switch">
+                      <span class="muted">{writable ? "开启" : "只读"}</span>
+                      <input id="folder-writable" type="checkbox" bind:checked={writable} disabled={busy} />
+                      <span class="gh-switch-track" aria-hidden="true"></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        {/if}
+      </div>
     {:else if kind === "git"}
       <div class="gh-form">
         <p class="gh-intro muted">
@@ -727,115 +830,278 @@
         {/if}
       </div>
     {:else if kind === "import"}
-      <p class="muted">选择导出的知识库数据包（<code>.smartlib</code> 或 <code>.smartdir</code>），选好后自动识别类型。</p>
-      <div class="row">
-        <input type="text" readonly value={pkgPath} placeholder="尚未选择数据包" aria-label="数据包文件" />
-        <button type="button" onclick={pickPackage} disabled={busy}>选择数据包…</button>
-      </div>
-      {#if error}<p class="error">{error}</p>{/if}
-      {#if pkgInfo}
-        <p class="muted small">
-          {#if pkgInfo.kind === "smartdir"}
-            文件夹数据包（<code>.smartdir</code>），包含 {pkgInfo.files} 个文件。
-          {:else}
-            知识库数据包（<code>.smartlib</code>），将导入为新的默认知识库。
-          {/if}
+      <div class="gh-form">
+        <p class="gh-intro muted">
+          选择导出的知识库数据包（<code>.smartlib</code> 或 <code>.smartdir</code>），选好后自动识别类型。
         </p>
-        <label class="field">名称 <input type="text" use:autofocus={{ select: true }} bind:value={importTitle} placeholder={pkgInfo.title} disabled={busy} /></label>
-        <label class="field">知识库 ID（可选）<input type="text" bind:value={libraryId} placeholder={ID_PLACEHOLDER} title={ID_TITLE} disabled={busy} /></label>
-        {#if pkgInfo.kind === "smartdir"}
-          <fieldset>
-            <legend>导入方式</legend>
-            <label class="opt">
-              <input type="radio" name="import-mode" value="folder" bind:group={importMode} disabled={busy} />
-              导入为本地文件夹知识库
-            </label>
-            <p class="hint muted">原样解压到选定的空文件夹，并绑定为本地文件夹知识库。如需合并到已有文件夹，请解压到空目录后手动合并。</p>
-            <label class="opt">
-              <input type="radio" name="import-mode" value="notes" bind:group={importMode} disabled={busy} />
-              导入为默认知识库
-            </label>
-            <p class="hint muted">转换为默认知识库（保留目录树、元信息、脑图、白板与图片附件）。</p>
-          </fieldset>
-          {#if importMode === "folder"}
-            <label class="field">
-              目标位置
-              <input type="text" bind:value={importDest} placeholder="默认自动创建空目录" disabled={busy} />
-              <button type="button" onclick={pickImportDest} disabled={busy}>更改…</button>
-            </label>
-            <p class="hint muted">已默认分配空目录，可直接导入，也可点击「更改…」选择其他空文件夹。</p>
-            <label class="opt">
-              <input type="checkbox" bind:checked={importWritable} disabled={busy} />
-              绑定后允许编辑（可读写模式）
-            </label>
-          {/if}
+
+        <section class="gh-step" class:gh-step-last={!pkgInfo || pkgInfo.kind !== "smartdir"}>
+          <div class="gh-rail" aria-hidden="true">
+            <span class="gh-badge" class:ok={!!pkgInfo}>1</span>
+            <span class="gh-line"></span>
+          </div>
+          <div class="gh-step-body">
+            <h3 class="gh-step-title">选择数据包</h3>
+
+            <div class="gh-field">
+              <label for="pkg-path">数据包文件 <span class="req" aria-hidden="true">*</span></label>
+              <div class="input-with-btn">
+                <input id="pkg-path" type="text" readonly value={pkgPath} placeholder="尚未选择数据包" />
+                <button type="button" onclick={pickPackage} disabled={busy}>选择数据包…</button>
+              </div>
+              {#if error}
+                <p class="field-msg error">{error}</p>
+              {:else if pkgInfo}
+                <p class="field-msg ok">
+                  {#if pkgInfo.kind === "smartdir"}
+                    已识别文件夹数据包（.smartdir），包含 {pkgInfo.files} 个文件
+                  {:else}
+                    已识别知识库数据包（.smartlib），将导入为新的默认知识库
+                  {/if}
+                </p>
+              {/if}
+            </div>
+
+            {#if pkgInfo}
+              <div class="gh-grid-2">
+                <div class="gh-field">
+                  <label for="import-title">名称</label>
+                  <input id="import-title" type="text" use:autofocus={{ select: true }} bind:value={importTitle} placeholder={pkgInfo.title} disabled={busy} />
+                </div>
+                <div class="gh-field">
+                  <label for="import-lib-id">知识库 ID</label>
+                  <input id="import-lib-id" type="text" bind:value={libraryId} placeholder="留空自动生成" title={ID_TITLE} disabled={busy} />
+                </div>
+              </div>
+            {/if}
+          </div>
+        </section>
+
+        {#if pkgInfo?.kind === "smartdir"}
+          <section class="gh-step gh-step-last">
+            <div class="gh-rail" aria-hidden="true">
+              <span class="gh-badge">2</span>
+              <span class="gh-line"></span>
+            </div>
+            <div class="gh-step-body">
+              <h3 class="gh-step-title">导入配置</h3>
+
+              <div class="gh-card">
+                <div class="gh-row">
+                  <div class="gh-row-info">
+                    <span class="gh-row-title">导入方式</span>
+                    <p class="gh-row-desc muted">
+                      {importMode === "folder"
+                        ? "原样解压到空文件夹并绑定为本地文件夹知识库。"
+                        : "转换为默认知识库（保留目录树、元信息、脑图、白板与图片附件）。"}
+                    </p>
+                  </div>
+                  <div class="gh-row-ctrl">
+                    <div class="gh-seg" role="radiogroup" aria-label="导入方式">
+                      <button type="button" role="radio" aria-checked={importMode === "folder"} class:active={importMode === "folder"} onclick={() => (importMode = "folder")} disabled={busy}>本地文件夹</button>
+                      <button type="button" role="radio" aria-checked={importMode === "notes"} class:active={importMode === "notes"} onclick={() => (importMode = "notes")} disabled={busy}>默认知识库</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {#if importMode === "folder"}
+                <div class="gh-card">
+                  <div class="gh-row">
+                    <div class="gh-row-info">
+                      <label class="gh-row-title" for="import-dest">解压目标位置</label>
+                      <p class="gh-row-desc muted">已默认分配空目录，也可选择其他空文件夹</p>
+                    </div>
+                    <div class="gh-row-ctrl gh-ctrl-wide">
+                      <div class="input-with-btn">
+                        <input id="import-dest" type="text" bind:value={importDest} placeholder="默认自动创建空目录" disabled={busy} />
+                        <button type="button" onclick={pickImportDest} disabled={busy}>更改…</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="gh-row">
+                    <div class="gh-row-info">
+                      <label class="gh-row-title" for="import-writable">允许编辑笔记</label>
+                      <p class="gh-row-desc muted">
+                        {importWritable ? "绑定后可直接编辑其中的笔记（可读写模式）。" : "关闭则以只读方式绑定。"}
+                      </p>
+                    </div>
+                    <div class="gh-row-ctrl">
+                      <label class="gh-switch">
+                        <span class="muted">{importWritable ? "开启" : "只读"}</span>
+                        <input id="import-writable" type="checkbox" bind:checked={importWritable} disabled={busy} />
+                        <span class="gh-switch-track" aria-hidden="true"></span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          </section>
         {/if}
-      {/if}
-    {:else if kind === "zim"}
-      <p class="muted">选择 ZIM 文件，选好先检查一次文件；可以读取时「绑定」才可用。数据包只读，绑定后可搜索标题并建立全文索引。</p>
-      <div class="row">
-        <input type="text" use:autofocus bind:value={path} oninput={laterInspectZim} placeholder={examplePath("wikipedia.zim")} aria-label="ZIM 文件" />
-        <button type="button" onclick={pickZim}>选择文件…</button>
       </div>
-      {#if zimInfo}
-        <p class="muted small">ZIM {zimInfo.major}.{zimInfo.minor} · {zimInfo.entries.toLocaleString()} 条 · {zimInfo.clusters.toLocaleString()} 个簇 · {sizeText(zimInfo.bytes)} · 可以绑定</p>
-      {/if}
-      {#if zimError}<p class="error">{zimError}</p>{/if}
-      <label class="field">知识库 ID（可选）<input type="text" bind:value={libraryId} placeholder="例如 wikipedia（仅小写字母、数字、-、_，创建后不可改）" title={ID_TITLE} /></label>
-      <p class="hint muted">跨维基站点链接按知识库 ID 查找，例如 wikipedia。</p>
-      {#if error}<p class="error">{error}</p>{/if}
+    {:else if kind === "zim"}
+      <div class="gh-form">
+        <p class="gh-intro muted">
+          选择只读的 ZIM 离线数据包，检查通过后即可绑定，支持标题搜索与全文索引。
+        </p>
+
+        <section class="gh-step">
+          <div class="gh-rail" aria-hidden="true">
+            <span class="gh-badge" class:ok={!!zimInfo}>1</span>
+            <span class="gh-line"></span>
+          </div>
+          <div class="gh-step-body">
+            <h3 class="gh-step-title">选择 ZIM 文件</h3>
+
+            <div class="gh-field">
+              <label for="zim-path">文件路径 <span class="req" aria-hidden="true">*</span></label>
+              <div class="input-with-btn">
+                <input id="zim-path" type="text" use:autofocus bind:value={path} oninput={laterInspectZim} placeholder={examplePath("wikipedia.zim")} disabled={busy} />
+                <button type="button" onclick={pickZim} disabled={busy}>选择文件…</button>
+              </div>
+              {#if zimInfo}
+                <p class="field-msg ok">ZIM {zimInfo.major}.{zimInfo.minor} · {zimInfo.entries.toLocaleString()} 条 · {zimInfo.clusters.toLocaleString()} 个簇 · {sizeText(zimInfo.bytes)} · 可以绑定</p>
+              {/if}
+              {#if zimError}<p class="field-msg error">{zimError}</p>{/if}
+            </div>
+          </div>
+        </section>
+
+        <section class="gh-step gh-step-last">
+          <div class="gh-rail" aria-hidden="true">
+            <span class="gh-badge">2</span>
+            <span class="gh-line"></span>
+          </div>
+          <div class="gh-step-body">
+            <h3 class="gh-step-title">知识库标识</h3>
+
+            <div class="gh-card">
+              <div class="gh-row">
+                <div class="gh-row-info">
+                  <label class="gh-row-title" for="zim-lib-id">知识库 ID</label>
+                  <p class="gh-row-desc muted">跨维基站点链接按此 ID 查找，例如 wikipedia（创建后不可改）</p>
+                </div>
+                <div class="gh-row-ctrl">
+                  <input id="zim-lib-id" type="text" class="gh-ctrl-sm" bind:value={libraryId} placeholder="例如 wikipedia" title={ID_TITLE} disabled={busy} />
+                </div>
+              </div>
+            </div>
+            {#if error}<p class="field-msg error">{error}</p>{/if}
+          </div>
+        </section>
+      </div>
     {:else}
-    <p class="muted">选择 CBETA 的 bookcase.zip（或已解压的目录），选好就自动读取。Smart Library 只读取数据，不会修改它。</p>
-    <form class="row" onsubmit={(e) => { e.preventDefault(); clearTimeout(inspectTimer); inspect(); }}>
-      <input type="text" use:autofocus bind:value={path} oninput={laterInspect} placeholder={examplePath("bookcase.zip")} aria-label="数据路径" />
-      <button type="button" onclick={pickFile}>选择文件…</button>
-      <button type="button" onclick={pickFolder}>选择文件夹…</button>
-    </form>
+      <div class="gh-form">
+        <p class="gh-intro muted">
+          选择 CBETA 的 <code>bookcase.zip</code> 或已解压目录，选好后自动读取。Smart Library 只读取数据，不会修改它。
+        </p>
 
-    {#if error && kind === "cbeta"}<p class="error">{error}</p>{/if}
+        <section class="gh-step" class:gh-step-last={!src}>
+          <div class="gh-rail" aria-hidden="true">
+            <span class="gh-badge" class:ok={!!src}>1</span>
+            <span class="gh-line"></span>
+          </div>
+          <div class="gh-step-body">
+            <h3 class="gh-step-title">选择数据源</h3>
 
-    {#if src && kind === "cbeta"}
-      <p class="muted small">CBETA {src.data_version}（{src.version}）· {src.path}</p>
+            <form class="gh-field" onsubmit={(e) => { e.preventDefault(); clearTimeout(inspectTimer); inspect(); }}>
+              <label for="cbeta-path">数据路径 <span class="req" aria-hidden="true">*</span></label>
+              <div class="input-with-btn">
+                <input id="cbeta-path" type="text" use:autofocus bind:value={path} oninput={laterInspect} placeholder={examplePath("bookcase.zip")} disabled={busy} />
+                <button type="button" onclick={pickFile} disabled={busy}>选择文件…</button>
+                <button type="button" onclick={pickFolder} disabled={busy}>选择文件夹…</button>
+              </div>
+              {#if error && kind === "cbeta"}<p class="field-msg error">{error}</p>{/if}
+              {#if src && kind === "cbeta"}
+                <p class="field-msg ok">已识别 CBETA {src.data_version}（{src.version}）· {src.path}</p>
+              {/if}
+            </form>
+          </div>
+        </section>
 
-      {#if cbetaTrees.length}
-        <fieldset>
-          <legend>CBETA 藏经（只能选一棵目录树）</legend>
-          <p class="hint muted">这几棵目录树显示的是同一份数据，只绑定一棵。绑定后不能更换；要换，请先解除绑定再重新绑定。</p>
-          {#each cbetaTrees as t}
-            <label class="opt">
-              <input type="radio" name="cbeta" value={t.id} bind:group={cbetaTree} disabled={cbetaBound} />
-              {t.title} <span class="muted">· {t.leaves} 个条目{t.bound_as ? " · 当前绑定" : ""}</span>
-            </label>
-          {/each}
-          {#if !cbetaBound}
-            <label class="opt">
-              <input type="radio" name="cbeta" value="" bind:group={cbetaTree} />
-              <span class="muted">不绑定 CBETA</span>
-            </label>
-          {/if}
-        </fieldset>
-        {#if cbetaTree && !cbetaBound}<label class="field">CBETA 知识库 ID（可选）<input type="text" bind:value={libraryIds[cbetaTree]} placeholder={ID_PLACEHOLDER} title={ID_TITLE} /></label>{/if}
-      {/if}
+        {#if src && kind === "cbeta"}
+          <section class="gh-step gh-step-last">
+            <div class="gh-rail" aria-hidden="true">
+              <span class="gh-badge">2</span>
+              <span class="gh-line"></span>
+            </div>
+            <div class="gh-step-body">
+              <h3 class="gh-step-title">选择目录树</h3>
 
-      {#if htmlTrees.length}
-        <fieldset>
-          <legend>其他知识库（可以同时绑定）</legend>
-          <p class="hint muted">数据各不相同，每个知识库有自己的索引。</p>
-          {#each htmlTrees as t}
-            <label class="opt">
-              <input type="checkbox" bind:checked={html[t.id]} disabled={!!t.bound_as} />
-              {t.title} <span class="muted">· a/{t.code}/ · {t.leaves} 篇{t.bound_as ? " · 已绑定" : ""}</span>
-            </label>
-            {#if html[t.id] && !t.bound_as}<label class="field">{t.title} 的知识库 ID（可选）<input type="text" bind:value={libraryIds[t.id]} placeholder={ID_PLACEHOLDER} title={ID_TITLE} /></label>{/if}
-          {/each}
-        </fieldset>
-      {/if}
+              {#if cbetaTrees.length}
+                <div class="gh-card">
+                  <div class="gh-card-head">
+                    <span class="gh-row-title">CBETA 藏经（只能选一棵目录树）</span>
+                    <p class="gh-row-desc muted">这几棵目录树显示同一份数据，绑定后如需更换请先解除绑定。</p>
+                  </div>
+                  {#each cbetaTrees as t}
+                    <label class="gh-check-row" class:disabled={cbetaBound}>
+                      <input type="radio" name="cbeta" value={t.id} bind:group={cbetaTree} disabled={cbetaBound || busy} />
+                      <span class="gh-check-label">
+                        {t.title}
+                        <span class="muted">· {t.leaves} 个条目{t.bound_as ? " · 当前绑定" : ""}</span>
+                      </span>
+                    </label>
+                  {/each}
+                  {#if !cbetaBound}
+                    <label class="gh-check-row">
+                      <input type="radio" name="cbeta" value="" bind:group={cbetaTree} disabled={busy} />
+                      <span class="gh-check-label muted">不绑定 CBETA</span>
+                    </label>
+                  {/if}
+                  {#if cbetaTree && !cbetaBound}
+                    <div class="gh-row">
+                      <div class="gh-row-info">
+                        <label class="gh-row-title" for="cbeta-lib-id">CBETA 知识库 ID</label>
+                        <p class="gh-row-desc muted">留空自动生成，创建后不可改</p>
+                      </div>
+                      <div class="gh-row-ctrl">
+                        <input id="cbeta-lib-id" type="text" class="gh-ctrl-sm" bind:value={libraryIds[cbetaTree]} placeholder="留空自动生成" title={ID_TITLE} disabled={busy} />
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
 
-      {#if otherTrees.length}
-        <p class="muted small">没有可读内容的目录树：{otherTrees.map((t) => t.title).join("、")}</p>
-      {/if}
-    {/if}
+              {#if htmlTrees.length}
+                <div class="gh-card">
+                  <div class="gh-card-head">
+                    <span class="gh-row-title">其他知识库（可同时绑定）</span>
+                    <p class="gh-row-desc muted">数据各不相同，每个知识库拥有独立索引。</p>
+                  </div>
+                  {#each htmlTrees as t}
+                    <div class="gh-check-row" class:disabled={!!t.bound_as}>
+                      <label class="gh-check-main">
+                        <input type="checkbox" bind:checked={html[t.id]} disabled={!!t.bound_as || busy} />
+                        <span class="gh-check-label">
+                          {t.title}
+                          <span class="muted">· a/{t.code}/ · {t.leaves} 篇{t.bound_as ? " · 已绑定" : ""}</span>
+                        </span>
+                      </label>
+                      {#if html[t.id] && !t.bound_as}
+                        <input
+                          type="text"
+                          class="gh-ctrl-sm"
+                          bind:value={libraryIds[t.id]}
+                          placeholder="ID（留空自动）"
+                          title={ID_TITLE}
+                          aria-label="{t.title} 的知识库 ID"
+                          disabled={busy}
+                        />
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
 
+              {#if otherTrees.length}
+                <p class="field-msg muted">没有可读内容的目录树：{otherTrees.map((t) => t.title).join("、")}</p>
+              {/if}
+            </div>
+          </section>
+        {/if}
+      </div>
     {/if}
 
     </div>
@@ -885,16 +1151,7 @@
   }
   .dialog { width: min(720px, calc(100vw - 32px)); }
   h2 { margin: 0 0 6px; font-size: 20px; color: var(--accent); }
-  .row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
-  .row input { flex: 1; min-width: 240px; }
-  fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; padding: 8px 14px 10px; }
-  legend { padding: 0 6px; font-weight: 600; }
-  .hint { margin: 2px 0 6px; font-size: 13px; }
-  .opt { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
   .small { font-size: 13px; }
-  .field { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
-  .field input[type="text"] { flex: 1; min-width: 200px; }
-  .num { width: 80px; }
   .kind-group { margin-top: 12px; }
   .kind-group:first-child { margin-top: 2px; }
   .kind-group-title { font-size: 12px; font-weight: 600; margin: 0 0 4px 2px; letter-spacing: 0.02em; }
@@ -905,7 +1162,7 @@
   .progress-row progress { flex: 1; height: 8px; min-width: 120px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
-  /* ---- GitHub-style stepped card form for git library ---- */
+  /* ---- GitHub-style stepped card forms ---- */
   .gh-form { display: flex; flex-direction: column; gap: 10px; }
   .gh-intro { margin: 0 0 6px; font-size: 13px; line-height: 1.5; }
 
@@ -1003,4 +1260,63 @@
     width: 7px; height: 7px; border-radius: 50%;
     background: var(--note); flex: none;
   }
+
+  .gh-switch {
+    display: inline-flex; align-items: center; gap: 8px;
+    cursor: pointer; font-size: 12px; user-select: none;
+  }
+  .gh-switch input {
+    position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+  }
+  .gh-switch-track {
+    position: relative; width: 34px; height: 20px; border-radius: 999px;
+    background: var(--panel); border: 1px solid color-mix(in srgb, var(--line) 70%, var(--muted) 30%);
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .gh-switch-track::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--muted); transition: transform 0.15s, background 0.15s;
+  }
+  .gh-switch input:checked + .gh-switch-track {
+    background: var(--accent); border-color: var(--accent);
+  }
+  .gh-switch input:checked + .gh-switch-track::after {
+    transform: translateX(14px); background: var(--paper);
+  }
+  .gh-switch input:focus-visible + .gh-switch-track {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+
+  .gh-seg {
+    display: inline-flex; padding: 2px; border-radius: 7px;
+    background: var(--panel); border: 1px solid var(--line);
+  }
+  .gh-seg button {
+    border: none; background: transparent; border-radius: 5px;
+    padding: 4px 10px; font-size: 12px; color: var(--muted);
+    transition: background 0.12s, color 0.12s;
+  }
+  .gh-seg button:hover { color: var(--ink); }
+  .gh-seg button.active {
+    background: var(--paper); color: var(--ink); font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+
+  .gh-card-head {
+    padding: 10px 14px 8px;
+    background: color-mix(in srgb, var(--panel) 65%, var(--paper));
+  }
+  .gh-check-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 8px 14px; border-top: 1px solid var(--line);
+    font-size: 13px; cursor: pointer;
+  }
+  .gh-check-row.disabled { opacity: 0.65; cursor: default; }
+  .gh-check-main {
+    display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: inherit;
+  }
+  .gh-check-label { flex: 1; min-width: 0; }
+  .gh-check-row > input[type="radio"] { flex: none; margin: 0; }
+  .gh-check-main > input[type="checkbox"] { flex: none; margin: 0; }
 </style>
