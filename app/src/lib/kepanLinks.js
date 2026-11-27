@@ -248,6 +248,116 @@ function wrapRange(segs, start, end, lb, tooltip, targetPath = null) {
 }
 
 /**
+ * Split `textNode` at `localOffset` and bubble the split up to a direct child of
+ * `root`, returning the direct child node that begins at that split point.
+ */
+function splitTreeAt(root, textNode, localOffset) {
+  let node = textNode;
+  if (localOffset > 0 && localOffset < (node.nodeValue || "").length) {
+    node = node.splitText(localOffset);
+  }
+  while (node.parentNode && node.parentNode !== root) {
+    const parent = node.parentNode;
+    if (node.previousSibling) {
+      const right = parent.cloneNode(false);
+      if (right.nodeType === Node.ELEMENT_NODE) right.removeAttribute("id");
+      let cur = node;
+      while (cur) {
+        const next = cur.nextSibling;
+        right.appendChild(cur);
+        cur = next;
+      }
+      parent.parentNode?.insertBefore(right, parent.nextSibling);
+      node = right;
+    } else {
+      node = parent;
+    }
+  }
+  return node;
+}
+
+/**
+ * Undo multiline layout wrappers injected into `p.kepan-split` inside `docEl`.
+ */
+export function clearKepanLayout(docEl) {
+  if (!docEl) return;
+  for (const el of docEl.querySelectorAll("p.kepan.kepan-split")) {
+    const spans = el.querySelectorAll(":scope > span.kepan-split-head, :scope > span.kepan-split-item");
+    if (!spans.length) continue;
+    for (const span of spans) {
+      while (span.firstChild) el.insertBefore(span.firstChild, span);
+      span.remove();
+    }
+    el.normalize();
+  }
+}
+
+/**
+ * Format `p.kepan.kepan-split` paragraphs so the header (`……分三：`) stays on
+ * the first line and each enumerated sub-item (`丁一、……；`) renders on its own
+ * indented line, preserving original text, punctuation, footnotes, and `<mark>` highlights.
+ */
+export function formatKepanSplits(docEl) {
+  if (!docEl) return;
+  clearKepanLayout(docEl);
+
+  for (const el of docEl.querySelectorAll("p.kepan.kepan-split")) {
+    const { fullText } = collectTextSegments(el);
+    const parsed = parseKepanText(fullText, true);
+    if (!parsed.items || parsed.items.length < 2) continue;
+
+    // Split DOM right-to-left at each sub-item's start offset so earlier offsets stay valid.
+    const starts = new Array(parsed.items.length);
+    let ok = true;
+    for (let i = parsed.items.length - 1; i >= 0; i -= 1) {
+      const offset = parsed.items[i].start;
+      const { segs } = collectTextSegments(el);
+      const seg = segs.find((s) => offset >= s.start && offset < s.end);
+      if (!seg) {
+        ok = false;
+        break;
+      }
+      starts[i] = splitTreeAt(el, seg.node, offset - seg.start);
+    }
+    if (!ok || starts.some((n) => !n || n.parentNode !== el)) {
+      el.normalize();
+      continue;
+    }
+
+    // Wrap header nodes (excluding leading `.lb`/`.pb` markers) in `.kepan-split-head`.
+    const headSpan = document.createElement("span");
+    headSpan.className = "kepan-split-head";
+    let cur = el.firstChild;
+    while (cur && cur !== starts[0] && cur.nodeType === Node.ELEMENT_NODE && cur.matches(".lb, .pb")) {
+      cur = cur.nextSibling;
+    }
+    if (cur && cur !== starts[0]) {
+      el.insertBefore(headSpan, cur);
+      while (cur && cur !== starts[0]) {
+        const next = cur.nextSibling;
+        headSpan.appendChild(cur);
+        cur = next;
+      }
+    }
+
+    // Wrap each sub-item (including its trailing delimiter/punctuation) in `.kepan-split-item`.
+    for (let i = 0; i < starts.length; i += 1) {
+      const from = starts[i];
+      const until = i + 1 < starts.length ? starts[i + 1] : null;
+      const itemSpan = document.createElement("span");
+      itemSpan.className = "kepan-split-item";
+      el.insertBefore(itemSpan, from);
+      let node = from;
+      while (node && node !== until) {
+        const next = node.nextSibling;
+        itemSpan.appendChild(node);
+        node = next;
+      }
+    }
+  }
+}
+
+/**
  * Clean any previously injected kepan link wrappers or back buttons inside `docEl`.
  */
 export function clearKepanLinks(docEl) {
@@ -347,14 +457,11 @@ export function annotateKepanLinks(docEl) {
   // from data-label so copying paragraph text never copies the button text).
   for (const n of nodes) {
     if (!n.parentLb) continue;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "kepan-back";
-    btn.dataset.kepanLb = n.parentLb;
-    btn.dataset.label = `↑ ${n.parentLabel || "上级"}`;
-    btn.title = `返回父科判：${n.parentTitle || n.parentLabel}`;
-    btn.setAttribute("aria-label", btn.title);
-    n.el.appendChild(btn);
+    appendBackButton(n.el, {
+      lb: n.parentLb,
+      label: `↑ ${n.parentLabel || "上级"}`,
+      tooltip: `返回父科判：${n.parentTitle || n.parentLabel}`,
+    });
   }
 
   return { nodes };
@@ -370,7 +477,8 @@ function appendBackButton(el, { lb, path = null, label, tooltip }) {
   btn.dataset.label = label;
   btn.title = tooltip;
   btn.setAttribute("aria-label", tooltip);
-  el.appendChild(btn);
+  const host = el.querySelector(":scope > .kepan-split-head") || el;
+  host.appendChild(btn);
 }
 
 /**

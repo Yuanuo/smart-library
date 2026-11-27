@@ -44,7 +44,13 @@
   import { formatShortcut } from "./shortcuts.js";
   import { ensureSimplifier, simplifyHtml, simplifyText } from "./simplify.svelte.js";
   import { annotateBookRefs, bookRefTooltip, onBookRefsRefresh } from "./bookRefs.js";
-  import { annotateKepanLinks, annotateCrossDocKepanLinks, clearKepanLinks } from "./kepanLinks.js";
+  import {
+    annotateKepanLinks,
+    annotateCrossDocKepanLinks,
+    clearKepanLinks,
+    formatKepanSplits,
+    clearKepanLayout,
+  } from "./kepanLinks.js";
 
   let {
     vol,
@@ -124,20 +130,25 @@
     });
   });
 
-  // Build bidirectional jump links between 科判 split lines and child headings
-  // (in-document immediately, plus cross-sibling-document asynchronously when needed).
+  // Format 科判 split lines into indented sub-items and build bidirectional jump
+  // links between 科判 split lines and child headings (in-document immediately,
+  // plus cross-sibling-document asynchronously when needed).
   $effect(() => {
     const v = vol;
     const _h = html;
     const m = mode;
-    const on = settings.readerStructureStyle && settings.readerKepanLinks && m === "para";
+    const formatOn = settings.readerStructureStyle && m === "para";
+    const linksOn = formatOn && settings.readerKepanLinks;
     const ctrl = new AbortController();
     tick().then(() => {
       if (ctrl.signal.aborted || !docEl) return;
-      if (!on) {
-        clearKepanLinks(docEl);
+      clearKepanLinks(docEl);
+      if (!formatOn) {
+        clearKepanLayout(docEl);
         return;
       }
+      formatKepanSplits(docEl);
+      if (!linksOn) return;
       const local = annotateKepanLinks(docEl);
       if (local && v && v.kind !== "cbeta" && v.kind !== "zim" && v.volumes?.length > 1) {
         annotateCrossDocKepanLinks(docEl, local, {
@@ -910,6 +921,18 @@
     font-weight: var(--reader-weight, 400);
     -webkit-text-stroke-width: var(--reader-stroke, 0);
     color: var(--ink);
+  }
+  :global(.doc :where(.kepan-split-head)) {
+    display: inline;
+  }
+  :global(.doc :where(.kepan-split-item)) {
+    display: block;
+    padding-left: 2em;
+  }
+  .doc.wrap-lines :global(.kepan-split-item),
+  .doc.wrap-pages :global(.kepan-split-item) {
+    display: inline;
+    padding-left: 0;
   }
   .doc :global(a.kepan-link) {
     color: inherit;
