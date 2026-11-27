@@ -99,6 +99,8 @@ pub struct AppState {
     stamps: Mutex<HashMap<String, String>>,
     /// Edited folder paths, per library. SQLite notes keep their own index journal.
     dirty: Mutex<HashMap<String, HashSet<String>>>,
+    /// Folder indexes compared with the source since this process started.
+    checked_folder_indexes: Mutex<HashSet<String>>,
     /// the stamp of each read-write folder's `meta.json` as we last wrote or read it
     sidecar_seen: Mutex<HashMap<String, String>>,
     indexes: RwLock<HashMap<String, Arc<SearchIndex>>>,
@@ -174,6 +176,7 @@ impl AppState {
             notes: RwLock::new(HashMap::new()),
             stamps: Mutex::new(HashMap::new()),
             dirty: Mutex::new(HashMap::new()),
+            checked_folder_indexes: Mutex::new(HashSet::new()),
             sidecar_seen: Mutex::new(HashMap::new()),
             indexes: RwLock::new(HashMap::new()),
             titles: RwLock::new(HashMap::new()),
@@ -1078,6 +1081,7 @@ pub async fn unbind_library(id: String, delete_local: Option<bool>, state: State
     state.indexes.write().unwrap().remove(&id);
     state.html.write().unwrap().remove(&id);
     state.folders.write().unwrap().remove(&id);
+    state.checked_folder_indexes.lock().unwrap().remove(&id);
     state.zims.write().unwrap().remove(&id);
     state.notes.write().unwrap().remove(&id);
     let _ = state.history.remove_lib(&id);
@@ -5150,6 +5154,50 @@ mod library_id_tests {
         let mut overlay = props.overlay("lib").unwrap(); overlay.set_nav_ancestors(navigation_ancestors(&nodes));
         overlay.apply(&mut sibling);
         assert!(sibling.text.is_empty());
+    }
+
+    #[test]
+    fn folder_index_follows_rename_after_restart_before_focus_scan() {
+        let tmp = std::env::temp_dir().join(format!("sl_folder_restart_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let root = tmp.join("folder");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("Before.md"), "雪岭梅香").unwrap();
+        let lib = Library {
+            id: "folder-1".into(),
+            kind: "folder".into(),
+            title: "测试文件夹".into(),
+            source: root.to_string_lossy().into_owned(),
+            tree: String::new(),
+            exts: vec!["md".into()],
+            max_mb: 0,
+            writable: true,
+            remote: String::new(),
+        };
+        let open = || AppState::new(tmp.join("cfg"), tmp.join("data"));
+        {
+            let state = open();
+            let f = state.folder(&lib).unwrap();
+            let files = f.files();
+            let overlay = props::Overlay::default();
+            let dir = state.index_dir(&lib.id);
+            smart_library_core::search::build_index(
+                &dir, serde_json::json!({"data_version": f.fingerprint(&files)}),
+                files.len(), f.docs(&files), &overlay, |_, _| {},
+            ).unwrap();
+            save_folder_snapshot(&dir, &folder_snapshot_map(&f, &files, &overlay));
+            let new = f.rename("Before.md", "After").unwrap();
+            state.after_move(&lib.id, "Before.md", &new, &["Before.md".into()], Some("After"));
+        }
+        {
+            let state = open();
+            state.flush_dirty(std::slice::from_ref(&lib));
+            let index = SearchIndex::open(&state.index_dir(&lib.id)).unwrap();
+            let result = index.search(&SearchRequest::new("雪岭梅香")).unwrap();
+            assert_eq!(result.hits.len(), 1);
+            assert_eq!(result.hits[0].path, "After.md");
+        }
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]

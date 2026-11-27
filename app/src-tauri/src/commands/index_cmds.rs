@@ -66,15 +66,20 @@ impl AppState {
                 continue;
             }
             let Ok(f) = self.folder(l) else { continue };
-            let paths: HashSet<String> = match self.dirty.lock().unwrap().get_mut(&l.id) {
-                Some(s) if !s.is_empty() => std::mem::take(s),
-                _ => continue,
-            };
+            let first_check = self.checked_folder_indexes.lock().unwrap().insert(l.id.clone());
+            let paths = self.dirty.lock().unwrap().remove(&l.id).unwrap_or_default();
+            if paths.is_empty() && !first_check {
+                continue;
+            }
             let result = (|| -> Result<(), String> {
+                let indexed = load_folder_snapshot(&dir);
+                if indexed.is_none() && paths.is_empty() {
+                    return Ok(()); // no baseline to compare; the folder check handles this case
+                }
                 let overlay = self.props.overlay(&l.id)?;
                 let all = f.files();
                 let mut changed = paths.clone();
-                let (version, folder_snap) = if let Some(old) = load_folder_snapshot(&dir) {
+                let (version, folder_snap) = if let Some(old) = indexed {
                     let version = f.fingerprint(&all);
                     let snap = folder_snapshot_map(&f, &all, &overlay);
                     let delta = FolderDelta::between(&old, &snap);
@@ -89,6 +94,9 @@ impl AppState {
                     );
                     if old.files != snap.files || old.metas != snap.metas {
                         self.titles.write().unwrap().remove(&l.id);
+                    }
+                    if changed.is_empty() {
+                        return Ok(());
                     }
                     (Some(version), Some(snap))
                 } else {
@@ -117,6 +125,9 @@ impl AppState {
             })();
             if result.is_err() {
                 self.mark_dirty(&l.id, paths); // try again at the next search
+                if first_check {
+                    self.checked_folder_indexes.lock().unwrap().remove(&l.id);
+                }
             }
         }
     }
