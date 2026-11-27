@@ -42,6 +42,7 @@
   </div>
   <div class="body">
     <SearchPage {s} onopen={(req) => emit("popout-open", req)}
+      onsetup={(action) => emit("search-setup", action)}
       ontitle={(t) => win.setTitle(`${t} — Smart Library`).catch(() => {})} />
   </div>
 </div>

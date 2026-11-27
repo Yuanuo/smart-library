@@ -2504,7 +2504,7 @@ fn hits_of(vt: &VolumeText, query: Option<&str>, phrase: Option<bool>) -> (Vec<(
             let mode = if phrase.unwrap_or(false) { MatchMode::Phrase } else { MatchMode::Loose };
             let occ = locate(vt, q, mode);
             let first = occ.first().map(|o| o.lb.clone());
-            (occ.iter().map(|o| (o.from, o.to)).collect(), occ.len(), first)
+            (occ.iter().map(|o| (o.from, o.to)).collect(), smart_library_core::search::match_region_count(&occ), first)
         }
         None => (Vec::new(), 0, None),
     }

@@ -16,6 +16,7 @@
   import { fullPath } from "./paths.js";
   import { DIARY_LIBRARY_ID, monthNodeId, monthPath, localDate } from "./diary.js";
   import { startScopeDrag } from "./scopeDrag.js";
+  import { searchScope, withinOf } from "./searchScope.js";
   import { installTextDrag } from "./textDrag.js";
   import { confirmWritable, isEditableName } from "./writable.js";
   import { isAiReady, toBackendAiConfig } from "./settings.svelte.js";
@@ -490,30 +491,9 @@
     }
   }
 
-  /** A node as a search range: the books / articles below it, or (lazy
-   * libraries) its `rel` for the backend to expand. */
-  function withinOf(l, node) {
-    const books = new Set();
-    const paths = new Set();
-    const walk = (n) => {
-      if (n.book_id) books.add(n.book_id);
-      else if (n.path && l.kind === "html") paths.add(n.path);
-      n.children.forEach(walk);
-    };
-    walk(node);
-    return {
-      lib: l.id,
-      books: [...books],
-      paths: [...paths],
-      rel: l.kind === "folder" || l.kind === "notes" ? node.rel : null,
-    };
-  }
-
   /** A node (or a whole library) as an item of a search range list. */
   function scopeOf(l, node, key) {
-    if (!node) return { lib: l.id, label: l.title, books: [], paths: [], rels: [], whole: true };
-    const w = withinOf(l, node);
-    return { lib: l.id, label: titleChain(l, key).join(" › "), books: w.books, paths: w.paths, rels: w.rel ? [w.rel] : [], whole: false };
+    return searchScope(l, node, node ? titleChain(l, key).join(" › ") : l.title);
   }
 
   /** Dragging a node (or the picked nodes, when it is one of them) into a search range list. */

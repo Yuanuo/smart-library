@@ -379,6 +379,11 @@
 
   // ---- context menu: the selected text can be copied, searched or kept
   let menu = $state(null);
+  let hasSelection = $state(false);
+  let findFallback = $state(false);
+  let findQuery = $state("");
+  let findInput = $state();
+  let findMessage = $state("");
 
   const clip = (s, n = 14) => (s.length > n ? s.slice(0, n) + "…" : s);
 
@@ -419,13 +424,36 @@
   /** The browser's own find bar (Ctrl+F), filled with the selected text. */
   async function findInPage(text) {
     // the bar takes the page's selection: make sure it is this text
-    if (window.getSelection()?.toString().trim() !== text) window.find?.(text, false, false, true);
+    if (text && window.getSelection()?.toString().trim() !== text) window.find?.(text, false, false, true);
     await new Promise((r) => setTimeout(r, 60)); // let the menu close
     try {
       await api.findInPage();
     } catch {
-      window.find?.(text, false, false, true);
+      findQuery = text || "";
+      findFallback = true;
+      findMessage = "";
+      await tick();
+      findInput?.select();
     }
+  }
+
+  function selectionInReader() {
+    const selection = window.getSelection();
+    return selection && !selection.isCollapsed && scroller?.contains(selection.anchorNode) && scroller.contains(selection.focusNode) ? selection : null;
+  }
+
+  function extractSelection() {
+    const selection = selectionInReader();
+    const text = selection?.toString().trim();
+    if (!text) return;
+    closeTip();
+    onaction?.({ type: "note", text, lb: lbAt(selection.getRangeAt(0).startContainer), vol, excerpt: clip(text, 40) });
+  }
+
+  function findNext(backward = false) {
+    const query = findQuery.trim();
+    if (!query) return;
+    findMessage = window.find?.(query, false, backward, true) ? "" : "未找到匹配文字";
   }
 
   // ---- 选字查词 (select-to-look-up). Only this read-only reader takes part:
@@ -468,8 +496,8 @@
 
   function readerMenu(e) {
     if (e.target.closest?.(".tip")) return;
-    const s = window.getSelection();
-    const inside = s && !s.isCollapsed && scroller?.contains(s.anchorNode) && scroller?.contains(s.focusNode);
+    const s = selectionInReader();
+    const inside = !!s;
     const text = inside ? s.toString().trim() : "";
     e.preventDefault();
     closeTip();
@@ -670,6 +698,8 @@
   }
 </script>
 
+<svelte:document onselectionchange={() => (hasSelection = !!selectionInReader()?.toString().trim())} />
+
 {#if vol}
   <div class="reader">
     <header class="view-bar">
@@ -693,6 +723,12 @@
         {#if onaction}
           <button type="button" class="tool-btn" onclick={() => onaction({ type: "tag", vol })} title={formatShortcut("tag", settings.shortcuts) ? `为当前文档加标签（${formatShortcut("tag", settings.shortcuts)}）` : "为当前文档加标签"} aria-label="加标签"><Icon name="tag" size={16} /></button>
           <button type="button" class="tool-btn" onclick={() => onaction({ type: "props", vol })} title={formatShortcut("props", settings.shortcuts) ? `属性（${formatShortcut("props", settings.shortcuts)}）` : "属性"} aria-label="属性"><Icon name="sliders" size={16} /></button>
+        {/if}
+        <button type="button" class="tool-btn read-action" onmousedown={(event) => event.preventDefault()}
+          onclick={() => findInPage(selectionInReader()?.toString().trim() || "")}><Icon name="search" size={15} />页内查找</button>
+        {#if onaction}
+          <button type="button" class="tool-btn read-action" onmousedown={(event) => event.preventDefault()} onclick={extractSelection}
+            disabled={!hasSelection} title="选中正文后加入笔记"><Icon name="file" size={15} />摘录…</button>
         {/if}
         {@render extra?.()}
         <span class="grow"></span>
@@ -727,6 +763,16 @@
         {/if}
       </div>
     </header>
+    {#if findFallback}
+      <form class="find-bar" onsubmit={(event) => { event.preventDefault(); findNext(); }}>
+        <input type="search" aria-label="页内查找" bind:this={findInput} bind:value={findQuery}
+          onkeydown={(event) => { if (event.key === "Escape") findFallback = false; }} />
+        <button type="button" onclick={() => findNext(true)}>上一处</button>
+        <button type="submit">下一处</button>
+        <button type="button" class="link" onclick={() => (findFallback = false)}>关闭</button>
+        {#if findMessage}<span class="muted" role="status">{findMessage}</span>{/if}
+      </form>
+    {/if}
     <!-- svelte-ignore a11y_mouse_events_have_key_events, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="scroll" bind:this={scroller} onscroll={(e) => (closeTip(), onScroll(e))} oncontextmenu={readerMenu} onclick={docClick}
       onmousedown={selectionDown} onmouseup={selectionUp}
@@ -773,6 +819,8 @@
 {/if}
 
 <style>
+  .read-action { gap: 4px; white-space: nowrap; }
+  .find-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); align-items: center; }
   .tip {
     position: fixed; z-index: 2000; transform: translateX(-50%); max-width: min(32em, calc(100vw - 16px));
     background: var(--ink); color: var(--paper); border-radius: 6px; padding: 8px 12px;

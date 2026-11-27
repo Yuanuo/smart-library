@@ -21,6 +21,7 @@ import FolderPanel from "./FolderPanel.svelte";
 import SearchPage from "./SearchPage.svelte";
 import AiPanel from "./AiPanel.svelte";
 import StartPage from "./StartPage.svelte";
+import { addSearchScopeItems } from "./searchScope.js";
 import { formatShortcut, formatCombo } from "./shortcuts.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -99,7 +100,7 @@ export const ws = $state({
 }); // current: { title, lib } of the active reading tab
 
 export const startState = $state({
-  libraryCount: 0,
+  libraries: [],
   aiConfigured: false,
   mcpRunning: false,
 });
@@ -494,6 +495,7 @@ function searchRenderer() {
             if (panelApi?.isActive) ws.activeTab = { kind: "search", title: t };
           },
           onpopout: () => popOutSearch(panelApi.id),
+          onsetup: (action) => hooks.onsearchsetup?.(action),
           onai: (req) => hooks.onai?.(req),
           onsearchresult: (sr) => {
             searchResults[panelApi.id] = sr;
@@ -777,6 +779,12 @@ function listenToPopouts() {
     openVolume(e.payload).catch((err) => hooks.onaction?.({ type: "error", text: String(err) }));
   });
   listen("search-dock", (e) => openSearch({ ...e.payload, autorun: !!e.payload.ran, fresh: true }));
+  listen("search-setup", async ({ payload }) => {
+    const win = getCurrentWindow();
+    await win.unminimize().catch(() => {});
+    await win.setFocus().catch(() => {});
+    hooks.onsearchsetup?.(payload);
+  });
   listen("aichat-dock", async (e) => {
     const w = getCurrentWindow();
     await w.unminimize().catch(() => {});
@@ -1396,10 +1404,9 @@ export function openSearch({ query = "", phrase = false, scopes = [], autorun = 
 export function addSearchScopes(items) {
   const st = lastSearchId && searchStates[lastSearchId];
   if (!st) return openSearch({ scopes: items });
-  const have = new Set(st.scopes.map((x) => `${x.lib}|${x.label}`));
-  const fresh = items.filter((x) => !have.has(`${x.lib}|${x.label}`));
-  if (fresh.length) {
-    st.scopes = [...st.scopes, ...fresh];
+  const scopes = addSearchScopeItems(st.scopes, items);
+  if (scopes.length !== st.scopes.length) {
+    st.scopes = scopes;
     st.filters = {};
     st.tab = "scope";
     st.rerun += 1;

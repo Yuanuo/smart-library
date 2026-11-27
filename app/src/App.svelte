@@ -837,7 +837,7 @@
   $effect(() => {
     workspace.setLibraries(libraries);
     workspace.setStartState({
-      libraryCount: libraries.length,
+      libraries: libraries.map((library) => ({ ...library, building: library.building || !!progress[library.id] })),
       aiConfigured,
       mcpRunning: mcpState.running,
     });
@@ -861,10 +861,19 @@
         ontreepath: (d) => libPanel?.treePath(d),
         onnodepath: (v) => libPanel?.nodePath(v.lib, { bookId: v.book_id ?? null, path: v.path }) || "",
         onindexdialog: openIndexDialog,
+        onsearchsetup: (action) => {
+          if (action.type === "folder") binding = { path: "", kind: "folder" };
+          else if (action.type === "note") libPanel?.newNote();
+          else if (action.type === "index") startIndex(action.id);
+        },
         startActions: {
           onbind: (kind = "") => (binding = { path: "", kind }),
           onsearch: () => openSearch(),
           onquick: () => openQuickSearch(),
+          onindex: startIndex,
+          onrecent: openRecent,
+          onopenrecent: openRecentItem,
+          onopenlib: (library) => openNode(library, null),
           onai: () => {
             if (!settings.aiOn) updateSettings({ aiOn: true });
             setAiOpen(true);

@@ -12,10 +12,13 @@
   import * as api from "./api.js";
   import { settings } from "./settings.svelte.js";
   import FacetPane from "./FacetPane.svelte";
+  import SearchScopeDialog from "./SearchScopeDialog.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import Icon from "./Icon.svelte";
+  import { addSearchScopeItems } from "./searchScope.js";
 
-  let { s, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onsearchresult = null } = $props();
+  let { s, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onsearchresult = null, onsetup = null } = $props();
+  const NO_INDEX = "还没有可搜索的知识库：请先为知识库建立索引";
 
   const DIMENSIONS = [
     ["/bulei", "部类"],
@@ -31,6 +34,9 @@
   let input = $state();
   let hitsEl = $state();
   let menu = $state(null);
+  let chooseScope = $state(false);
+  let filtersOpen = $state(false);
+  let unavailable = $state(null);
   let ran = $state({ query: "", phrase: false }); // what the shown results were searched for
   let seq = 0;
 
@@ -39,19 +45,21 @@
     const my = ++seq;
     busy = true;
     error = "";
+    unavailable = null;
     const filters = Object.entries(s.filters)
       .filter(([, v]) => v.length)
       .map(([root, values]) => ({ root, values }));
     const query = s.query;
     const phrase = s.phrase;
     const library = s.libraryPinned || filters.length ? s.lib : null;
+    const scopes = s.scopes.length ? $state.snapshot(s.scopes) : null;
     try {
       const r = await api.search({
         query,
         phrase,
         lib: library,
         filters: filters.length ? filters : null,
-        withins: s.scopes.length ? $state.snapshot(s.scopes) : null,
+        withins: scopes,
         page,
         limit: 20,
       });
@@ -77,6 +85,13 @@
       if (my === seq) {
         error = String(e);
         onsearchresult?.(null);
+        if (error === NO_INDEX) {
+          const status = await api.status().catch(() => null);
+          if (my === seq && status) {
+            const scopeIds = new Set(scopes?.map((item) => item.lib));
+            unavailable = { empty: !status.libraries.length, libraries: scopes ? status.libraries.filter((item) => scopeIds.has(item.id)) : status.libraries };
+          }
+        }
       }
     } finally {
       if (my === seq) busy = false;
@@ -103,7 +118,7 @@
 
   function changed() {
     onstate?.();
-    if (s.ran) run(1);
+    if (s.ran || error) run(1);
   }
 
   // ---------------------------------------------------------------- filters
@@ -137,10 +152,9 @@
   // ---------------------------------------------------------------- range
   /** Items dragged or sent from the tree. A search is repeated when one has run. */
   function addScopes(items) {
-    const have = new Set(s.scopes.map((x) => `${x.lib}|${x.label}`));
-    const fresh = items.filter((x) => !have.has(`${x.lib}|${x.label}`));
-    if (!fresh.length) return;
-    s.scopes = [...s.scopes, ...fresh];
+    const scopes = addSearchScopeItems(s.scopes, items);
+    if (scopes.length === s.scopes.length) return;
+    s.scopes = scopes;
     s.tab = "scope";
     s.filters = {};
     changed();
@@ -192,6 +206,7 @@
   const browsing = $derived(result && !ran.query);
   const totalMatches = $derived(result?.libraries.reduce((total, library) => total + library.count, 0) ?? 0);
   const otherMatch = $derived(result?.libraries.find((library) => library.id !== result.lib && library.count > 0));
+  const rangeLabel = $derived(s.scopes.length === 0 ? "全部知识库" : s.scopes.length === 1 ? s.scopes[0].label : `${s.scopes.length} 项`);
 
   // ---------------------------------------------------------------- side width
   let sideWidth = $state(300);
@@ -214,6 +229,12 @@
     window.addEventListener("pointerup", stop);
   }
 
+  function resizeSide(e) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    sideWidth = Math.min(640, Math.max(220, sideWidth + (e.key === "ArrowRight" ? 16 : -16)));
+  }
+
   // ---------------------------------------------------------------- life
   let lastRerun = untrack(() => s.rerun ?? 0);
   let lastFocus = untrack(() => s.focus ?? 0);
@@ -221,7 +242,7 @@
     const n = s.rerun ?? 0; // the host changed the range (or filters): search again
     if (n !== lastRerun) {
       lastRerun = n;
-      untrack(() => s.ran && run(1));
+      untrack(() => (s.ran || error) && run(1));
     }
   });
   $effect(() => {
@@ -240,18 +261,22 @@
       s.autorun = false;
       run(s.page || 1);
     } else input?.focus();
+    const off = api.onIndexDone((event) => {
+      if (event.ok && (unavailable || error === NO_INDEX) && (!s.scopes.length || s.scopes.some((item) => item.lib === event.lib))) run(1);
+    });
+    return () => off.then((unlisten) => unlisten());
   });
 </script>
 
 <div class="page">
   <form class="bar" onsubmit={submit}>
     <input type="search" class="q" bind:this={input} bind:value={s.query} oninput={() => onstate?.()}
-      placeholder="全文搜索（空格分隔关键词；不输入直接搜索，可浏览全部）" aria-label="全文搜索" />
+      placeholder="输入关键词，留空浏览全部" aria-label="全文搜索" />
     <span class="seg" role="radiogroup" aria-label="匹配方式">
       <button type="button" class:on={!s.phrase} onclick={() => setMode(false)} role="radio" aria-checked={!s.phrase}
-        title="每个二字组都出现在同一篇文档即可，不要求连在一起">模糊</button>
+        title="中文按相邻两字分组，各组可出现在同一文档的不同位置。用空格分隔关键词。">宽松匹配</button>
       <button type="button" class:on={s.phrase} onclick={() => setMode(true)} role="radio" aria-checked={s.phrase}
-        title="整句连续出现（忽略标点）">精确</button>
+        title="整句连续出现（忽略标点）">精确短语</button>
     </span>
     <button class="primary" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
     {#if settings.aiOn && onai}
@@ -264,7 +289,14 @@
     {/if}
   </form>
 
+  <div class="range-bar" data-scope-drop onscopedrop={(event) => addScopes(event.detail)}>
+    <span class="range-label" title={s.scopes.map((item) => item.label).join("；") || rangeLabel}><strong>范围</strong> {rangeLabel}</span>
+    <button type="button" onclick={() => (chooseScope = true)}>添加范围…</button>
+    <button type="button" aria-expanded={filtersOpen} onclick={() => (filtersOpen = !filtersOpen)}>{filtersOpen ? "收起筛选" : "筛选"}{chips.length ? `（${chips.length}）` : ""}</button>
+  </div>
+
   <div class="main">
+    {#if filtersOpen}
     <aside class="side" style="width: {sideWidth}px">
       <div class="tabs" role="tablist">
         {#each tabs as t (t.id)}
@@ -277,11 +309,6 @@
         {#if activeTab === "scope"}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="scope" data-scope-drop onscopedrop={(e) => addScopes(e.detail)} oncontextmenu={(e) => scopeMenu(e, null)}>
-            <p class="help muted">
-              限定搜索范围，默认（空列表）为全部知识库。<br />
-              添加：从左侧目录树拖动节点到下方列表，或在节点的右键菜单里选「加入搜索范围」。<br />
-              移除：点 ×，或在列表里按右键。
-            </p>
             <ul>
               {#each s.scopes as sc, i}
                 <li oncontextmenu={(e) => (e.stopPropagation(), scopeMenu(e, i))} title={sc.label}>
@@ -289,7 +316,7 @@
                   <button class="link x" onclick={() => removeScope(i)} aria-label="移除">×</button>
                 </li>
               {:else}
-                <li class="muted empty">（空：搜索全部）</li>
+                <li class="muted empty">可从「添加范围」选库或目录，也可拖入目录树中的节点。</li>
               {/each}
             </ul>
             {#if s.scopes.length}<button class="link clr" onclick={clearScopes}>清空范围</button>{/if}
@@ -304,11 +331,12 @@
       </div>
     </aside>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-    <div class="split" role="separator" aria-orientation="vertical" tabindex="0" onpointerdown={dragSide}
+    <div class="split" role="separator" aria-orientation="vertical" aria-label="调整筛选栏宽度" aria-valuenow={sideWidth} tabindex="0" onpointerdown={dragSide} onkeydown={resizeSide}
       ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
+    {/if}
 
     <section class="results">
-      {#if result && result.libraries.length > 1}
+      {#if result && !error && result.libraries.length > 1}
         <div class="libs" role="group" aria-label="显示哪个知识库的结果">
           <button aria-pressed={!s.libraryPinned} class:on={!s.libraryPinned} onclick={() => pickLibrary(null)}>自动选库</button>
           {#each result.libraries as l}
@@ -326,17 +354,38 @@
           {/each}
           {#if s.scopes.length}
             <span class="chip scoped">范围：{s.scopes.length} 项
-              <button class="link" onclick={() => ((s.tab = "scope"), onstate?.())} aria-label="查看范围">…</button></span>
+              <button class="link" onclick={() => ((filtersOpen = true), (s.tab = "scope"), onstate?.())} aria-label="查看范围">…</button></span>
           {/if}
           {#if chips.length}<button class="link" onclick={clearFilters}>清除过滤</button>{/if}
         </div>
       {/if}
       <div class="hits" bind:this={hitsEl}>
-        {#if error}
+        {#if unavailable}
+          <div class="empty-state">
+            {#if unavailable.empty}
+              <p>先添加资料或新建笔记，全文索引会在后台自动建立。</p>
+              {#if onsetup}
+                <button class="primary" type="button" onclick={() => onsetup({ type: "folder" })}>添加本地资料…</button>
+                <button type="button" onclick={() => onsetup({ type: "note" })}>新建笔记</button>
+              {/if}
+            {:else}
+              <p>当前范围尚无可用的全文索引。</p>
+              {#each unavailable.libraries as item (item.id)}
+                <div class="availability">
+                  <strong>{item.title}</strong>
+                  {#if item.error}<span class="muted" title={item.error}>资料不可用</span>
+                  {:else if item.building}<span class="muted">正在建立索引…</span>
+                  {:else if onsetup}<button type="button" onclick={() => onsetup({ type: "index", id: item.id })}>建立索引</button>{/if}
+                </div>
+              {/each}
+              {#if s.scopes.length}<button type="button" class="link" onclick={clearScopes}>清空范围</button>{/if}
+            {/if}
+          </div>
+        {:else if error}
           <p class="err">{error}</p>
         {:else if !result}
           <p class="muted intro">
-            输入关键词后按 Enter；也可以不输入，直接点「搜索」浏览全部，再用左边的过滤和范围慢慢缩小。
+            输入关键词后按 Enter。留空搜索可以浏览当前范围内的文档。
           </p>
         {:else}
           <div class="summary muted">
@@ -393,10 +442,17 @@
   <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
 {/if}
 
+{#if chooseScope}
+  <SearchScopeDialog onpick={(scope) => { addScopes([scope]); chooseScope = false; }} onclose={() => (chooseScope = false)} />
+{/if}
+
 <style>
-  .page { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--paper); }
-  .bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  .q { flex: 1; min-width: 120px; font-size: 16px; }
+  .page { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--paper); container-type: inline-size; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .q { flex: 1 1 180px; min-width: 0; font-size: 16px; }
+  .range-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+  .range-bar:global(.scope-over) { background: var(--accent-soft); }
+  .range-label { flex: 1 1 140px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
   .seg { display: inline-flex; flex: none; }
   .seg button { border-radius: 0; padding: 3px 12px; }
   .seg button:first-child { border-radius: 6px 0 0 6px; }
@@ -408,7 +464,7 @@
   }
   .ai-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
   .main { flex: 1; display: flex; min-height: 0; }
-  .side { flex: none; display: flex; flex-direction: column; background: var(--panel); min-height: 0; min-width: 0; }
+  .side { flex: none; display: flex; flex-direction: column; background: var(--panel); min-height: 0; min-width: 0; max-width: 42%; }
   .split { flex: none; width: 5px; cursor: col-resize; border-left: 1px solid var(--line); background: var(--panel); touch-action: none; }
   .split:hover, .split:focus-visible { background: var(--accent-soft); outline: none; }
   .tabs { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 6px 8px 0; border-bottom: 1px solid var(--line); }
@@ -424,7 +480,6 @@
   .hint { padding: 12px; }
   .scope { padding: 8px 10px; overflow: auto; display: block; border: 2px dashed transparent; }
   .scope:global(.scope-over) { border-color: var(--accent); background: var(--accent-soft); }
-  .help { font-size: 13px; line-height: 1.7; margin: 0 0 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
   .scope ul { list-style: none; margin: 0; padding: 0; }
   .scope li { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
   .scope li .lab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -441,10 +496,12 @@
   .chip .link { padding: 0 4px; }
   .hits { flex: 1; overflow: auto; padding: 8px 24px 40px; }
   .intro, .err { padding-top: 8px; }
+  .empty-state { padding: 8px 0; }
+  .availability { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .err { color: var(--hl); white-space: pre-wrap; }
   .summary { font-size: 13px; margin-bottom: 8px; }
   article { border-bottom: 1px solid var(--line); padding: 10px 0 12px; }
-  h2 { font-size: 18px; margin: 0 0 6px; font-weight: 600; display: flex; gap: 10px; align-items: baseline; }
+  h2 { font-size: 18px; margin: 0 0 6px; font-weight: 600; display: flex; gap: 4px 10px; align-items: baseline; flex-wrap: wrap; }
   .id { font-size: 13px; font-weight: normal; }
   .snippet {
     display: flex; gap: 12px; width: 100%; text-align: left; border: none; background: none;
@@ -452,6 +509,16 @@
   }
   .snippet:hover { background: var(--accent-soft); }
   .where { flex: none; width: 110px; font-size: 12px; font-family: ui-monospace, Consolas, monospace; padding-top: 4px; }
-  .pager { display: flex; gap: 10px; align-items: center; justify-content: center; padding: 16px; }
+  .pager { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; padding: 16px; }
   .jump { width: 56px; text-align: center; }
+  @container (width < 700px) {
+    .main { flex-direction: column; }
+    .side { width: 100% !important; max-width: none; max-height: min(30vh, 220px); min-height: 100px; border-bottom: 1px solid var(--line); }
+    .split { display: none; }
+    .results { min-height: 0; }
+    .libs, .chips { padding-inline: 12px; }
+    .hits { padding-inline: 12px; }
+    .snippet { flex-direction: column; gap: 0; padding-inline: 0; }
+    .where { width: auto; padding-top: 0; }
+  }
 </style>
