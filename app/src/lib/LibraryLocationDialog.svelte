@@ -106,7 +106,7 @@
     </div>
     <div class="actions">
       <button type="button" onclick={onclose}>取消</button>
-      <button type="button" class="primary" disabled={!library || (!level && !rootAction)} onclick={() => onpick({ library, node: level ?? null, path })}>
+      <button type="button" class="primary" disabled={!library || (!level && !rootAction)} onclick={() => onpick({ library, node: level ?? null, path, depth: levels.length })}>
         {level ? directoryAction : rootAction ?? directoryAction}
       </button>
     </div>

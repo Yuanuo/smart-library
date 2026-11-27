@@ -174,7 +174,7 @@
     const v = a.vol ?? {};
     if (a.type === "search" || a.type === "phrase" || a.type === "book") {
       // a new search page; "search in this book" limits it to the book
-      const scopes = a.type === "book" ? [{ lib: v.lib, label: v.title, books: v.book_id ? [v.book_id] : [], paths: v.book_id ? [] : [v.path], rels: [], whole: false }] : [];
+      const scopes = a.type === "book" ? [{ lib: v.lib, kind: v.kind, label: v.title, books: v.book_id ? [v.book_id] : [], paths: v.book_id ? [] : [v.path], rels: [], whole: false }] : [];
       workspace.openSearch({ query: a.text, phrase: a.type === "phrase", scopes, autorun: true });
     } else if (a.type === "parent") {
       (async () => {
@@ -434,7 +434,7 @@
     if (kind === "title") {
       quickScope = scope;
       openQuickSearch(scope);
-    } else if (kind === "scope-add") workspace.addSearchScopes([rangeItem(scope)]);
+    } else if (kind === "scope-add") workspace.addSearchScopes(scope.scopes);
     else if (kind === "daily-add") {
       const it = rangeItem(scope);
       const have = settings.dailySources.some((x) => x.lib === it.lib && x.label === it.label);
@@ -494,7 +494,7 @@
   /** A full-text search page (a click on the button passes the event). */
   function openSearch(scope = null) {
     quick = false;
-    workspace.openSearch({ scopes: scope && scope.lib ? [rangeItem(scope)] : [] });
+    workspace.openSearch({ scopes: scope?.scopes ?? [] });
   }
 
   // window title: the active tab (document with author & library, search, or AI chat),

@@ -21,7 +21,7 @@ import FolderPanel from "./FolderPanel.svelte";
 import SearchPage from "./SearchPage.svelte";
 import AiPanel from "./AiPanel.svelte";
 import StartPage from "./StartPage.svelte";
-import { addScopesToSearch } from "./searchScope.js";
+import { addScopesToSearch, mergeSearchScopes } from "./searchScope.js";
 import { formatShortcut, formatCombo } from "./shortcuts.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -464,7 +464,7 @@ function searchRenderer() {
         libraryPinned: !!prm.libraryPinned,
         filters: prm.filters || {},
         scopes: prm.scopes || [],
-        tab: prm.tab || "/bulei",
+        tab: prm.tab || "scope",
         page: prm.page || 1,
         ran: !!prm.ran,
         autorun: !!prm.autorun, // search once when shown
@@ -1405,8 +1405,8 @@ export function openSearch({ query = "", phrase = false, scopes = [], autorun = 
     component: "search",
     title: "全文搜索",
     params: {
-      kind: "search", library, libraryPinned: library != null, tab: library ? "scope" : "/bulei",
-      ...more, query, phrase, scopes, autorun: autorun || !fresh, focusOnOpen: !fresh && !query,
+      kind: "search", library, libraryPinned: library != null, tab: "scope",
+      ...more, query, phrase, scopes: mergeSearchScopes([], scopes), autorun: autorun || !fresh, focusOnOpen: !fresh && !query,
     },
   });
   return id;
@@ -1416,7 +1416,7 @@ export function openSearch({ query = "", phrase = false, scopes = [], autorun = 
 export function addSearchScopes(items) {
   const st = lastSearchId && searchStates[lastSearchId];
   if (!st) return openSearch({ scopes: items });
-  if (addScopesToSearch(st, items)) st.rerun += 1;
+  if (addScopesToSearch(st, items, true)) st.rerun += 1;
   dv.getPanel(lastSearchId)?.api.setActive();
   return lastSearchId;
 }

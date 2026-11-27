@@ -14,44 +14,71 @@ export function withinOf(library, node) {
   return { lib: library.id, books: [...books], paths: [...paths], rel: null };
 }
 
-export function searchScope(library, node, label = library.title) {
+export function searchScope(library, node, label = library.title, depth) {
   const within = node ? withinOf(library, node) : null;
-  return { lib: library.id, label, books: within?.books ?? [], paths: within?.paths ?? [], rels: within?.rel ? [within.rel] : [], whole: !within };
+  return {
+    lib: library.id, kind: library.kind, label, depth,
+    books: within?.books ?? [], paths: within?.paths ?? [],
+    rels: within?.rel ? [within.rel] : [], whole: !within,
+  };
 }
 
-function scopeKey(scope) {
-  return JSON.stringify([scope.lib, !!scope.whole, ...[scope.books, scope.paths, scope.rels].map((parts) => [...(parts ?? [])].sort())]);
+function covers(parent, child, noteChains) {
+  if (parent.lib !== child.lib) return false;
+  if (parent.whole) return true;
+  if (child.whole) return false;
+  const { books = [], paths = [], rels = [] } = child;
+  if (!books.length && !paths.length && !rels.length) return parent.label === child.label;
+  const withinRel = (id) => parent.rels?.some((rel) =>
+    id === rel || id.startsWith(`${rel}/`) || noteChains?.get(parent.lib)?.get(id)?.includes(rel));
+  return books.every((book) => parent.books?.includes(book))
+    && rels.every(withinRel)
+    && paths.every((path) => parent.paths?.includes(path) || withinRel(path));
 }
 
-export function scopesForLibrary(scopes, id) {
-  const items = scopes.filter((item) => item.lib === id);
-  return items.some((item) => item.whole) ? [] : items;
+export function mergeSearchScopes(current, items, noteChains) {
+  let scopes = current;
+  for (const item of items) {
+    // A static tree parent can cover the same documents as its only child.
+    const shallower = (existing) => (item.depth ?? Infinity) < (existing.depth ?? Infinity);
+    if (scopes.some((existing) => covers(existing, item, noteChains) &&
+      !(shallower(existing) && covers(item, existing, noteChains)))) continue;
+    scopes = [...scopes.filter((existing) => !covers(item, existing, noteChains)), item];
+  }
+  return scopes;
 }
 
-export function setLibrarySearchScopes(search, scopes) {
-  search.scopes = [...search.scopes.filter((item) => item.lib !== search.lib), ...scopes];
-  search.libraryPinned = true;
+// Notes use numeric IDs, so ancestry comes from the live tree, including for
+// ranges restored from a workspace saved before source kinds were recorded.
+export async function normalizeSearchScopes(scopes, noteChain) {
+  const ids = new Map();
+  for (const scope of scopes) {
+    if (scope.whole || (scope.kind && scope.kind !== "notes")) continue;
+    const rels = [...(scope.rels ?? []), ...(scope.paths ?? [])].filter((id) => /^\d+$/.test(id));
+    if (!rels.length) continue;
+    if (!ids.has(scope.lib)) ids.set(scope.lib, new Set());
+    for (const id of rels) ids.get(scope.lib).add(id);
+  }
+  const chains = await Promise.all([...ids].filter(([, rels]) => rels.size > 1).map(async ([lib, rels]) => {
+    const entries = await Promise.all([...rels].map(async (id) => [id, await noteChain(lib, id).catch(() => [])]));
+    return [lib, new Map(entries)];
+  }));
+  return mergeSearchScopes([], scopes, new Map(chains));
 }
 
 /** Shared by the scope pane and the library tree's context menu. */
-export function addScopesToSearch(search, items) {
+export function addScopesToSearch(search, items, followLibrary = false) {
   if (!items.length) return false;
   search.tab = "scope";
-  // The library tree's multi-selection belongs to one library.
   const id = items[0].lib;
-  const current = scopesForLibrary(search.scopes, id);
-  const scopes = new Map(current.map((item) => [scopeKey(item), item]));
-  for (const item of items) {
-    if (item.whole) {
-      scopes.clear();
-      break;
-    }
-    const key = scopeKey(item);
-    if (!scopes.has(key)) scopes.set(key, item);
+  const viewChanged = followLibrary && (search.lib !== id || !search.libraryPinned);
+  if (viewChanged) {
+    if (search.lib !== id) search.filters = {};
+    search.lib = id;
+    search.libraryPinned = true;
   }
-  if (search.lib === id && search.libraryPinned && scopes.size === current.length) return false;
-  if (search.lib !== id) search.filters = {};
-  search.lib = id;
-  setLibrarySearchScopes(search, [...scopes.values()]);
-  return true;
+  const scopes = mergeSearchScopes(search.scopes, items);
+  const scopesChanged = scopes !== search.scopes;
+  if (scopesChanged) search.scopes = scopes;
+  return viewChanged || scopesChanged;
 }

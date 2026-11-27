@@ -18,7 +18,7 @@
     libraryPinned: !!start.libraryPinned,
     filters: start.filters || {},
     scopes: start.scopes || [],
-    tab: start.tab || "/bulei",
+    tab: start.tab || "scope",
     page: start.page || 1,
     ran: !!start.ran,
     autorun: false,

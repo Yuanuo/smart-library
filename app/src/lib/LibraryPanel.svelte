@@ -102,8 +102,8 @@
         { label: "复制目录树路径", action: () => oncopy(list.map(({ key }) => titleChain(l, key).join(" › ")).join("\n")) },
         "separator",
         { label: "从所选节点搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label, within: withinMany(l, list) }) },
-        { label: "从所选节点搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinMany(l, list) }) },
-        { label: "加入搜索范围", action: () => list.forEach(({ key, node }) => onsearchfrom("scope-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) })) },
+        { label: "从所选节点搜索全文…", action: () => onsearchfrom("full", { scopes: list.map(({ key, node }) => scopeOf(l, node, key)) }) },
+        { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { scopes: list.map(({ key, node }) => scopeOf(l, node, key)) }) },
         { label: "加入每日一句来源", action: () => list.forEach(({ key, node }) => onsearchfrom("daily-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) })) },
         "separator",
         {
@@ -501,7 +501,8 @@
 
   /** A node (or a whole library) as an item of a search range list. */
   function scopeOf(l, node, key) {
-    return searchScope(l, node, node ? titleChain(l, key).join(" › ") : l.title);
+    const trail = node ? titleChain(l, key) : [l.title];
+    return searchScope(l, node, trail.join(" › "), trail.length - 1);
   }
 
   /** Dragging a node (or the picked nodes, when it is one of them) into a search range list. */
@@ -982,8 +983,8 @@
       ],
       [
         { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label, within: withinOf(l, node) }) },
-        { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label, within: withinOf(l, node) }) },
-        { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) }) },
+        { label: "从这里搜索全文…", action: () => onsearchfrom("full", { scopes: [scopeOf(l, node, key)] }) },
+        { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { scopes: [scopeOf(l, node, key)] }) },
         { label: "加入每日一句来源", action: () => onsearchfrom("daily-add", { lib: l.id, label: titleChain(l, key).join(" › "), within: withinOf(l, node) }) },
       ],
       node.book_id || node.path || node.rel || l.kind === "cbeta" || l.kind === "html"
@@ -1436,8 +1437,8 @@
         ],
         [
           { label: "从这里搜索标题…", action: () => onsearchfrom("title", { lib: l.id, label: l.title, within: null }) },
-          { label: "从这里搜索全文…", action: () => onsearchfrom("full", { lib: l.id, label: l.title, within: null }) },
-          { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { lib: l.id, label: l.title, within: null }), disabled: !l.index_ready },
+          { label: "从这里搜索全文…", action: () => onsearchfrom("full", { scopes: [scopeOf(l, null)] }) },
+          { label: "加入搜索范围", action: () => onsearchfrom("scope-add", { scopes: [scopeOf(l, null)] }), disabled: !l.index_ready },
           { label: "加入每日一句来源", action: () => onsearchfrom("daily-add", { lib: l.id, label: l.title, within: null }), disabled: !l.index_ready },
           { label: l.index_ready ? "重建索引" : "建立索引", action: () => onindex(l.id), disabled: building || !!l.error },
           { label: "索引报告…", action: () => onindexdialog(l.id, "report") },

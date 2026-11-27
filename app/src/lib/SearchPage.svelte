@@ -13,14 +13,15 @@
   import * as api from "./api.js";
   import { settings } from "./settings.svelte.js";
   import FacetPane from "./FacetPane.svelte";
+  import SearchScopePane from "./SearchScopePane.svelte";
   import LibraryLocationDialog from "./LibraryLocationDialog.svelte";
-  import ContextMenu from "./ContextMenu.svelte";
   import Icon from "./Icon.svelte";
-  import { addScopesToSearch, scopesForLibrary, searchScope, setLibrarySearchScopes } from "./searchScope.js";
+  import { addScopesToSearch, normalizeSearchScopes, searchScope } from "./searchScope.js";
   import { searchCitation } from "./clip.js";
 
   let { s, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onsearchresult = null, onsetup = null } = $props();
   const NO_INDEX = "还没有可搜索的知识库：请先为知识库建立索引";
+  const PAGE_SIZE = 20;
 
   const DIMENSIONS = [
     ["/bulei", "部类"],
@@ -35,8 +36,7 @@
   let error = $state("");
   let input = $state();
   let hitsEl = $state();
-  let menu = $state(null);
-  let chooseScope = $state(null);
+  let chooseScope = $state(false);
   let unavailable = $state(null);
   let selecting = $state(false);
   let picked = $state([]);
@@ -44,6 +44,7 @@
   let shareMessage = $state("");
   let ran = $state({ query: "", phrase: false }); // what the shown results were searched for
   let seq = 0;
+  let normalizedScopes = $state.raw(null);
 
   // ---------------------------------------------------------------- search
   async function run(page = 1) {
@@ -57,16 +58,21 @@
     const query = s.query;
     const phrase = s.phrase;
     const library = s.libraryPinned || filters.length ? s.lib : null;
-    const scopes = s.scopes.length ? $state.snapshot(s.scopes) : null;
     try {
+      if (s.scopes !== normalizedScopes) {
+        const scopes = await normalizeSearchScopes(s.scopes, api.noteChain);
+        if (my !== seq) return;
+        if (scopes.length !== s.scopes.length) s.scopes = scopes;
+        normalizedScopes = s.scopes;
+      }
       const r = await api.search({
         query,
         phrase,
         lib: library,
         filters: filters.length ? filters : null,
-        withins: scopes,
+        withins: s.scopes.length ? $state.snapshot(s.scopes) : null,
         page,
-        limit: 20,
+        limit: PAGE_SIZE,
         merge: library == null,
       });
       if (my !== seq) return;
@@ -161,39 +167,33 @@
   }
 
   // ---------------------------------------------------------------- range
-  const currentLibrary = $derived(result?.libraries.find((library) => library.id === s.lib));
-  const currentScopes = $derived(scopesForLibrary(s.scopes, s.lib));
+  const shownScopes = $derived(normalizedScopes ?? s.scopes);
   const libraries = $derived(result ? [...result.libraries].sort((a, b) => Number(b.count > 0) - Number(a.count > 0)) : []);
   const libraryTitles = $derived(new Map(libraries.map(({ id, title }) => [id, title])));
-  const scopedLibraries = $derived(new Set(libraries.filter(({ id }) => scopesForLibrary(s.scopes, id).length).map(({ id }) => id)));
+  const scopedLibraries = $derived(new Set(shownScopes.filter((scope) => !scope.whole).map((scope) => scope.lib)));
 
-  function addScopes(items) {
-    if (addScopesToSearch(s, items)) changed();
+  function addScopes(items, followLibrary = false) {
+    if (addScopesToSearch(s, items, followLibrary)) changed();
     else onstate?.();
   }
   function removeScope(scope) {
-    if (currentScopes.includes(scope)) updateScopes(currentScopes.filter((item) => item !== scope));
+    if (s.scopes.includes(scope)) updateScopes(s.scopes.filter((item) => item !== scope));
   }
   function updateScopes(scopes) {
-    setLibrarySearchScopes(s, scopes);
+    s.scopes = scopes;
     changed();
-  }
-  function scopeMenu(e, scope) {
-    e.preventDefault();
-    menu = { x: e.clientX, y: e.clientY, items: [{ label: "移除此项", action: () => removeScope(scope) }] };
   }
 
   // ---------------------------------------------------------------- tabs
   const switchingLibrary = $derived(busy && result && result.lib !== s.lib);
   const tabs = $derived.by(() => {
-    const list = [];
+    const list = [{ id: "scope", label: "范围", n: shownScopes.length }];
     for (const [root, label] of DIMENSIONS) {
       const f = switchingLibrary ? null : result?.facets.find((x) => x.root === root);
       const n = selected(root).length;
-      if (result && !f?.values.length && !n) continue;
+      if (!f?.values.length && !n) continue;
       list.push({ id: root, label, n });
     }
-    list.push({ id: "scope", label: "范围", n: currentScopes.length });
     return list;
   });
   const activeTab = $derived(tabs.some((t) => t.id === s.tab) ? s.tab : "scope");
@@ -212,6 +212,17 @@
   }
   const browsing = $derived(result && !ran.query);
   const otherMatch = $derived(result?.lib && libraries.find((library) => library.id !== result.lib && library.count > 0));
+  const showResultTools = $derived(result && !error && !switchingLibrary && !result.index_unavailable);
+  const firstOnPage = $derived(result?.hits.length ? (result.page - 1) * PAGE_SIZE + 1 : 0);
+
+  function goToPage(event) {
+    event.preventDefault();
+    const field = event.currentTarget.elements.namedItem("page");
+    const value = Number.parseInt(field.value, 10);
+    const page = Number.isFinite(value) ? Math.min(Math.max(value, 1), result.pages) : result.page;
+    field.value = String(page);
+    if (page !== result.page) run(page);
+  }
 
   const hitKey = (hit) => JSON.stringify([hit.lib, hit.path]);
   const pickedKeys = $derived(new Set(picked.map((item) => hitKey(item.hit))));
@@ -318,23 +329,32 @@
 
 <div class="page">
   <form class="bar" onsubmit={submit}>
-    <input type="search" class="q" bind:this={input} bind:value={s.query} oninput={() => onstate?.()}
-      placeholder="输入关键词，留空浏览全部" aria-label="全文搜索" />
-    <span class="seg" role="radiogroup" aria-label="匹配方式">
-      <button type="button" class:on={!s.phrase} onclick={() => setMode(false)} role="radio" aria-checked={!s.phrase}
-        title="中文按相邻两字分组，各组可出现在同一文档的不同位置。用空格分隔关键词。">宽松匹配</button>
-      <button type="button" class:on={s.phrase} onclick={() => setMode(true)} role="radio" aria-checked={s.phrase}
-        title="整句连续出现（忽略标点）">精确短语</button>
-    </span>
-    <button class="primary" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
-    {#if settings.aiOn && onai}
-      <button type="button" class="ai-btn" onclick={() => onai({ toggle: true })} title="打开 / 收起右侧 AI 助手栏（F1，可根据搜索结果编写创新方案）">
-        <Icon name="sparkles" size={16} /> AI 助手
-      </button>
-    {/if}
-    {#if onpopout}
-      <button type="button" class="link" onclick={onpopout} title="在新窗口打开这个搜索">新窗口</button>
-    {/if}
+    <div class="query-tools">
+      <div class="query-field">
+        <span class="query-icon"><Icon name="search" size={16} /></span>
+        <input type="search" class="q" bind:this={input} bind:value={s.query} oninput={() => onstate?.()}
+          placeholder="搜索全文" aria-label="全文搜索" />
+      </div>
+      <select class="mode" aria-label="匹配方式" value={s.phrase ? "phrase" : "loose"}
+        title={s.phrase ? "整句连续出现（忽略标点）" : "用空格分隔关键词，各组可以出现在文档的不同位置"}
+        onchange={(event) => setMode(event.currentTarget.value === "phrase")}>
+        <option value="loose">宽松匹配</option>
+        <option value="phrase">精确短语</option>
+      </select>
+      <button class="primary submit" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
+    </div>
+    <div class="view-tools">
+      {#if settings.aiOn && onai}
+        <button type="button" class="view-action" onclick={() => onai({ toggle: true })} title="打开 / 收起右侧 AI 助手栏（F1）">
+          <Icon name="sparkles" size={16} /> AI 助手
+        </button>
+      {/if}
+      {#if onpopout}
+        <button type="button" class="view-action" onclick={onpopout} title="在新窗口打开这个搜索">
+          <Icon name="open-window" size={15} /> 新窗口
+        </button>
+      {/if}
+    </div>
   </form>
 
   <div class="main">
@@ -342,30 +362,15 @@
       <div class="tabs" role="tablist">
         {#each tabs as t (t.id)}
           <button role="tab" aria-selected={activeTab === t.id} class:on={activeTab === t.id} onclick={() => ((s.tab = t.id), onstate?.())}
-            data-scope-drop={t.id === "scope" ? "" : null} onscopedrop={(e) => addScopes(e.detail)}>
-            {t.label}{#if t.id === "scope"}{t.n ? "*" : ""}{:else if t.n}<span class="dot">{t.n}</span>{/if}
+            data-scope-drop={t.id === "scope" ? "" : null} onscopedrop={(e) => addScopes(e.detail, true)}>
+            {t.label}{#if t.n}<span class="dot">{t.n}</span>{/if}
           </button>
         {/each}
       </div>
       <div class="panes">
         {#if activeTab === "scope"}
-          <div class="scope" data-scope-drop onscopedrop={(e) => addScopes(e.detail)}>
-            <div class="scope-actions">
-              <button type="button" disabled={!libraries.length || !!error || (result?.index_unavailable && result.lib === s.lib)}
-                onclick={() => (chooseScope = { libraryId: currentLibrary?.id ?? null, libraryIds: libraries.map((item) => item.id) })}>添加范围…</button>
-              <button type="button" disabled={!currentScopes.length} onclick={() => updateScopes([])}>清空范围</button>
-            </div>
-            <ul>
-              {#each currentScopes as sc (sc)}
-                <li oncontextmenu={(e) => scopeMenu(e, sc)} title={sc.label}>
-                  <span class="lab">{sc.label}</span>
-                  <button type="button" class="link x" onclick={() => removeScope(sc)} aria-label={`移除：${sc.label}`}>×</button>
-                </li>
-              {:else}
-                <li class="muted empty">{currentLibrary ? `在「${currentLibrary.title}」中搜索全部文档。可拖入目录或文档限定范围。` : "可用「添加范围」选择目录，也可拖入目录树中的节点。"}</li>
-              {/each}
-            </ul>
-          </div>
+          <SearchScopePane scopes={shownScopes} {libraryTitles} onchoose={() => (chooseScope = true)}
+            onadd={(items) => addScopes(items, true)} onremove={removeScope} onclear={() => updateScopes([])} />
         {:else if facet}
           {#key facet.root}
             <FacetPane {facet} selected={selected(facet.root)} ontoggle={(n) => toggle(facet.root, n)} onclear={() => clearDim(facet.root)} />
@@ -379,7 +384,7 @@
     <div class="split" role="separator" aria-orientation="vertical" aria-label="调整筛选栏宽度" aria-valuenow={sideWidth} tabindex="0" onpointerdown={dragSide} onkeydown={resizeSide}
       ondblclick={() => (sideWidth = 300)} title="拖动调整宽度，双击还原"></div>
 
-    <section class="results">
+    <section class="results" aria-busy={busy}>
       {#if result && !error && result.libraries.length > 1}
         <div class="libs" role="group" aria-label="显示哪个知识库的结果">
           <button aria-pressed={!s.libraryPinned} class:on={!s.libraryPinned} onclick={() => pickLibrary(null)}>全部知识库</button>
@@ -398,6 +403,33 @@
               <button class="link" onclick={() => toggle(c.root, c.name)} aria-label="取消">×</button></span>
           {/each}
           <button class="link" onclick={clearFilters}>清除过滤</button>
+        </div>
+      {/if}
+      {#if showResultTools}
+        <div class="result-head">
+          <p class="summary" aria-live="polite">
+            {#if result.kind === "cbeta"}
+              {browsing ? "共" : "命中"} <strong>{result.total_books.toLocaleString()}</strong> 部、<strong>{result.total_volumes.toLocaleString()}</strong> 卷
+            {:else}
+              {browsing ? "共" : "找到"} <strong>{result.total_volumes.toLocaleString()}</strong> {browsing ? "篇文档" : "篇匹配文档"}
+            {/if}
+          </p>
+          {#if result.hits.length || picked.length}
+            <div class="citation-actions">
+              {#if selecting}
+                {#if result.hits.length}
+                  <label><input type="checkbox" checked={allPagePicked} onchange={(event) => pickHits(result.hits, event.currentTarget.checked)} />全选本页</label>
+                {/if}
+                <span class="muted selection-count">已选 {picked.length} 条</span>
+                <button type="button" onclick={() => shareCitations()} disabled={!picked.length || sharing}>复制引用</button>
+                <button type="button" onclick={() => shareCitations(true)} disabled={!picked.length || sharing}>导出 Markdown…</button>
+                <button type="button" class="link" onclick={() => { selecting = false; clearPicked(); }} disabled={sharing}>退出选择</button>
+              {:else}
+                <button type="button" onclick={() => (selecting = true)}>选择结果</button>
+              {/if}
+            </div>
+          {/if}
+          {#if shareMessage}<p class="muted share-message" role="status">{shareMessage}</p>{/if}
         </div>
       {/if}
       <div class="hits" bind:this={hitsEl}>
@@ -433,33 +465,8 @@
           <p>「{libraryTitles.get(result.lib)}」的全文索引暂不可用。</p>
           {#if onsetup}<button type="button" onclick={() => onsetup({ type: "index", id: result.lib })}>查看索引…</button>{/if}
         {:else}
-          <div class="summary muted">
-            {#if result.lib == null}
-              共 {result.total_volumes} 个命中文档
-            {:else}
-              {#if result.libraries.length > 1}{libraryTitles.get(result.lib)} · {/if}
-              {browsing ? "共 " : "命中 "}
-              {#if result.kind === "cbeta"}{result.total_books} 部、{result.total_volumes} 卷{:else}{result.total_volumes} 篇{/if}
-            {/if}
-            {#if result.pages > 1}· 第 {result.page} / {result.pages} 页{/if}
-          </div>
           {#if result.unavailable_libraries.length}
             <p class="muted unsearched">未参与全文搜索：{result.unavailable_libraries.join("、")}</p>
-          {/if}
-          {#if result.hits.length || picked.length}
-            <div class="citation-actions">
-              {#if selecting}
-                {#if result.hits.length}
-                  <label><input type="checkbox" checked={allPagePicked} onchange={(event) => pickHits(result.hits, event.currentTarget.checked)} />全选本页</label>
-                {/if}
-                <button type="button" onclick={() => shareCitations()} disabled={!picked.length || sharing}>复制引用（{picked.length}）</button>
-                <button type="button" onclick={() => shareCitations(true)} disabled={!picked.length || sharing}>导出 Markdown…</button>
-                <button type="button" class="link" onclick={() => { selecting = false; clearPicked(); }} disabled={sharing}>退出选择</button>
-              {:else}
-                <button type="button" class="link" onclick={() => (selecting = true)}>选择结果</button>
-              {/if}
-              {#if shareMessage}<span class="muted" role="status">{shareMessage}</span>{/if}
-            </div>
           {/if}
           {#each result.hits as h}
             <article>
@@ -489,48 +496,55 @@
               <p class="muted">{browsing ? "此范围没有可浏览的文档。" : "此范围没有匹配结果。试试更短的关键词或扩大搜索范围。"}</p>
             {/if}
           {/each}
-          {#if result.pages > 1}
-            <nav class="pager">
-              <button disabled={result.page <= 1 || busy} onclick={() => run(1)}>首页</button>
-              <button disabled={result.page <= 1 || busy} onclick={() => run(result.page - 1)}>上一页</button>
-              <span class="muted">
-                <input class="jump" type="number" min="1" max={result.pages} value={result.page}
-                  onchange={(e) => run(Math.min(Math.max(1, Number(e.currentTarget.value) || 1), result.pages))} /> / {result.pages}
-              </span>
-              <button disabled={result.page >= result.pages || busy} onclick={() => run(result.page + 1)}>下一页</button>
-              <button disabled={result.page >= result.pages || busy} onclick={() => run(result.pages)}>末页</button>
-            </nav>
-          {/if}
         {/if}
       </div>
+      {#if showResultTools && result.pages > 1}
+        <nav class="pager" aria-label="搜索结果分页">
+          {#if firstOnPage}
+            <span class="page-range">第 {firstOnPage.toLocaleString()}–{(firstOnPage + result.hits.length - 1).toLocaleString()} 条</span>
+          {/if}
+          <form class="page-controls" onsubmit={goToPage}>
+            <button type="button" aria-label="首页" title="首页" disabled={result.page <= 1 || busy} onclick={() => run(1)}>«</button>
+            <button type="button" aria-label="上一页" title="上一页" disabled={result.page <= 1 || busy} onclick={() => run(result.page - 1)}>
+              <Icon name="arrow-left" size={15} />
+            </button>
+            <label class="page-number">第
+              {#key result.page}
+                <input type="text" inputmode="numeric" name="page" value={result.page} disabled={busy} aria-label="页码"
+                  title="输入页码，按 Enter 跳转" onfocus={(event) => event.currentTarget.select()} />
+              {/key}
+              / {result.pages.toLocaleString()} 页
+            </label>
+            <button type="button" aria-label="下一页" title="下一页" disabled={result.page >= result.pages || busy} onclick={() => run(result.page + 1)}>
+              <Icon name="arrow-right" size={15} />
+            </button>
+            <button type="button" aria-label="末页" title="末页" disabled={result.page >= result.pages || busy} onclick={() => run(result.pages)}>»</button>
+          </form>
+        </nav>
+      {/if}
     </section>
   </div>
 </div>
 
-{#if menu}
-  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
-{/if}
-
 {#if chooseScope}
-  <LibraryLocationDialog title="添加搜索范围" {...chooseScope} directoryAction="添加当前目录"
-    onpick={({ library, node, path }) => { addScopes([searchScope(library, node, path)]); chooseScope = null; }}
-    onclose={() => (chooseScope = null)} />
+  <LibraryLocationDialog title="添加搜索范围" directoryAction="添加当前目录" rootAction="添加整个知识库"
+    onpick={({ library, node, path, depth }) => { addScopes([searchScope(library, node, path, depth)]); chooseScope = false; }}
+    onclose={() => (chooseScope = false)} />
 {/if}
 
 <style>
   .page { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--paper); container-type: inline-size; }
-  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  .q { flex: 1 1 180px; min-width: 0; font-size: 16px; }
-  .seg { display: inline-flex; flex: none; }
-  .seg button { border-radius: 0; padding: 3px 12px; }
-  .seg button:first-child { border-radius: 6px 0 0 6px; }
-  .seg button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
-  .seg button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
-  .ai-btn {
-    display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;
-    font-size: 13px; border-radius: 6px; flex: none;
-  }
-  .ai-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .query-tools { display: flex; align-items: stretch; gap: 7px; flex: 1 1 390px; min-width: 0; max-width: 535px; }
+  .query-field { position: relative; flex: 1; min-width: 0; }
+  .query-icon { position: absolute; inset-inline-start: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+  .q { width: 100%; height: 34px; padding-inline-start: 33px; font-size: 15px; }
+  .mode { flex: none; max-width: 40%; font-size: 13px; }
+  .submit { flex: none; min-width: 67px; padding: 4px 8px; font-size: 14px; }
+  .view-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-inline-start: auto; }
+  .view-tools:empty { display: none; }
+  .view-action { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-color: transparent; background: transparent; color: var(--accent); font-size: 13px; }
+  .view-action:hover { background: var(--accent-soft); }
   .main { flex: 1; display: flex; min-height: 0; }
   .side { flex: none; display: flex; flex-direction: column; background: var(--panel); min-height: 0; min-width: 0; max-width: 42%; }
   .split { flex: none; width: 5px; cursor: col-resize; border-left: 1px solid var(--line); background: var(--panel); touch-action: none; }
@@ -547,34 +561,32 @@
   .panes { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .panes > :global(*) { flex: 1; min-height: 0; }
   .hint { padding: 12px; }
-  .scope { padding: 8px 10px; overflow: auto; display: block; border: 2px dashed transparent; }
-  .scope:global(.scope-over) { border-color: var(--accent); background: var(--accent-soft); }
-  .scope-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-  .scope ul { list-style: none; margin: 0; padding: 0; }
-  .scope li { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
-  .scope li .lab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .scope li.empty { border: none; }
-  .x { font-size: 16px; color: var(--muted); }
-  .results { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .libs { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 24px 0; }
+  .results { --result-gutter: 20px; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .libs { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px var(--result-gutter) 0; }
   .libs button { border-radius: 14px; font-size: 13px; padding: 2px 12px; }
   .libs button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
   .libs .n { opacity: 0.75; margin-left: 4px; }
-  .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 8px 24px 0; font-size: 13px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 8px var(--result-gutter) 0; font-size: 13px; }
   .chip { background: var(--accent-soft); border-radius: 12px; padding: 1px 4px 1px 10px; }
   .chip .link { padding: 0 4px; }
-  .hits { flex: 1; overflow: auto; padding: 8px 24px 40px; }
+  .result-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px var(--result-gutter); min-height: 45px; border-bottom: 1px solid var(--line); }
+  .summary { margin: 0; color: var(--muted); font-size: 13px; }
+  .summary strong { color: var(--accent); font-size: 16px; font-variant-numeric: tabular-nums; }
+  .hits { flex: 1; min-height: 0; overflow: auto; padding: 4px var(--result-gutter) 14px; }
   .intro, .err { padding-top: 8px; }
   .empty-state { padding: 8px 0; }
   .availability { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .err { color: var(--hl); white-space: pre-wrap; }
-  .summary { font-size: 13px; margin-bottom: 8px; }
-  .unsearched { font-size: 13px; margin: 0 0 8px; overflow-wrap: anywhere; }
-  .citation-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 4px; font-size: 13px; }
-  .citation-actions label { display: inline-flex; gap: 4px; align-items: center; }
+  .unsearched { font-size: 13px; margin: 8px 0; overflow-wrap: anywhere; }
+  .citation-actions { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; font-size: 13px; }
+  .citation-actions button { padding: 3px 8px; }
+  .citation-actions label { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
+  .selection-count { white-space: nowrap; }
+  .share-message { flex-basis: 100%; margin: 0; font-size: 13px; }
   article { border-bottom: 1px solid var(--line); padding: 10px 0 12px; }
   h2 { font-size: 18px; margin: 0 0 6px; font-weight: 600; display: flex; gap: 4px 10px; align-items: baseline; flex-wrap: wrap; }
-  .source { font-size: 13px; font-weight: normal; }
+  .source { padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); font-size: 12px; font-weight: normal; }
+  .source:hover { text-decoration: underline; }
   .id { font-size: 13px; font-weight: normal; }
   .snippet {
     display: flex; gap: 12px; width: 100%; text-align: left; border: none; background: none;
@@ -582,16 +594,24 @@
   }
   .snippet:hover { background: var(--accent-soft); }
   .where { flex: none; width: 110px; font-size: 12px; font-family: ui-monospace, Consolas, monospace; padding-top: 4px; }
-  .pager { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; padding: 16px; }
-  .jump { width: 56px; text-align: center; }
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; padding: 7px var(--result-gutter); border-top: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+  .page-range { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .page-controls { display: flex; align-items: center; gap: 4px; margin-inline-start: auto; }
+  .page-controls button { display: grid; place-items: center; padding: 0; width: 30px; height: 28px; color: var(--accent); font-size: 17px; }
+  .page-controls button:disabled, .citation-actions button:disabled { opacity: .48; cursor: default; }
+  .page-number { display: flex; align-items: center; gap: 5px; padding: 0 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .page-number input { width: 5ch; height: 28px; padding: 2px; text-align: center; }
   @container (width < 700px) {
     .main { flex-direction: column; }
     .side { width: 100% !important; max-width: none; max-height: min(30vh, 220px); min-height: 100px; border-bottom: 1px solid var(--line); }
     .split { display: none; }
-    .results { min-height: 0; }
-    .libs, .chips { padding-inline: 12px; }
-    .hits { padding-inline: 12px; }
+    .results { --result-gutter: 12px; }
     .snippet { flex-direction: column; gap: 0; padding-inline: 0; }
     .where { width: auto; padding-top: 0; }
+  }
+  @container (width < 420px) {
+    .bar { padding-inline: 10px; }
+    .view-tools { margin-inline-start: 0; }
+    .page-controls { margin-inline-start: 0; }
   }
 </style>
