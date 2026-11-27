@@ -59,9 +59,10 @@ pub fn ai_tool_definitions() -> Vec<serde_json::Value> {
 pub async fn ai_exec_tool(
     name: String,
     arguments: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<crate::ai_tools::AiToolResult, String> {
-    Ok(crate::ai_tools::exec_tool(&name, &arguments, state).await)
+    Ok(crate::ai_tools::exec_tool(&name, &arguments, &app, state).await)
 }
 
 #[tauri::command]

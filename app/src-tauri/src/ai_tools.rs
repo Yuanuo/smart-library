@@ -6,7 +6,7 @@ use crate::commands::{self, AppState};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 /// Access control policy applied when executing tools.
 #[derive(Debug, Clone)]
@@ -457,14 +457,16 @@ fn trim_tree_value(v: Value, budget: &mut usize) -> Value {
 pub async fn exec_tool(
     name: &str,
     args_raw: &str,
+    app: &AppHandle,
     state: State<'_, AppState>,
 ) -> AiToolResult {
-    exec_tool_with_policy(name, args_raw, state, &ToolPolicy::allow_all()).await
+    exec_tool_with_policy(name, args_raw, app, state, &ToolPolicy::allow_all()).await
 }
 
 pub async fn exec_tool_with_policy(
     name: &str,
     args_raw: &str,
+    app: &AppHandle,
     state: State<'_, AppState>,
     policy: &ToolPolicy,
 ) -> AiToolResult {
@@ -563,7 +565,7 @@ pub async fn exec_tool_with_policy(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(15)
                 .clamp(1, 50) as usize;
-            match commands::search(query.clone(), phrase, lib.clone(), None, None, Some(1), Some(limit), state.clone()).await
+            match commands::search(query.clone(), phrase, lib.clone(), None, None, Some(1), Some(limit), app.clone(), state.clone()).await
             {
                 Ok(dto) => {
                     let mut v = serde_json::to_value(dto).unwrap_or(json!({}));
@@ -588,7 +590,7 @@ pub async fn exec_tool_with_policy(
                             .unwrap_or(false);
                         if selected_denied {
                             if let Some(next_lib) = first_allowed {
-                                if let Ok(dto2) = commands::search(query, phrase, Some(next_lib), None, None, Some(1), Some(limit), state).await {
+                                if let Ok(dto2) = commands::search(query, phrase, Some(next_lib), None, None, Some(1), Some(limit), app.clone(), state).await {
                                     v = serde_json::to_value(dto2).unwrap_or(json!({}));
                                     if let Some(arr) = v.get_mut("libraries").and_then(|x| x.as_array_mut()) {
                                         filter_json_array_by_lib(arr, "id", &policy.denied_libs);

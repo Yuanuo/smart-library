@@ -778,6 +778,7 @@
         if (lib) libPanel?.reloadNode?.(lib, "");
         if (lib && path) workspace.refreshDocument(lib, path);
       }),
+      listen("note-index-synced", refresh),
     ];
     const un0a = api.onTitlesProgress((p) => (titlesProgress[p.lib] = p));
     const un0b = api.onTitlesDone((d) => delete titlesProgress[d.lib]);

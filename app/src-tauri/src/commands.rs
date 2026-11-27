@@ -3600,6 +3600,7 @@ pub async fn search(
     withins: Option<Vec<WithinDto>>,
     page: Option<usize>,
     limit: Option<usize>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<SearchDto, String> {
     let start = std::time::Instant::now();
@@ -3621,7 +3622,9 @@ pub async fn search(
         libs.retain(|l| ranges.contains_key(&l.id));
     }
     // notes edited since the last search join the index now
-    state.flush_dirty(&libs);
+    if state.flush_dirty(&libs) {
+        let _ = app.emit("note-index-synced", ());
+    }
     // counts per library ignore the filters (those belong to one library)
     let mut counts = Vec::new();
     for l in &libs {
@@ -5423,7 +5426,8 @@ mod library_id_tests {
         {
             let state = open();
             let dir = state.index_dir(&lib.id);
-            state.flush_dirty(std::slice::from_ref(&lib));
+            assert!(state.flush_dirty(std::slice::from_ref(&lib)));
+            assert!(!state.flush_dirty(std::slice::from_ref(&lib)));
             let index = SearchIndex::open(&dir).unwrap();
             for text in ["保存正文", "其他正文"] {
                 let result = index.search(&SearchRequest::new(text)).unwrap();

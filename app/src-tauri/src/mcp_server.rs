@@ -703,6 +703,7 @@ async fn dispatch_request(
                 let res = ai_tools::exec_tool_with_policy(
                     tool_name,
                     &args_str,
+                    app,
                     app.state::<AppState>(),
                     &policy,
                 )
@@ -835,6 +836,7 @@ async fn handle_mcp_message(
             let res = ai_tools::exec_tool_with_policy(
                 name,
                 &args_str,
+                app,
                 app.state::<AppState>(),
                 policy,
             )

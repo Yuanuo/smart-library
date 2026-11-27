@@ -48,7 +48,8 @@ impl AppState {
     /// those that exist are written again, those that are gone are dropped.
     /// Done just before a full-text search, so saving a note stays cheap and
     /// the index only matters when it is used. Failures are left for a rebuild.
-    pub(super) fn flush_dirty(&self, libs: &[Library]) {
+    pub(super) fn flush_dirty(&self, libs: &[Library]) -> bool {
+        let mut notes_synced = false;
         for l in libs {
             let dir = self.index_dir(&l.id);
             if !dir.join("smart-library-index.json").exists()
@@ -57,8 +58,9 @@ impl AppState {
                 continue; // no index to update yet, or a build is running; keep dirty paths for later
             }
             if l.kind == "notes" {
-                if let Err(e) = self.sync_notes_index(l, &dir) {
-                    eprintln!("failed to update note index for {}: {e}", l.id);
+                match self.sync_notes_index(l, &dir) {
+                    Ok(synced) => notes_synced |= synced,
+                    Err(e) => eprintln!("failed to update note index for {}: {e}", l.id),
                 }
                 continue;
             }
@@ -130,14 +132,15 @@ impl AppState {
                 }
             }
         }
+        notes_synced
     }
 
-    pub(super) fn sync_notes_index(&self, lib: &Library, dir: &Path) -> Result<(), String> {
+    pub(super) fn sync_notes_index(&self, lib: &Library, dir: &Path) -> Result<bool, String> {
         let store = self.notes(lib)?;
         let since = SearchIndex::data_version(dir)
             .and_then(|version| version.strip_prefix("notes:")?.parse().ok());
         let Some(batch) = store.index_changes(since)? else {
-            return Ok(());
+            return Ok(false);
         };
         let version = notes::index_version(batch.revision);
         let overlay = self.props.overlay(&lib.id)?;
@@ -158,7 +161,10 @@ impl AppState {
             smart_library_core::search::replace_docs(dir, docs, &version, &overlay)?;
         }
         self.indexes.write().unwrap().remove(&lib.id);
-        store.prune_index_changes(batch.revision)
+        if let Err(e) = store.prune_index_changes(batch.revision) {
+            eprintln!("failed to prune note index journal for {}: {e}", lib.id);
+        }
+        Ok(true)
     }
 
     pub(super) fn index(&self, id: &str) -> Option<Arc<SearchIndex>> {
