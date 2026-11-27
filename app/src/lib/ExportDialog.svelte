@@ -112,6 +112,7 @@
         导入时成为一个可编辑的自建知识库。
       </p>
     {/if}
+    <p class="muted small">此数据包用于转移所选资料。完整迁移应用数据、设置和外部资料时，可在「设置 → 数据与备份」查看目录和步骤。</p>
     {#if busy || (progress && !result)}
       {#if progress?.stage}
         <progress></progress>

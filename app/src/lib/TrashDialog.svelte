@@ -82,7 +82,7 @@
     onkeydown={(e) => e.key === "Escape" && onclose()}>
     <DialogHeader title={`回收站：${libTitle}`} />
     <div class="dialog-content">
-      <p class="muted hint">删除的文件和文件夹会放在这里，可以恢复到原来的位置。清空回收站（设置 → 数据清理）后就不能恢复了。</p>
+      <p class="muted hint">删除的文件和文件夹可以恢复到原来的位置。「设置 → 数据与备份」可以永久清空文件夹库的回收站。</p>
       <div class="bar">
         <span class="muted">{loading ? "载入中…" : `${items.length} 项`}</span>
         <span class="grow"></span>

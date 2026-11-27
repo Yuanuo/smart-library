@@ -81,6 +81,10 @@ fn ext_of(name: &str) -> String {
     name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default()
 }
 
+fn external_edit_error() -> String {
+    "原文件已在本程序之外被修改。本次写入已停止。".into()
+}
+
 /// Whether a file name is text this program can show as it is.
 pub fn is_text_file(name: &str) -> bool {
     let ext = ext_of(name);
@@ -534,7 +538,7 @@ impl FolderLibrary {
         }
         if let Some(e) = expect {
             if self.stamp(rel)? != e {
-                return Err("原文件已在本程序之外被修改。本次写入已停止。".into());
+                return Err(external_edit_error());
             }
         }
         let name = rel.rsplit('/').next().unwrap_or(rel);
@@ -915,26 +919,13 @@ impl FolderLibrary {
     /// The text of an editable file as it is written to disk. A Markdown note gets
     /// relative links to its pictures (`![](../.smart-library/attachments/5c/99/<名>.png)`,
     /// so other programs show them), the data of a map or board keeps `attach:<名>`.
-    /// A picture that was kept the way an earlier version did is moved to the place
-    /// it has now. A picture the note referred to when it was saved last and no longer does
-    /// goes to the trash (an undo in the editor brings the link back, and the picture is
-    /// found there again and put back with the next save).
-    pub fn prepare_save(&self, rel: &str, content: &str) -> Result<String, String> {
-        let (path, kind) = self.editable(rel)?;
-        let names = crate::attach::refs(content);
-        if let Ok(old) = std::fs::read(&path) {
-            for n in crate::attach::refs(&to_editor(&decode_auto(&old))) {
-                if !names.contains(&n) {
-                    if let Some(p) = self.picture_path(&n).filter(|p| p.is_file()) {
-                        self.trash_picture(&p, &n)?;
-                    }
-                }
-            }
-        }
+    /// Restore referenced pictures from the trash or earlier storage layouts.
+    fn prepare_save(&self, rel: &str, content: &str, names: &[String]) -> Result<String, String> {
+        let (_, kind) = self.editable(rel)?;
         for n in names {
-            let Some(dst) = self.picture_path(&n) else { continue };
+            let Some(dst) = self.picture_path(n) else { continue };
             if !dst.exists() {
-                if let Some(src) = self.find_picture(&n) {
+                if let Some(src) = self.find_picture(n) {
                     let dir = dst.parent().unwrap_or(&self.root);
                     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
                     std::fs::copy(&src, &dst).map_err(|e| format!("{}: {}", dst.display(), e))?;
@@ -942,6 +933,20 @@ impl FolderLibrary {
             }
         }
         Ok(if kind == EditKind::Markdown { attach_to_links(content, rel) } else { content.to_string() })
+    }
+
+    /// Commit the note before removing pictures referenced by the old text.
+    pub fn save_edit(&self, rel: &str, content: &str, expected: Option<&str>) -> Result<String, String> {
+        let (previous, stamp) = self.read_edit(rel)?;
+        if expected.is_some_and(|value| value != stamp) {
+            return Err(external_edit_error());
+        }
+        let names = crate::attach::refs(content);
+        let prepared = self.prepare_save(rel, content, &names)?;
+        let saved = self.write_edit(rel, &prepared, Some(&stamp))?;
+        let unused = crate::attach::refs(&to_editor(&previous)).into_iter().filter(|name| !names.contains(name)).collect();
+        self.forget_pictures(&unused);
+        Ok(saved)
     }
 
     /// A Markdown note is somewhere else now: its links to pictures are relative to it, so they are written again.
@@ -988,51 +993,62 @@ impl FolderLibrary {
         }
     }
 
-    /// Empty the trash (`.smart-library/trash`) and delete the pictures that no note refers
-    /// to (those saved in the last minute are spared). Returns what was removed.
-    pub fn clean(&self) -> Result<CleanReport, String> {
+    /// Delete pictures that no note refers to (recently saved pictures are spared).
+    pub fn clean_pictures(&self) -> Result<(usize, u64), String> {
         self.need_writable()?;
-        let mut r = CleanReport::default();
+        let mut removed = (0, 0);
         let still = self.referenced_pictures("");
         let recent = std::time::Duration::from_secs(60);
-        fn walk(dir: &Path, still: &std::collections::HashSet<String>, recent: std::time::Duration, r: &mut CleanReport) {
-            let Ok(rd) = std::fs::read_dir(dir) else { return };
+        fn walk(dir: &Path, still: &std::collections::HashSet<String>, recent: std::time::Duration, removed: &mut (usize, u64)) -> Result<(), String> {
+            let rd = match std::fs::read_dir(dir) {
+                Ok(rd) => rd,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(e) => return Err(format!("{}: {}", dir.display(), e)),
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 let n = e.file_name().to_string_lossy().into_owned();
                 if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    walk(&p, still, recent, r);
+                    walk(&p, still, recent, removed)?;
                     let _ = std::fs::remove_dir(&p); // only when it is empty now
                 } else if crate::attach::is_name(&n) && !still.contains(&n) {
                     let fresh = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a < recent);
                     if !fresh {
-                        r.pictures += 1;
-                        r.picture_bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
-                        let _ = std::fs::remove_file(&p);
+                        let bytes = e.metadata().map(|m| m.len()).unwrap_or(0);
+                        std::fs::remove_file(&p).map_err(|e| format!("{}: {}", p.display(), e))?;
+                        removed.0 += 1;
+                        removed.1 += bytes;
                     }
                 }
             }
+            Ok(())
         }
-        walk(&self.attach_dir(), &still, recent, &mut r);
+        walk(&self.attach_dir(), &still, recent, &mut removed)?;
+        Ok(removed)
+    }
+
+    pub fn empty_trash(&self) -> Result<(usize, u64), String> {
+        self.need_writable()?;
+        let mut removed = (0, 0);
         let trash = self.root.join(SIDECAR_DIR).join("trash");
-        fn count(dir: &Path, r: &mut CleanReport) {
+        fn count(dir: &Path, removed: &mut (usize, u64)) {
             let Ok(rd) = std::fs::read_dir(dir) else { return };
             for e in rd.flatten() {
                 if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    count(&e.path(), r);
+                    count(&e.path(), removed);
                 } else {
-                    r.trash_files += 1;
-                    r.trash_bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
+                    removed.0 += 1;
+                    removed.1 += e.metadata().map(|m| m.len()).unwrap_or(0);
                 }
             }
         }
-        count(&trash, &mut r);
+        count(&trash, &mut removed);
         if trash.exists() {
             std::fs::remove_dir_all(&trash).map_err(|e| format!("{}: {}", trash.display(), e))?;
         }
         // the index goes with the trash it describes (a failure leaves an empty one at worst)
         let _ = std::fs::remove_file(self.trash_file());
-        Ok(r)
+        Ok(removed)
     }
 
     /// The deleted documents and folders, newest first. Pictures are left out:
@@ -1519,17 +1535,6 @@ fn apply_dir_meta_facets(facets: &mut Vec<Vec<String>>, dims: &crate::props::Dim
             facets.push(vec![dim.to_string(), "其他".to_string()]);
         }
     }
-}
-
-/// What `clean` removed.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CleanReport {
-    /// files that were in the trash
-    pub trash_files: usize,
-    pub trash_bytes: u64,
-    /// pictures no note refers to
-    pub pictures: usize,
-    pub picture_bytes: u64,
 }
 
 /// `attach:<name>` of a note's Markdown -> a link relative to the note
@@ -2049,13 +2054,18 @@ mod tests {
         assert_eq!(lib.children("").unwrap().len(), 2); // no folders of pictures in the tree
 
         // saving writes the relative link; leaving the picture out sends it to the trash, and an undo brings it back
-        let text = lib.prepare_save(&a, &format!("![](attach:{})", n)).unwrap();
+        let with_picture = format!("![](attach:{})", n);
+        let stamp = lib.save_edit(&a, &with_picture, None).unwrap();
+        let text = lib.read_edit(&a).unwrap().0;
         assert_eq!(text, format!("![](.smart-library/attachments/{}/{}/{})", &n[..2], &n[2..4], n));
-        lib.write_edit(&a, &text, None).unwrap();
-        assert_eq!(lib.prepare_save(&a, "无图").unwrap(), "无图");
+        std::fs::write(d.join(&a), format!("{text}\n外部修改")).unwrap();
+        assert!(lib.save_edit(&a, "无图", Some(&stamp)).is_err());
+        assert!(file.is_file(), "a rejected save cannot remove the on-disk note's attachment");
+        lib.save_edit(&a, "无图", None).unwrap();
         assert!(!file.exists());
         assert!(lib.find_picture(&n).unwrap().to_string_lossy().contains("trash")); // still shown from the trash
-        assert_eq!(lib.prepare_save(&a, &format!("![](attach:{})", n)).unwrap(), text); // the undo: put back
+        lib.save_edit(&a, &with_picture, None).unwrap(); // the undo: put back
+        assert_eq!(lib.read_edit(&a).unwrap().0, text);
         assert!(file.is_file());
 
         // moving the note changes its depth: the links are written again
@@ -2082,8 +2092,7 @@ mod tests {
         // deleting a folder takes the pictures only it used
         let c = lib.create("外", Some("文"), EditKind::Markdown).unwrap();
         let n2 = lib.store_picture(&c, &[9, 9, 9], "image/png").unwrap();
-        let t = lib.prepare_save(&c, &format!("![](attach:{})", n2)).unwrap();
-        lib.write_edit(&c, &t, None).unwrap();
+        lib.save_edit(&c, &format!("![](attach:{})", n2), None).unwrap();
         lib.delete_dir("外").unwrap();
         assert!(!lib.picture_path(&n2).unwrap().exists()); // it is in the trash now
         assert!(lib.delete_dir("").is_err());
@@ -2092,14 +2101,13 @@ mod tests {
         // a picture that was taken to the trash is still found (and saved into the store again with the note)
         let g = lib.create("", Some("回"), EditKind::Markdown).unwrap();
         let n3 = lib.store_picture(&g, &[7, 7, 7], "image/png").unwrap();
-        let t = lib.prepare_save(&g, &format!("![](attach:{})", n3)).unwrap();
-        lib.write_edit(&g, &t, None).unwrap();
+        lib.save_edit(&g, &format!("![](attach:{})", n3), None).unwrap();
         lib.delete(&g).unwrap();
         assert!(!lib.picture_path(&n3).unwrap().exists());
         let from_trash = lib.find_picture(&n3).unwrap();
         assert!(from_trash.to_string_lossy().contains("trash"));
         let g2 = lib.create("", Some("回2"), EditKind::Markdown).unwrap();
-        lib.prepare_save(&g2, &format!("![](attach:{})", n3)).unwrap();
+        lib.save_edit(&g2, &format!("![](attach:{})", n3), None).unwrap();
         assert!(lib.picture_path(&n3).unwrap().is_file());
 
         // earlier layouts: a picture beside its note, or flat in the attachments folder, is moved into the store on save
@@ -2107,7 +2115,8 @@ mod tests {
         std::fs::create_dir_all(d.join("旧.md.assets")).unwrap();
         std::fs::write(d.join(format!("旧.md.assets/{}", PIC)), [1, 2]).unwrap();
         assert!(lib.find_picture(PIC).is_some());
-        let t = lib.prepare_save(&e, &format!("![](attach:{})", PIC)).unwrap();
+        lib.save_edit(&e, &format!("![](attach:{})", PIC), None).unwrap();
+        let t = lib.read_edit(&e).unwrap().0;
         assert!(t.contains("attachments/5c/99/"));
         assert!(d.join(format!(".smart-library/attachments/5c/99/{}", PIC)).is_file());
         let _ = std::fs::remove_dir_all(&d);
@@ -2120,8 +2129,8 @@ mod tests {
         lib.create_dir("", "资料/子").unwrap();
         let a = lib.create("资料/子", Some("笔记"), EditKind::Markdown).unwrap();
         let pic = lib.store_picture(&a, &[7, 8, 9], "image/png").unwrap();
-        let saved = lib.prepare_save(&a, &format!("# 题\n\n![](attach:{})", pic)).unwrap();
-        lib.write_edit(&a, &saved, None).unwrap();
+        lib.save_edit(&a, &format!("# 题\n\n![](attach:{})", pic), None).unwrap();
+        let saved = lib.read_edit(&a).unwrap().0;
 
         // a deleted note remembers its folder, and its picture goes along
         lib.delete(&a).unwrap();
@@ -2178,7 +2187,7 @@ mod tests {
         let ro = FolderLibrary::open(&d, FolderFilter::default()).unwrap();
         assert!(ro.restore("x").is_err());
         lib.delete(&c).unwrap();
-        lib.clean().unwrap();
+        lib.empty_trash().unwrap();
         assert!(!d.join(SIDECAR_DIR).join("trash").exists());
         assert!(!d.join(SIDECAR_DIR).join(TRASH_FILE).exists());
         assert!(lib.trash().unwrap().is_empty());
@@ -2186,30 +2195,31 @@ mod tests {
     }
 
     #[test]
-    fn clean_empties_the_trash_and_drops_unused_pictures() {
+    fn trash_and_picture_cleanup_are_independent() {
         let d = tmp("clean");
         let lib = FolderLibrary::open(&d, FolderFilter::default()).unwrap().with_writable(true);
         let a = lib.create("", Some("文"), EditKind::Markdown).unwrap();
         let used = lib.store_picture(&a, &[1, 1, 1], "image/png").unwrap();
-        let t = lib.prepare_save(&a, &format!("![](attach:{})", used)).unwrap();
-        lib.write_edit(&a, &t, None).unwrap();
+        lib.save_edit(&a, &format!("![](attach:{})", used), None).unwrap();
         let unused = lib.store_picture(&a, &[2, 2, 2], "image/png").unwrap();
         let b = lib.create("", Some("废"), EditKind::Markdown).unwrap();
         lib.delete(&b).unwrap();
         // a picture saved a moment ago is spared
-        let r = lib.clean().unwrap();
-        assert_eq!((r.pictures, r.trash_files), (0, 1));
-        assert!(!d.join(".smart-library/trash").exists());
+        assert_eq!(lib.clean_pictures().unwrap(), (0, 0));
+        assert_eq!(lib.trash().unwrap().len(), 1);
         // an old one that nothing refers to goes; the one in use stays
         let path = lib.find_picture(&unused).unwrap();
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
         std::fs::File::options().write(true).open(&path).unwrap().set_modified(old).unwrap();
-        let r = lib.clean().unwrap();
-        assert_eq!((r.pictures, r.picture_bytes), (1, 3));
+        assert_eq!(lib.empty_trash().unwrap().0, 1);
+        assert!(!d.join(".smart-library/trash").exists());
+        assert!(lib.find_picture(&unused).is_some());
+        assert_eq!(lib.clean_pictures().unwrap(), (1, 3));
         assert!(lib.find_picture(&unused).is_none() && lib.find_picture(&used).is_some());
         // read-only: refused
         let ro = FolderLibrary::open(&d, FolderFilter::default()).unwrap();
-        assert!(ro.clean().is_err());
+        assert!(ro.clean_pictures().is_err());
+        assert!(ro.empty_trash().is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
 

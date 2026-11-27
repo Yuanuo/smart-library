@@ -841,6 +841,7 @@
   /* title, author and path are in the tab's tooltip; the bar itself is .view-bar (app.css) */
   .nav { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .vols { max-width: 16em; }
+  .nav select[aria-label="目次"] { max-width: min(24em, 46%); }
   .check { display: flex; gap: 4px; align-items: center; }
   .check.off { opacity: 0.5; }
   .scroll { flex: 1; overflow: auto; background: var(--paper); }

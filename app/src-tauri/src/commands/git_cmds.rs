@@ -207,6 +207,14 @@ fn same_git_url(a: &str, b: &str) -> bool {
     normalize_git_url(a) == normalize_git_url(b)
 }
 
+pub(super) fn validate_relinked_repo(state: &AppState, path: &str, remote: &str) -> Result<(), String> {
+    let (git, _) = resolve_git(&state.config_dir).ok_or("找不到 Git，无法验证新的仓库位置")?;
+    match detect_local_git_repo(&git, path) {
+        Some((url, _)) if same_git_url(&url, remote) => Ok(()),
+        _ => Err("请选择同一远程仓库的本地克隆根目录".into()),
+    }
+}
+
 fn is_shallow_repo(git: &str, dir: &str) -> bool {
     git_stdout(git, dir, &["rev-parse", "--is-shallow-repository"])
         .map(|s| s == "true")

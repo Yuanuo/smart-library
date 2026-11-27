@@ -9,6 +9,7 @@ export const bindLibraries = (path, cbetaTree, htmlTrees, libraryIds = {}) =>
 export const inspectFolder = (path) => invoke("inspect_folder", { path });
 export const addFolder = (path, title, exts, maxMb, writable = false, libraryId = "") => invoke("add_folder", { path, title, exts, maxMb, writable, libraryId });
 export const setFolderFilter = (id, exts, maxMb) => invoke("set_folder_filter", { id, exts, maxMb });
+export const relinkLibrary = (id, path) => invoke("relink_library", { id, path });
 /** Read-write mode of a folder library on or off (ask the user to accept the rules first: writable.js). */
 export const setFolderWritable = (id, writable) => invoke("set_folder_writable", { id, writable });
 export const addZim = (path, libraryId = "") => invoke("add_zim", { path, libraryId });
@@ -36,8 +37,8 @@ export const trashRestore = (lib, entry) => invoke("trash_restore", { lib, entry
 export const checkFilePath = (path) => invoke("check_file_path", { path });
 /** Read again the file that travels with a read-write folder when it was changed outside; resolves to true when it was. */
 export const sidecarRefresh = () => invoke("sidecar_refresh");
-/** Empty the trash of read-write local folders and delete pictures no note refers to; resolves to a sentence. */
-export const clearCache = () => invoke("clear_cache");
+export const cleanUnusedPictures = () => invoke("clean_unused_pictures");
+export const emptyFolderTrash = () => invoke("empty_folder_trash");
 export const t2sPairs = () => invoke("t2s_pairs");
 export const readTextFile = (path) => invoke("read_text_file", { path });
 export const dynastyTable = () => invoke("dynasty_table");

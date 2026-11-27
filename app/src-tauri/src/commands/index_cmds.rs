@@ -170,6 +170,7 @@ impl AppState {
 
     pub(super) fn index(&self, id: &str) -> Option<Arc<SearchIndex>> {
         let lib = self.library(id).ok()?;
+        if source_is_missing(&lib) { return None; }
         let dir = self.index_dir(id);
         if dir.join("rebuild-required").exists() {
             return None;

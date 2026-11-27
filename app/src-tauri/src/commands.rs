@@ -596,6 +596,16 @@ impl AppState {
         self.folders.write().unwrap().remove(id);
         self.titles.write().unwrap().remove(id);
         self.checked_folder_indexes.lock().unwrap().remove(id);
+        if old.source != libs[pos].source {
+            self.html.write().unwrap().remove(id);
+            self.zims.write().unwrap().remove(id);
+            self.sidecar_seen.lock().unwrap().remove(id);
+            if !libs.iter().any(|l| l.source == old.source) {
+                self.sources.write().unwrap().remove(&old.source);
+            }
+            let _ = std::fs::remove_file(self.titles_cache_path(id));
+            let _ = std::fs::remove_file(self.zim_cache_path(id));
+        }
         Ok(())
     }
 }
@@ -683,6 +693,14 @@ fn same_path(a: &str, b: &str) -> bool {
     folder::strip_win_prefix(a)
         .replace('/', "\\")
         .eq_ignore_ascii_case(&folder::strip_win_prefix(b).replace('/', "\\"))
+}
+
+fn source_is_missing(lib: &Library) -> bool {
+    match lib.kind.as_str() {
+        "notes" => false,
+        "folder" => !Path::new(&lib.source).is_dir(),
+        _ => !Path::new(&lib.source).exists(),
+    }
 }
 
 fn zim_version(path: &str) -> Result<String, String> {
@@ -807,7 +825,9 @@ fn status_of(state: &AppState) -> StatusDto {
     let libraries = libs
         .into_iter()
         .map(|l| {
-            let (error, data_version) = if l.kind == "zim" {
+            let (error, data_version) = if source_is_missing(&l) {
+                (Some(format!("找不到资料源：{}", l.source)), None)
+            } else if l.kind == "zim" {
                 // header and MIME table only: opening a huge archive parses
                 // every entry and would keep the tree blank for seconds
                 (zim_probe_error(&l.source), zim_version(&l.source).ok())
@@ -1223,6 +1243,61 @@ pub async fn set_folder_filter(id: String, exts: String, max_mb: u64, state: Sta
         l.max_mb = max_mb;
         Ok(true)
     })?;
+    Ok(status_of(&state))
+}
+
+/// Move a binding to the same data at a new location, preserving its library ID.
+#[tauri::command]
+pub async fn relink_library(id: String, path: String, state: State<'_, AppState>) -> Result<StatusDto, String> {
+    let original = state.library(&id)?;
+    let path = match original.kind.as_str() {
+        "notes" => return Err("内部知识库没有可更改的资料源路径".into()),
+        "folder" => folder::canonical(&path)?,
+        _ => {
+            let path = std::fs::canonicalize(path.trim().trim_matches('"')).map_err(|e| e.to_string())?;
+            folder::strip_win_prefix(&path.to_string_lossy())
+        }
+    };
+    if same_path(&path, &original.source) {
+        return Ok(status_of(&state));
+    }
+    let bookcase = match original.kind.as_str() {
+        "folder" => {
+            if !original.remote.is_empty() {
+                git_cmds::validate_relinked_repo(&state, &path, &original.remote)?;
+            }
+            None
+        }
+        "zim" => {
+            if let Some(error) = zim_probe_error(&path) { return Err(error); }
+            None
+        }
+        "cbeta" | "html" => {
+            let bookcase = Arc::new(open_bookcase_at(&path)?);
+            let matches = classify_trees(&bookcase).into_iter().any(|tree| {
+                tree.id == original.tree && matches!((&*original.kind, tree.group), ("cbeta", TreeGroup::Cbeta) | ("html", TreeGroup::Html(_)))
+            });
+            if !matches { return Err("新位置的数据包缺少这个知识库正在使用的目录".into()); }
+            Some(bookcase)
+        }
+        _ => return Err("这种知识库没有可更改的资料源路径".into()),
+    };
+    state.edit_library_source(&id, |libraries, current| {
+        if current.source != original.source || current.kind != original.kind || current.tree != original.tree {
+            return Err("资料源设置已变化，请重新打开此对话框".into());
+        }
+        if current.kind == "folder" {
+            let existing = libraries.iter().filter(|l| l.kind == "folder" && l.id != id).map(|l| l.source.as_str()).collect::<Vec<_>>();
+            if let Some(error) = folder::conflict(&existing, &path) { return Err(error); }
+        } else if libraries.iter().any(|l| l.id != id && l.kind == current.kind && l.tree == current.tree && same_path(&l.source, &path)) {
+            return Err("新位置的这份资料已经绑定为其他知识库".into());
+        }
+        current.source = path.clone();
+        Ok(true)
+    })?;
+    if let Some(bookcase) = bookcase {
+        state.sources.write().unwrap().insert(path, bookcase);
+    }
     Ok(status_of(&state))
 }
 
@@ -1654,51 +1729,40 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}').to_string())
 }
 
-#[tauri::command]
-pub async fn clear_cache(state: State<'_, AppState>) -> Result<String, String> {
+fn clean_data(state: &AppState, trash: bool) -> String {
     let libs: Vec<Library> = state.libraries.read().unwrap().clone();
-    let (mut trash, mut trash_bytes, mut pics, mut pic_bytes) = (0usize, 0u64, 0usize, 0u64);
+    let (mut count, mut bytes) = (0, 0);
     let mut failed = Vec::new();
     for l in libs {
-        if l.kind == "folder" && l.writable {
-            match state.folder(&l).and_then(|f| f.clean()) {
-                Ok(r) => {
-                    trash += r.trash_files;
-                    trash_bytes += r.trash_bytes;
-                    pics += r.pictures;
-                    pic_bytes += r.picture_bytes;
-                }
-                Err(e) => failed.push(format!("{}：{}", l.title, e)),
-            }
-        } else if l.kind == "notes" {
-            let result = state.sweep_pictures(&l, 60).map(|(n, bytes)| {
-                pics += n;
-                pic_bytes += bytes;
-            });
-            if let Err(e) = result {
-                if dir_exists(&state.attachments_dir(&l.id)) {
-                    failed.push(format!("{}：{}", l.title, e));
-                }
-            }
+        let result = if l.kind == "folder" && l.writable {
+            if source_is_missing(&l) { Err(format!("找不到资料源：{}", l.source)) }
+            else { state.folder(&l).and_then(|f| if trash { f.empty_trash() } else { f.clean_pictures() }) }
+        } else if l.kind == "notes" && !trash && state.attachments_dir(&l.id).is_dir() {
+            state.sweep_pictures(&l, 60)
+        } else {
+            continue;
+        };
+        match result {
+            Ok((n, size)) => { count += n; bytes += size; }
+            Err(e) => failed.push(format!("{}：{}", l.title, e)),
         }
     }
-    let mb = |b: u64| format!("{:.1} MB", b as f64 / 1_048_576.0);
-    let mut msg = format!(
-        "已清理：回收站 {} 个文件（{}），没有笔记引用的图片 {} 张（{}）。",
-        trash,
-        mb(trash_bytes),
-        pics,
-        mb(pic_bytes)
-    );
+    let what = if trash { "回收站中的文件" } else { "未引用图片" };
+    let mut msg = format!("已清理{} {} 项（{:.1} MB）。", what, count, bytes as f64 / 1_048_576.0);
     if !failed.is_empty() {
-        msg.push_str(&format!("
-没有清理成功：{}", failed.join("；")));
+        msg.push_str(&format!("\n没有清理成功：{}", failed.join("；")));
     }
-    Ok(msg)
+    msg
 }
 
-fn dir_exists(p: &Path) -> bool {
-    p.is_dir()
+#[tauri::command]
+pub async fn clean_unused_pictures(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(clean_data(&state, false))
+}
+
+#[tauri::command]
+pub async fn empty_folder_trash(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(clean_data(&state, true))
 }
 
 /// The file that travels with a read-write folder was changed outside (git pull, a
@@ -1765,8 +1829,7 @@ pub async fn save_note(lib: String, id: String, content: String, expected_stamp:
         let mut stamps = state.stamps.lock().unwrap();
         let seen = expected_stamp.as_ref().or_else(|| stamps.get(&key));
         // pictures: kept in the note's own folder, a Markdown note links to them (other programs show them too)
-        let content = f.prepare_save(&id, &content)?;
-        let stamp = f.write_edit(&id, &content, seen.map(String::as_str))?;
+        let stamp = f.save_edit(&id, &content, seen.map(String::as_str))?;
         stamps.insert(key, stamp.clone());
         state.mark_dirty(&lib, [id]);
         return Ok(Some(stamp));
@@ -3504,6 +3567,7 @@ pub struct SearchDto {
     /// hit counts of every library with an index (results are grouped by
     /// library, design-spec 8.2)
     libraries: Vec<LibCountDto>,
+    unavailable_libraries: Vec<String>,
     /// the library whose results follow
     lib: Option<String>,
     kind: String,
@@ -3707,6 +3771,7 @@ pub async fn search(
     }
     // counts per library ignore the filters (those belong to one library)
     let mut counts = Vec::new();
+    let mut unavailable_libraries = Vec::new();
     for l in &libs {
         if let Some(idx) = state.index(&l.id) {
             let mut r = SearchRequest::new(&query);
@@ -3717,6 +3782,8 @@ pub async fn search(
                 title: l.title.clone(),
                 count: idx.count(&r)?,
             });
+        } else {
+            unavailable_libraries.push(l.title.clone());
         }
     }
     if counts.is_empty() {
@@ -3808,6 +3875,7 @@ pub async fn search(
         .collect();
     Ok(SearchDto {
         libraries: counts,
+        unavailable_libraries,
         lib: Some(selected),
         kind: l.kind,
         total_volumes: r.total_volumes,
@@ -4965,6 +5033,8 @@ pub struct AppInfo {
     /// YY.MM.DD
     version: String,
     data_dir: String,
+    config_dir: String,
+    webview_dir: Option<String>,
     /// the address the `sl` protocol is reached by (pictures of notes)
     asset_prefix: String,
 }
@@ -4981,11 +5051,20 @@ fn display_version() -> String {
 }
 
 #[tauri::command]
-pub async fn app_info(state: State<'_, AppState>) -> Result<AppInfo, String> {
+pub async fn app_info(app: AppHandle, state: State<'_, AppState>) -> Result<AppInfo, String> {
+    let webview_dir = if cfg!(windows) {
+        std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").map(PathBuf::from).or_else(|| app.path().app_local_data_dir().ok())
+    } else if cfg!(target_os = "linux") {
+        app.path().app_local_data_dir().ok()
+    } else {
+        None
+    };
     Ok(AppInfo {
         name: "Smart Library".into(),
         version: display_version(),
         data_dir: state.data_dir.display().to_string(),
+        config_dir: state.config_dir.display().to_string(),
+        webview_dir: webview_dir.map(|dir| dir.display().to_string()),
         asset_prefix: ASSET_PREFIX.to_string(),
     })
 }

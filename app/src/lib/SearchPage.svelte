@@ -9,6 +9,7 @@
   // the tab, a window keeps it itself): { query, phrase, lib, filters,
   // scopes, tab, page, ran, autorun, rerun, focus }.
   import { onMount, untrack } from "svelte";
+  import { save as saveDialog } from "@tauri-apps/plugin-dialog";
   import * as api from "./api.js";
   import { settings } from "./settings.svelte.js";
   import FacetPane from "./FacetPane.svelte";
@@ -16,6 +17,7 @@
   import ContextMenu from "./ContextMenu.svelte";
   import Icon from "./Icon.svelte";
   import { addSearchScopeItems } from "./searchScope.js";
+  import { searchCitation } from "./clip.js";
 
   let { s, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onsearchresult = null, onsetup = null } = $props();
   const NO_INDEX = "还没有可搜索的知识库：请先为知识库建立索引";
@@ -37,6 +39,10 @@
   let chooseScope = $state(false);
   let filtersOpen = $state(false);
   let unavailable = $state(null);
+  let selecting = $state(false);
+  let picked = $state([]);
+  let sharing = $state(false);
+  let shareMessage = $state("");
   let ran = $state({ query: "", phrase: false }); // what the shown results were searched for
   let seq = 0;
 
@@ -106,17 +112,20 @@
 
   function submit(e) {
     e?.preventDefault();
+    if (ran.query !== s.query.trim()) clearPicked();
     run(1);
   }
 
   function setMode(phrase) {
     if (s.phrase === phrase) return;
+    clearPicked();
     s.phrase = phrase;
     onstate?.();
     if (s.ran) run(1);
   }
 
-  function changed() {
+  function changed(keepPicked = false) {
+    if (!keepPicked) clearPicked();
     onstate?.();
     if (s.ran || error) run(1);
   }
@@ -143,10 +152,11 @@
 
   function pickLibrary(id) {
     if (id === s.lib && s.libraryPinned === (id != null)) return;
+    const keepPicked = !chips.length;
     s.lib = id;
     s.libraryPinned = id != null;
     s.filters = {};
-    changed();
+    changed(keepPicked);
   }
 
   // ---------------------------------------------------------------- range
@@ -208,6 +218,49 @@
   const otherMatch = $derived(result?.libraries.find((library) => library.id !== result.lib && library.count > 0));
   const rangeLabel = $derived(s.scopes.length === 0 ? "全部知识库" : s.scopes.length === 1 ? s.scopes[0].label : `${s.scopes.length} 项`);
 
+  const hitKey = (hit) => JSON.stringify([hit.lib, hit.path]);
+  const pickedKeys = $derived(new Set(picked.map((item) => hitKey(item.hit))));
+  const allPagePicked = $derived(!!result?.hits.length && result.hits.every((hit) => pickedKeys.has(hitKey(hit))));
+
+  function clearPicked() {
+    picked = [];
+    shareMessage = "";
+  }
+
+  function pickHits(hits, checked) {
+    const keys = new Set(hits.map(hitKey));
+    if (!checked) {
+      picked = picked.filter((item) => !keys.has(hitKey(item.hit)));
+    } else {
+      const libraryTitle = result.libraries.find((item) => item.id === result.lib)?.title || "";
+      picked = [...picked, ...hits.filter((hit) => !pickedKeys.has(hitKey(hit))).map((hit) => ({ hit, libraryTitle }))];
+    }
+    shareMessage = "";
+  }
+
+  async function shareCitations(toFile = false) {
+    if (!picked.length || sharing) return;
+    const items = $state.snapshot(picked);
+    sharing = true;
+    shareMessage = "";
+    try {
+      let path;
+      if (toFile) {
+        path = await saveDialog({ defaultPath: "搜索引用.md", filters: [{ name: "Markdown", extensions: ["md"] }] });
+        if (!path) return;
+      }
+      const citations = await Promise.all(items.map(({ hit, libraryTitle }) => searchCitation(hit, libraryTitle)));
+      const markdown = citations.join("\n") + "\n";
+      if (path) await api.saveBytes(path, new TextEncoder().encode(markdown));
+      else await navigator.clipboard.writeText(markdown);
+      shareMessage = `${path ? "已导出" : "已复制"} ${citations.length} 条引用`;
+    } catch (e) {
+      shareMessage = `无法${toFile ? "导出" : "复制"}引用：${String(e)}`;
+    } finally {
+      sharing = false;
+    }
+  }
+
   // ---------------------------------------------------------------- side width
   let sideWidth = $state(300);
   try {
@@ -242,7 +295,7 @@
     const n = s.rerun ?? 0; // the host changed the range (or filters): search again
     if (n !== lastRerun) {
       lastRerun = n;
-      untrack(() => (s.ran || error) && run(1));
+      untrack(() => changed());
     }
   });
   $effect(() => {
@@ -257,10 +310,11 @@
   });
   onMount(() => {
     ontitle?.(title());
+    if (s.focusOnOpen || !s.ran && !s.autorun) input?.focus();
     if (s.ran || s.autorun) {
       s.autorun = false;
       run(s.page || 1);
-    } else input?.focus();
+    }
     const off = api.onIndexDone((event) => {
       if (event.ok && (unavailable || error === NO_INDEX) && (!s.scopes.length || s.scopes.some((item) => item.lib === event.lib))) run(1);
     });
@@ -290,7 +344,12 @@
   </form>
 
   <div class="range-bar" data-scope-drop onscopedrop={(event) => addScopes(event.detail)}>
-    <span class="range-label" title={s.scopes.map((item) => item.label).join("；") || rangeLabel}><strong>范围</strong> {rangeLabel}</span>
+    {#if s.scopes.length}
+      <button type="button" class="range-label link" aria-label={`查看搜索范围：${rangeLabel}`} title={s.scopes.map((item) => item.label).join("；")}
+        onclick={() => { filtersOpen = true; s.tab = "scope"; onstate?.(); }}><strong>范围</strong> {rangeLabel}</button>
+    {:else}
+      <span class="range-label"><strong>范围</strong> {rangeLabel}</span>
+    {/if}
     <button type="button" onclick={() => (chooseScope = true)}>添加范围…</button>
     <button type="button" aria-expanded={filtersOpen} onclick={() => (filtersOpen = !filtersOpen)}>{filtersOpen ? "收起筛选" : "筛选"}{chips.length ? `（${chips.length}）` : ""}</button>
   </div>
@@ -346,17 +405,13 @@
           {/each}
         </div>
       {/if}
-      {#if chips.length || s.scopes.length}
+      {#if chips.length}
         <div class="chips">
           {#each chips as c (c.root + c.name)}
             <span class="chip">{labelOf(c.root)}：{c.name}
               <button class="link" onclick={() => toggle(c.root, c.name)} aria-label="取消">×</button></span>
           {/each}
-          {#if s.scopes.length}
-            <span class="chip scoped">范围：{s.scopes.length} 项
-              <button class="link" onclick={() => ((filtersOpen = true), (s.tab = "scope"), onstate?.())} aria-label="查看范围">…</button></span>
-          {/if}
-          {#if chips.length}<button class="link" onclick={clearFilters}>清除过滤</button>{/if}
+          <button class="link" onclick={clearFilters}>清除过滤</button>
         </div>
       {/if}
       <div class="hits" bind:this={hitsEl}>
@@ -390,16 +445,36 @@
         {:else}
           <div class="summary muted">
             {#if result.libraries.length > 1}
-              范围内共 {totalMatches} 篇{chips.length ? "（筛选前）" : ""} · {result.libraries.find((l) => l.id === result.lib)?.title}显示
+              范围内共 {totalMatches} 个命中文档{chips.length ? "（筛选前）" : ""} · {result.libraries.find((l) => l.id === result.lib)?.title}显示
             {:else}
               {browsing ? "全部 " : "命中 "}
             {/if}
             {#if result.kind === "cbeta"}{result.total_books} 部、{result.total_volumes} 卷{:else}{result.total_volumes} 篇{/if}
             {#if result.pages > 1}· 第 {result.page} / {result.pages} 页{/if}
           </div>
+          {#if result.unavailable_libraries.length}
+            <p class="muted unsearched">未参与全文搜索：{result.unavailable_libraries.join("、")}</p>
+          {/if}
+          {#if result.hits.length || picked.length}
+            <div class="citation-actions">
+              {#if selecting}
+                {#if result.hits.length}
+                  <label><input type="checkbox" checked={allPagePicked} onchange={(event) => pickHits(result.hits, event.currentTarget.checked)} />全选本页</label>
+                {/if}
+                <button type="button" onclick={() => shareCitations()} disabled={!picked.length || sharing}>复制引用（{picked.length}）</button>
+                <button type="button" onclick={() => shareCitations(true)} disabled={!picked.length || sharing}>导出 Markdown…</button>
+                <button type="button" class="link" onclick={() => { selecting = false; clearPicked(); }} disabled={sharing}>退出选择</button>
+              {:else}
+                <button type="button" class="link" onclick={() => (selecting = true)}>选择结果</button>
+              {/if}
+              {#if shareMessage}<span class="muted" role="status">{shareMessage}</span>{/if}
+            </div>
+          {/if}
           {#each result.hits as h}
             <article>
               <h2>
+                {#if selecting}<input type="checkbox" checked={pickedKeys.has(hitKey(h))} aria-label={`选择 ${h.title} ${h.subtitle}`}
+                  onchange={(event) => pickHits([h], event.currentTarget.checked)} />{/if}
                 <button class="link" onclick={() => open(h, null)}>{h.title} {h.book_id ? h.subtitle : ""}</button>
                 <span class="muted id">{[h.book_id, h.book_id ? "" : h.subtitle, !browsing && h.occurrences ? `${h.occurrences} 处` : ""].filter(Boolean).join(" · ")}</span>
               </h2>
@@ -413,7 +488,7 @@
           {:else}
             {#if otherMatch}
               <p>当前库没有符合条件的结果，其他库有命中。</p>
-              <button type="button" onclick={() => pickLibrary(otherMatch.id)}>查看 {otherMatch.title}（{otherMatch.count} 篇）</button>
+              <button type="button" onclick={() => pickLibrary(otherMatch.id)}>查看 {otherMatch.title}（{otherMatch.count}）</button>
             {:else if chips.length}
               <p>当前筛选条件没有结果。<button type="button" class="link" onclick={clearFilters}>清除筛选</button></p>
             {:else}
@@ -453,6 +528,7 @@
   .range-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
   .range-bar:global(.scope-over) { background: var(--accent-soft); }
   .range-label { flex: 1 1 140px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+  button.range-label { text-align: left; padding-inline: 0; }
   .seg { display: inline-flex; flex: none; }
   .seg button { border-radius: 0; padding: 3px 12px; }
   .seg button:first-child { border-radius: 6px 0 0 6px; }
@@ -500,6 +576,9 @@
   .availability { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .err { color: var(--hl); white-space: pre-wrap; }
   .summary { font-size: 13px; margin-bottom: 8px; }
+  .unsearched { font-size: 13px; margin: 0 0 8px; overflow-wrap: anywhere; }
+  .citation-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 4px; font-size: 13px; }
+  .citation-actions label { display: inline-flex; gap: 4px; align-items: center; }
   article { border-bottom: 1px solid var(--line); padding: 10px 0 12px; }
   h2 { font-size: 18px; margin: 0 0 6px; font-weight: 600; display: flex; gap: 4px 10px; align-items: baseline; flex-wrap: wrap; }
   .id { font-size: 13px; font-weight: normal; }

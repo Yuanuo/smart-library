@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import * as api from "./api.js";
   import DialogHeader from "./DialogHeader.svelte";
+  import { autofocus } from "./autofocus.js";
   import { searchScope } from "./searchScope.js";
 
   let { onpick, onclose } = $props();
@@ -50,7 +51,7 @@
   <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="添加搜索范围" tabindex="-1" onkeydown={(event) => event.key === "Escape" && onclose()}>
     <DialogHeader title="添加搜索范围" {path} />
     <div class="dialog-content">
-      <label>知识库 <select value={library?.id ?? ""} onchange={(event) => browse(libraries.find((item) => item.id === event.currentTarget.value) ?? null)}>
+      <label>知识库 <select use:autofocus value={library?.id ?? ""} onchange={(event) => browse(libraries.find((item) => item.id === event.currentTarget.value) ?? null)}>
         <option value="">选择知识库…</option>
         {#each libraries as item (item.id)}
           <option value={item.id} disabled={!item.index_ready || !!item.error}>{item.title}{item.error ? "（资料不可用）" : !item.index_ready ? "（尚不可全文搜索）" : ""}</option>

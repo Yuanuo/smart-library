@@ -46,6 +46,17 @@ async function describe(vol, lb) {
   return { title, where, label: `《${title}》${vol.author ? " " + vol.author : ""}${where ? " · " + where : ""}` };
 }
 
+/** A Markdown list item for a search result, linked to its first hit. */
+export async function searchCitation(hit, libraryTitle) {
+  const lb = hit.snippets[0]?.lb || null;
+  const vol = { ...hit, label: hit.book_id ? hit.subtitle : "" };
+  const citation = await describe(vol, lb);
+  const source = [libraryTitle, hit.book_id || hit.subtitle, citation.where].filter(Boolean).join(" · ");
+  const label = [citation.title, source].filter(Boolean).join(" · ")
+    .replaceAll("\\", "\\\\").replace(/[\[\]]/g, "\\$&").replace(/\s+/g, " ");
+  return `- [${label}](${sourceUrl({ lib: hit.lib, book: hit.book_id, path: hit.path, lb })})`;
+}
+
 /** A clipping as a node of a mind map: its text, the link to the source, a tag. */
 export async function clipNode({ text, vol, lb }) {
   const flat = text.replace(/\s+/g, " ").trim();

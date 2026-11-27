@@ -61,6 +61,7 @@
       catch (e) { error = e.message; }
       await emit("popout-draft-checked", { tab: start.tab, id: payload.id, error });
     });
+    const un4 = win.listen("popout-reload", () => p.reload += 1);
     Promise.all([un2, un3]).then(async () => {
       await emit("popout-ready", { tab: start.tab });
       ready = true;
@@ -77,6 +78,7 @@
       un1.then((f) => f());
       un2.then((f) => f());
       un3.then((f) => f());
+      un4.then((f) => f());
       offKeys();
     };
   });

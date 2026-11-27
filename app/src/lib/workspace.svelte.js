@@ -468,6 +468,7 @@ function searchRenderer() {
         page: prm.page || 1,
         ran: !!prm.ran,
         autorun: !!prm.autorun, // search once when shown
+        focusOnOpen: !!prm.focusOnOpen,
         rerun: 0, // +1: the range changed from outside, search again
         focus: 0, // +1: put the cursor in the search box
       });
@@ -1252,6 +1253,13 @@ export function refreshDocument(lib, id) {
   if (st) st.reload += 1;
 }
 
+export function refreshLibraryReaders(lib) {
+  for (const state of Object.values(states)) if (state.lib === lib) state.reload += 1;
+  for (const info of Object.values(popouts)) {
+    if (info.lib === lib) emitTo(info.label, "popout-reload", null).catch(() => {});
+  }
+}
+
 async function prepareClose(ids) {
   for (const id of ids) {
     try {
@@ -1395,7 +1403,7 @@ export function openSearch({ query = "", phrase = false, scopes = [], autorun = 
     id,
     component: "search",
     title: "全文搜索",
-    params: { kind: "search", ...more, query, phrase, scopes, autorun: autorun || !fresh },
+    params: { kind: "search", ...more, query, phrase, scopes, autorun: autorun || !fresh, focusOnOpen: !fresh && !query },
   });
   return id;
 }

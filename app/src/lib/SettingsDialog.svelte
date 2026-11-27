@@ -9,7 +9,7 @@
   import { MOD_KEY } from "./platform.js";
   import DialogHeader from "./DialogHeader.svelte";
 
-  let { onclose, dataDir = "", initialTab = "appearance", onmcpchange = null } = $props();
+  let { onclose, dataDir = "", configDir = "", webviewDir = "", initialTab = "appearance", onmcpchange = null } = $props();
 
   const TABS = [
     ["appearance", "外观"],
@@ -21,7 +21,7 @@
     ["ai", "AI 助手"],
     ["mcp", "本地 Agent"],
     ["shortcuts", "快捷键"],
-    ["clean", "数据清理"],
+    ["clean", "数据与备份"],
   ];
   let activeTab = $state(untrack(() => (TABS.some(([id]) => id === initialTab) ? initialTab : "appearance")));
 
@@ -528,19 +528,23 @@
   }
 
   // clearing what the program leaves behind (trash of local folders, pictures nothing refers to)
-  let cleaning = $state(false);
+  let cleaning = $state("");
   let cleanMsg = $state("");
-  async function clean() {
-    const note = "会清空读写模式本地文件夹里的 .smart-library/trash（删除的文件和文件夹），并删除没有任何笔记引用的图片。";
-    if (!(await ask(`清理缓存？\n${note}\n清空后不能再从回收站找回。`, { title: "清理缓存", kind: "warning", okLabel: "清理", cancelLabel: "取消" }))) return;
-    cleaning = true;
+  async function clean(kind) {
+    const trash = kind === "trash";
+    const title = trash ? "清空文件夹库回收站" : "清理未引用图片";
+    const text = trash
+      ? "这会永久删除所有读写文件夹库回收站中的文件、文件夹和随它们删除的附件。需要恢复的资料，请先去该库的回收站恢复。"
+      : "这会删除笔记不再引用的图片。回收站中的资料及其可恢复的附件会保留。";
+    if (!(await ask(text, { title, kind: "warning", okLabel: trash ? "永久清空" : "清理图片", cancelLabel: "取消" }))) return;
+    cleaning = kind;
     cleanMsg = "";
     try {
-      cleanMsg = await api.clearCache();
+      cleanMsg = await (trash ? api.emptyFolderTrash() : api.cleanUnusedPictures());
     } catch (e) {
       cleanMsg = String(e);
     } finally {
-      cleaning = false;
+      cleaning = "";
     }
   }
 
@@ -1277,16 +1281,34 @@
 
         {:else if activeTab === "clean"}
           <div class="sec-head">
-            <h3>数据清理</h3>
-            <p class="muted">清理本地回收站及未被任何笔记引用的孤立图片资源。</p>
+            <h3>数据与备份</h3>
+          </div>
+          <div class="card">
+            <div class="card-block backup-info">
+              <h4>导出知识库</h4>
+              <p class="muted">在知识库菜单选择「导出知识库」。通用数据包（.smartlib）用于带走所选文档、目录结构和支持的附件。文件夹数据包（.smartdir）保留所选目录结构、原文件和引用的附件，回收站需另行备份。</p>
+              <h4>完整备份或换电脑</h4>
+              <p class="muted">退出 Smart Library 后复制下方目录，以及外部绑定的文件夹和资料包。笔记、收藏、快照及工作区等保存在应用数据目录中。位于该目录内的子目录会一并复制。迁移后，可以用知识库菜单中的「重新定位资料源」找回移动的外部资料。</p>
+              {#if dataDir}<label>应用数据目录<input readonly value={dataDir} onclick={(event) => event.currentTarget.select()} /></label>{/if}
+              {#if configDir && configDir !== dataDir}<label>应用配置目录<input readonly value={configDir} onclick={(event) => event.currentTarget.select()} /></label>{/if}
+              {#if webviewDir && webviewDir !== dataDir && webviewDir !== configDir}
+                <label>界面偏好（WebView 数据目录）<input readonly value={webviewDir} onclick={(event) => event.currentTarget.select()} /></label>
+              {:else if !webviewDir}
+                <p class="muted">界面偏好由系统 WebView 存储。跨系统迁移后可在设置中重新配置。</p>
+              {/if}
+            </div>
           </div>
           <div class="card">
             <div class="card-block">
               <div class="row-plain">
-                <button onclick={clean} disabled={cleaning}>{cleaning ? "清理中…" : "清理缓存"}</button>
+                <button type="button" onclick={() => clean("pictures")} disabled={!!cleaning}>{cleaning === "pictures" ? "正在清理图片…" : "清理未引用图片…"}</button>
               </div>
-              <p class="muted hint">清空本地文件夹（读写模式）里的回收站 .smart-library/trash，并删除没有笔记引用的图片（默认知识库也一样；被笔记回收站里的笔记引用的图片会保留）。要找回删除的文件或笔记，先在目录树右键知识库 →「回收站…」恢复。</p>
-              {#if cleanMsg}<p class="hint" style="white-space: pre-line">{cleanMsg}</p>{/if}
+              <p class="muted hint">释放未引用图片占用的空间，保留回收站及其附件。</p>
+              <div class="row-plain">
+                <button type="button" onclick={() => clean("trash")} disabled={!!cleaning}>{cleaning === "trash" ? "正在清空回收站…" : "清空文件夹库回收站…"}</button>
+              </div>
+              <p class="muted hint">永久清空所有读写文件夹库的回收站。内部知识库的回收站可在各库菜单中管理。</p>
+              {#if cleanMsg}<p class="hint" role="status" style="white-space: pre-line">{cleanMsg}</p>{/if}
             </div>
           </div>
         {/if}
@@ -1300,6 +1322,9 @@
 </div>
 
 <style>
+  .backup-info h4 { margin: 0 0 6px; }
+  .backup-info p { margin: 0 0 12px; }
+  .backup-info label { display: grid; gap: 4px; margin-top: 8px; font-size: 13px; }
   .dyn { width: 100%; height: 160px; font-family: monospace; font-size: 12px; box-sizing: border-box; margin: 6px 0; }
   .ai-sys { flex: 1; min-width: 200px; height: 68px; font-family: inherit; font-size: 13px; box-sizing: border-box; resize: vertical; }
   .err-text { color: var(--hl); }

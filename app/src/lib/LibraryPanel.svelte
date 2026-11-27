@@ -23,7 +23,7 @@
   import { matchesShortcut, formatShortcut, formatCombo } from "./shortcuts.js";
   import { IS_MAC, IS_WIN } from "./platform.js";
 
-  let { libraries, progress, titles = {}, gitStatus = {}, gitUpdating = {}, onopen, onbind, onrebind, onunbind, onindex, onindexdialog, onupdate = null, ongitstatus = null, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onnotice = null, onerror = null } = $props();
+  let { libraries, progress, titles = {}, gitStatus = {}, gitUpdating = {}, onopen, onbind, onrebind, onrelink, onunbind, onindex, onindexdialog, onupdate = null, ongitstatus = null, onsearchfrom, ontag, onprops, oncopy, onexport, onimport, onlibs = null, onnotice = null, onerror = null } = $props();
 
   // what was ever opened, per library: shown in green (not "finished", only "opened")
   let seen = $state({}); // lib id -> { books: Set, paths: Set }
@@ -216,6 +216,14 @@
   export async function refreshFolderRules(lib) {
     if (nodes[lib]) await reconcile(lib, null);
     workspace.refreshFolderTabs(lib);
+  }
+
+  export async function refreshLibrarySource(library) {
+    const id = library.id;
+    delete errors[id];
+    if (library.kind === "folder" && nodes[id]) await reconcile(id, null);
+    else if (open[id]) await refresh(id, null);
+    workspace.refreshFolderTabs(id);
   }
 
   async function refresh(lib, key) {
@@ -1375,7 +1383,7 @@
   }
 
   function badge(l) {
-    if (l.error) return { text: "数据不可用", warn: true };
+    if (l.error) return { text: "数据不可用", warn: true, relink: l.kind !== "notes" && !gitUpdating[l.id] && !l.building };
     if (gitUpdating[l.id]) return { text: "更新中…" };
     const p = progress[l.id];
     if (l.building || p) return { text: p ? `建索引 ${Math.floor((100 * p.done) / Math.max(1, p.total))}%` : "建索引…" };
@@ -1423,6 +1431,7 @@
         [
           ...(l.kind === "folder" ? [{ label: openFolderLabel, action: () => openInFileManager(l.id, null) }] : []),
           ...(notes ? [] : [{ label: "复制原文件路径", action: () => oncopy(l.source) }]),
+          ...(notes ? [] : [{ label: "重新定位资料源…", action: () => onrelink(l), disabled: building || !!gitUpdating[l.id] }]),
           { label: "复制目录树路径", action: () => oncopy(l.title) },
         ],
         [
@@ -1444,7 +1453,7 @@
             : []),
           ...(l.kind === "folder" && l.writable ? [{ label: "回收站…", action: () => (trashDlg = { lib: l.id, title: l.title }) }] : []),
           ...(notes ? [{ label: "回收站…", action: () => (notesTrashDlg = { lib: l.id, title: l.title }) }] : []),
-          { label: "删除知识库…", action: () => onunbind(l), disabled: building || !!gitUpdating[l.id] },
+          { label: notes ? "删除知识库…" : "解除绑定…", action: () => onunbind(l), disabled: building || !!gitUpdating[l.id] },
         ],
       ),
     };
@@ -1506,7 +1515,9 @@
         </button>
         <span class="libicon" title={kindLabel(l)}><Icon name={kindIcon(l)} size={18} /></span>
         <button class="title" onclick={() => openRoot(l)} tabindex="-1" title={`${l.title}\n${l.remote ? `${l.remote}\n` : ""}${l.source}${l.kind === "folder" && l.writable ? "\n读写模式" : ""}`}>{l.title}</button>
-        {#if b?.index}
+        {#if b?.relink}
+          <button class="badge warn link" title={`${l.error}\n点击选择新位置`} onclick={(e) => (e.stopPropagation(), onrelink(l))}>{b.text}</button>
+        {:else if b?.index}
           <button class="badge warn link" tabindex="-1" title="点击建立索引" onclick={(e) => (e.stopPropagation(), onindex(l.id))}>{b.text}</button>
         {:else if b?.gitUpdate}
           <button class="badge warn link" tabindex="-1" title="远程有可用更新，点击拉取最新内容" onclick={(e) => (e.stopPropagation(), onupdate?.(l))}>{b.text}</button>

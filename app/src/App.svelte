@@ -5,6 +5,7 @@
   import * as workspace from "./lib/workspace.svelte.js";
   import LibraryPanel from "./lib/LibraryPanel.svelte";
   import LibraryIndexDialog from "./lib/LibraryIndexDialog.svelte";
+  import RelinkLibraryDialog from "./lib/RelinkLibraryDialog.svelte";
   import BindDialog from "./lib/BindDialog.svelte";
   import QuickSearch from "./lib/QuickSearch.svelte";
   import { openDictWindow } from "./lib/dictWindow.js";
@@ -97,6 +98,7 @@
 
   let progress = $state({}); // lib id -> { done, total }
   let indexDialog = $state(null);
+  let relinkDialog = $state(null);
   const indexDialogLibrary = $derived(libraries.find((l) => l.id === indexDialog?.id));
 
   function openIndexDialog(id, mode) {
@@ -107,6 +109,14 @@
     st = await api.setFolderFilter(id, exts, maxMb);
     await startIndex(id);
     await libPanel?.refreshFolderRules(id);
+  }
+
+  async function relinkSource(library, path) {
+    st = await api.relinkLibrary(library.id, path);
+    workspace.refreshLibraryReaders(library.id);
+    await startIndex(library.id);
+    await libPanel?.refreshLibrarySource(library).catch((e) => { error = String(e); });
+    if (library.remote) checkGitStatus(false, false);
   }
   let titlesProgress = $state({}); // lib id -> { done, total }: title list being built
   let binding = $state(null); // null, or { path } for the bind dialog
@@ -1098,7 +1108,7 @@
     const ok = await ask(
       own
         ? `删除知识库「${l.title}」？\n里面的全部笔记会被永久删除，不能恢复。`
-        : `解除绑定「${l.title}」？\n它的索引会被删除；数据包本身不受影响，以后可以重新绑定。`,
+        : `解除绑定「${l.title}」？\n这会删除该知识库的搜索索引。原始资料将保留在磁盘上。`,
       {
         title: own ? "删除知识库" : "解除绑定",
         kind: "warning",
@@ -1254,6 +1264,7 @@
             onopen={openNode}
             onbind={(kind = "") => (binding = { path: "", kind: typeof kind === "string" ? kind : "" })}
             onrebind={(l) => (binding = { path: l.source, kind: "" })}
+            onrelink={(l) => (relinkDialog = l)}
             onunbind={unbind}
             onindex={startIndex}
             onindexdialog={openIndexDialog}
@@ -1412,6 +1423,10 @@
   {/key}
 {/if}
 
+{#if relinkDialog}
+  <RelinkLibraryDialog library={relinkDialog} onapply={relinkSource} onclose={() => (relinkDialog = null)} />
+{/if}
+
 {#if importing}
   <div class="import-mask" role="dialog" aria-modal="true" aria-label="正在导入">
     <div class="dialog dialog-shell import-busy">
@@ -1454,6 +1469,8 @@
 {#if settingsBox}
   <SettingsDialog
     dataDir={appInfo?.data_dir ?? ""}
+    configDir={appInfo?.config_dir ?? ""}
+    webviewDir={appInfo?.webview_dir ?? ""}
     initialTab={settingsTab}
     onmcpchange={(next) => (mcpState = { ...mcpState, ...next })}
     onclose={() => { settingsBox = false; refreshMcpStatus(); }} />
