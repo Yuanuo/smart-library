@@ -43,6 +43,8 @@
   <div class="body">
     <SearchPage {s} onopen={(req) => emit("popout-open", req)}
       onsetup={(action) => emit("search-setup", action)}
+      onclip={(clips) => emit("popout-action", { type: "search-clip", clips })}
+      onai={(request) => emit("popout-action", { type: "search-ai", request })}
       ontitle={(t) => win.setTitle(`${t} — Smart Library`).catch(() => {})} />
   </div>
 </div>

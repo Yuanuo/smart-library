@@ -184,6 +184,10 @@
       })();
     } else if (a.type === "note") {
       clipDlg = { text: a.text, vol: v, lb: a.lb };
+    } else if (a.type === "search-clip") {
+      clipDlg = { clips: a.clips };
+    } else if (a.type === "search-ai") {
+      handleAiRequest(a.request);
     } else if (a.type === "diary") {
       sendToDiary({ text: a.text, vol: v, lb: a.lb }).catch((e) => (error = String(e)));
     } else if (a.type === "note-last") {
@@ -284,21 +288,26 @@
     api.prepareTitles().catch(() => {});
   }
 
-  let clipDlg = $state(null); // { text, vol, lb }
+  let clipDlg = $state(null);
+  const clipVolume = $derived(clipDlg?.clips?.length === 1 ? clipDlg.clips[0].vol : clipDlg?.vol);
+  const clipPath = $derived(clipVolume ? libPanel?.nodePath(clipVolume.lib, {
+    bookId: clipVolume.book_id ?? null, path: clipVolume.path,
+  }) || clipVolume.path || "" : "");
 
   /** Add a clipping (`a`: { text, vol, lb }) to a new or an existing note. */
   async function doClip(req, a) {
+    const clips = a.clips ?? [a];
     if (req.mode === "append" && req.target.mind) {
       // a mind map: the text becomes a node under its root, linked to the source
       const t = req.target;
-      const n = await clipNode({ text: a.text, vol: a.vol, lb: a.lb });
-      await api.mindmapAddClip(t.lib, t.id, n.topic, n.link, n.tag);
+      await api.mindmapAddClips(t.lib, t.id, await Promise.all(clips.map((clip) => clipNode(clip))));
       workspace.refreshDocument(t.lib, t.id);
       setLast(t);
       notice = `已加入脑图：${t.title}`;
       return;
     }
-    const md = await clipMarkdown({ text: a.text, vol: a.vol, lb: a.lb, comment: req.comment });
+    const quotes = await Promise.all(clips.map((clip) => clipMarkdown(clip)));
+    const md = [...quotes, req.comment?.trim()].filter(Boolean).join("\n\n");
     if (req.mode === "new") {
       const r = await api.createNoteAt(null, req.where, req.title);
       await api.saveNote(r.lib, r.id, md + "\n");
@@ -568,7 +577,7 @@
       return;
     }
     setAiOpen(true);
-    if (req.text || req.prompt) {
+    if (req.text || req.prompt || req.quotes?.length) {
       const source = req.source || [req.sourceDoc?.title || req.title, req.lb].filter(Boolean).join(" · ");
       aiIncoming = {
         nonce: ++aiSeq,
@@ -577,6 +586,7 @@
         sourceDoc: req.sourceDoc || null,
         source,
         append: !!req.append,
+        quotes: req.quotes ?? null,
       };
     }
   }
@@ -1440,7 +1450,8 @@
 {/if}
 
 {#if clipDlg}
-  <ClipDialog text={clipDlg.text} vol={clipDlg.vol} onok={(req) => doClip(req, clipDlg)} onclose={() => (clipDlg = null)} />
+  <ClipDialog text={clipDlg.text} vol={clipDlg.vol} clips={clipDlg.clips} path={clipPath}
+    onok={(req) => doClip(req, clipDlg)} onclose={() => (clipDlg = null)} />
 {/if}
 
 {#if propsDlg}

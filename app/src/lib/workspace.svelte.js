@@ -498,6 +498,7 @@ function searchRenderer() {
           onpopout: () => popOutSearch(panelApi.id),
           onsetup: (action) => hooks.onsearchsetup?.(action),
           onai: (req) => hooks.onai?.(req),
+          onclip: (clips) => hooks.onaction?.({ type: "search-clip", clips }),
           onsearchresult: (sr) => {
             searchResults[panelApi.id] = sr;
             if (panelApi?.isActive) {

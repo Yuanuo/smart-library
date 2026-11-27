@@ -368,6 +368,11 @@
         const item = { text: inc.text.trim(), source: (inc.source || "").trim() };
         quotes = inc.append ? [...quotes, item] : [item];
       }
+      if (inc.quotes?.length) {
+        includeSearch = false;
+        const unique = new Map([...quotes, ...inc.quotes].map((item) => [JSON.stringify([item.text, item.source]), item]));
+        quotes = [...unique.values()];
+      }
       if (inc.prompt) {
         sendPrompt(inc.prompt);
       } else if (!inc.sessionId) {

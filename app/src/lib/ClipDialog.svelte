@@ -5,13 +5,17 @@
   import { onMount, untrack } from "svelte";
   import * as api from "./api.js";
   import { getLast } from "./clipTarget.js";
+  import DialogHeader from "./DialogHeader.svelte";
 
-  let { text, vol, onok, onclose } = $props();
+  let { text, vol, clips = null, path = "", onok, onclose } = $props();
+  const entries = $derived(clips ?? [{ text, vol }]);
+  const batch = $derived(entries.length > 1);
+  const heading = $derived(batch ? `加入笔记：${entries.length} 条摘录` : `加入笔记：${entries[0].vol.title}`);
 
   const last = getLast();
   let mode = $state(last ? "append" : "new");
   let where = $state("");
-  let title = $state(untrack(() => `摘录：${vol.title}`));
+  let title = $state(untrack(() => batch ? "全文搜索摘录" : `摘录：${entries[0].vol.title}`));
   let find = $state(last ? last.title : ""); // append: what is typed to find the note
   let target = $state(last); // { lib, id, title }
   let comment = $state("");
@@ -91,13 +95,18 @@
   }
 </script>
 
-<div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label="加入笔记" tabindex="-1" onkeydown={(e) => e.key === "Escape" && onclose()}><form style="display:contents" onsubmit={submit}>
-    <!-- close dialog -->
-    <header class="dialog-header"><h2>加入笔记</h2></header>
+<div class="backdrop" role="presentation" onmousedown={(e) => e.target === e.currentTarget && !busy && onclose()}>
+  <div class="dialog dialog-shell" role="dialog" aria-modal="true" aria-label={heading} tabindex="-1" onkeydown={(e) => e.key === "Escape" && !busy && onclose()}><form style="display:contents" onsubmit={submit}>
+    <DialogHeader title={heading} {path} />
     <div class="dialog-content">
-    <p class="quote">{text.length > 160 ? text.slice(0, 160) + "…" : text}</p>
-    <p class="src muted">来源：《{vol.title}》{vol.author ? " " + vol.author : ""}，笔记里的来源链接可以回到原文位置。</p>
+    <div class="previews">
+      {#each entries as entry}
+        <div>
+          <p class="quote">{entry.text.length > 160 ? entry.text.slice(0, 160) + "…" : entry.text}</p>
+          <p class="src muted">《{entry.vol.title}》{entry.vol.author ? " " + entry.vol.author : ""}{entry.lb ? " · " + entry.lb : ""}</p>
+        </div>
+      {/each}
+    </div>
 
     <div class="seg" role="group" aria-label="方式">
       <button type="button" class:on={mode === "append"} onclick={() => setMode("append")}>追加到已有笔记</button>
@@ -121,13 +130,13 @@
           {/if}
         </div>
       </label>
-      <p class="hint muted">{target?.mind ? `将作为新节点加入脑图「${target.title}」，带来源链接。` : target ? `将追加到「${target.title}」的末尾。` : "从下拉列表里选一篇笔记。"}（正在编辑的笔记会追加到编辑框里。）</p>
+      <p class="hint muted">{target?.mind ? `摘录将分别加入脑图「${target.title}」。` : target ? `将追加到「${target.title}」的末尾。` : "从下拉列表里选一篇笔记。"}（正在编辑的笔记会追加到编辑框里。）</p>
     {:else}
       <label>位置
         <div class="where">
           <input type="text" bind:value={where} bind:this={first} autocomplete="off"
             placeholder="知识库/文件夹/…（留空：默认知识库的顶层）"
-            oninput={() => typed(where)} onfocus={() => typed(where)} onkeydown={key} />
+            oninput={() => typed(where)} onfocus={() => where.trim() && typed(where)} onkeydown={key} />
           {#if hints.length}
             <ul class="hints" role="listbox">
               {#each hints as h, i}
@@ -146,7 +155,7 @@
     {#if error}<p class="error">{error}</p>{/if}
     </div>
     <div class="actions">
-      <button type="button" onclick={onclose}>取消</button>
+      <button type="button" disabled={busy} onclick={onclose}>取消</button>
       <button class="primary" disabled={!ready || busy}>{mode === "new" ? "创建并加入" : "追加"}</button>
     </div>
   </form></div>
@@ -158,7 +167,7 @@
     display: flex; align-items: center; justify-content: center;
   }
   .dialog { width: min(560px, calc(100vw - 32px)); }
-  h2 { margin: 0 0 8px; font-size: 18px; color: var(--accent); }
+  .previews { max-height: min(24vh, 12em); overflow: auto; }
   .quote {
     margin: 0; padding: 6px 12px; border-left: 3px solid var(--accent); background: var(--bg);
     max-height: 7em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 0 6px 6px 0;

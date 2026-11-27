@@ -211,7 +211,7 @@ fn main() {
             commands::note_append,
             commands::save_bytes,
             commands::note_picture,
-            commands::mindmap_add_clip,
+            commands::mindmap_add_clips,
             commands::note_attach,
             commands::export_library,
             commands::inspect_package,

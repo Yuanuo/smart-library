@@ -46,19 +46,22 @@ async function describe(vol, lb) {
   return { title, where, label: `《${title}》${vol.author ? " " + vol.author : ""}${where ? " · " + where : ""}` };
 }
 
-/** A Markdown list item for a search result, linked to its first hit. */
-export async function searchCitation(hit, libraryTitle) {
-  const lb = hit.snippets[0]?.lb || null;
-  const vol = { ...hit, label: hit.book_id ? hit.subtitle : "" };
-  const citation = await describe(vol, lb);
-  const source = [libraryTitle, hit.book_id || hit.subtitle, citation.where].filter(Boolean).join(" · ");
-  const label = [citation.title, source].filter(Boolean).join(" · ")
-    .replaceAll("\\", "\\\\").replace(/[\[\]]/g, "\\$&").replace(/\s+/g, " ");
-  return `- [${label}](${sourceUrl({ lib: hit.lib, book: hit.book_id, path: hit.path, lb })})`;
+/** The excerpt and source of one highlighted row in the search results. */
+export function searchClip(hit, snippet) {
+  const vol = {
+    lib: hit.lib, path: hit.path, book_id: hit.book_id, title: hit.title,
+    label: hit.book_id ? hit.subtitle : "", libraryTitle: hit.library_title,
+  };
+  const first = snippet.parts.findIndex((part) => part.hl);
+  return {
+    vol, lb: snippet.lb, position: snippet.pos,
+    anchor: first < 0 ? "" : snippet.parts.slice(first).map((part) => part.t).join("").trim(),
+    text: snippet.parts.map((part) => part.t).join("").trim(),
+  };
 }
 
 /** A clipping as a node of a mind map: its text, the link to the source, a tag. */
-export async function clipNode({ text, vol, lb }) {
+export async function clipNode({ text, vol, lb, anchor = text }) {
   const flat = text.replace(/\s+/g, " ").trim();
   if (vol?.url) {
     return {
@@ -70,13 +73,13 @@ export async function clipNode({ text, vol, lb }) {
   const d = await describe(vol, lb);
   return {
     topic: flat.length > 160 ? flat.slice(0, 160) + "…" : flat,
-    link: sourceUrl({ lib: vol.lib, book: vol.book_id, path: vol.path, lb, quote: text }),
+    link: sourceUrl({ lib: vol.lib, book: vol.book_id, path: vol.path, lb, quote: anchor }),
     tag: d.label,
   };
 }
 
 /** The Markdown to add to a note. `vol` is the document read, `lb` the line the text starts at. */
-export async function clipMarkdown({ text, vol, lb, comment = "" }) {
+export async function clipMarkdown({ text, vol, lb, comment = "", anchor = text, position = null }) {
   const quote = text
     .replace(/\r/g, "")
     .split(/\n+/)
@@ -96,7 +99,8 @@ export async function clipMarkdown({ text, vol, lb, comment = "" }) {
     if (m) where = m[1];
   } catch {}
   const title = vol.label ? `${vol.title} ${vol.label}` : vol.title;
-  const label = `《${title}》${vol.author ? " " + vol.author : ""}${where ? " · " + where : ""}`.replace(/[\[\]]/g, (c) => (c === "[" ? "（" : "）"));
-  const url = sourceUrl({ lib: vol.lib, book: vol.book_id, path: vol.path, lb, quote: text });
+  const source = [vol.libraryTitle, where, position == null ? "" : `第${position}字`].filter(Boolean).join(" · ");
+  const label = `《${title}》${vol.author ? " " + vol.author : ""}${source ? " · " + source : ""}`.replace(/[\[\]]/g, (c) => (c === "[" ? "（" : "）"));
+  const url = sourceUrl({ lib: vol.lib, book: vol.book_id, path: vol.path, lb, quote: anchor });
   return `${quote}\n>\n> —— [${label}](${url})` + (comment.trim() ? `\n\n${comment.trim()}` : "");
 }

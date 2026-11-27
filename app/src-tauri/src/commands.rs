@@ -1963,16 +1963,26 @@ pub async fn note_picture(lib: String, name: String, state: State<'_, AppState>)
 /// Add a clipping to a mind map: a new child of its root (`link`: the place
 /// it comes from, `tag`: what it is from).
 #[tauri::command]
-pub async fn mindmap_add_clip(lib: String, id: String, topic: String, link: String, tag: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn mindmap_add_clips(lib: String, id: String, clips: Vec<MindmapClipDto>, state: State<'_, AppState>) -> Result<(), String> {
     let store = notes_of(&state, &lib)?;
     let id = note_id(&id)?;
     let note = store.get(id)?.ok_or("笔记不存在")?;
     if note.content_type != smart_library_core::mindmap::TYPE {
         return Err("这篇笔记不是脑图".into());
     }
-    let data = smart_library_core::mindmap::add_clip(&note.content, &topic, &link, &tag)?;
+    let mut data = note.content;
+    for clip in clips {
+        data = smart_library_core::mindmap::add_clip(&data, &clip.topic, &clip.link, &clip.tag)?;
+    }
     store.update(id, None, Some(&data))?;
     Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct MindmapClipDto {
+    topic: String,
+    link: String,
+    tag: String,
 }
 
 /// Add text at the end of a note.

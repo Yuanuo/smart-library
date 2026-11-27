@@ -17,9 +17,9 @@
   import LibraryLocationDialog from "./LibraryLocationDialog.svelte";
   import Icon from "./Icon.svelte";
   import { addScopesToSearch, normalizeSearchScopes, searchScope } from "./searchScope.js";
-  import { searchCitation } from "./clip.js";
+  import { clipMarkdown, searchClip } from "./clip.js";
 
-  let { s, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onsearchresult = null, onsetup = null } = $props();
+  let { s, onopen, onstate = null, ontitle = null, onpopout = null, onai = null, onclip = null, onsearchresult = null, onsetup = null } = $props();
   const NO_INDEX = "还没有可搜索的知识库：请先为知识库建立索引";
   const PAGE_SIZE = 20;
 
@@ -38,7 +38,6 @@
   let hitsEl = $state();
   let chooseScope = $state(false);
   let unavailable = $state(null);
-  let selecting = $state(false);
   let picked = $state([]);
   let sharing = $state(false);
   let shareMessage = $state("");
@@ -124,15 +123,13 @@
   }
 
   function setMode(phrase) {
-    if (s.phrase === phrase) return;
-    clearPicked();
+    if (s.phrase !== phrase || ran.query !== s.query.trim()) clearPicked();
     s.phrase = phrase;
     onstate?.();
-    if (s.ran) run(1);
+    if (s.query.trim()) run(1);
   }
 
-  function changed(keepPicked = false) {
-    if (!keepPicked) clearPicked();
+  function changed() {
     onstate?.();
     if (s.ran || busy || error) run(1);
   }
@@ -159,11 +156,10 @@
 
   function pickLibrary(id) {
     if (s.libraryPinned === (id != null) && (id == null || id === s.lib)) return;
-    const keepPicked = !chips.length;
     s.lib = id;
     s.libraryPinned = id != null;
     s.filters = {};
-    changed(keepPicked);
+    changed();
   }
 
   // ---------------------------------------------------------------- range
@@ -214,6 +210,7 @@
   const otherMatch = $derived(result?.lib && libraries.find((library) => library.id !== result.lib && library.count > 0));
   const showResultTools = $derived(result && !error && !switchingLibrary && !result.index_unavailable);
   const firstOnPage = $derived(result?.hits.length ? (result.page - 1) * PAGE_SIZE + 1 : 0);
+  const allMatches = $derived(result?.libraries.reduce((sum, library) => sum + library.count, 0) ?? 0);
 
   function goToPage(event) {
     event.preventDefault();
@@ -224,43 +221,49 @@
     if (page !== result.page) run(page);
   }
 
-  const hitKey = (hit) => JSON.stringify([hit.lib, hit.path]);
-  const pickedKeys = $derived(new Set(picked.map((item) => hitKey(item.hit))));
-  const allPagePicked = $derived(!!result?.hits.length && result.hits.every((hit) => pickedKeys.has(hitKey(hit))));
+  const snippetKey = (hit, snippet) => JSON.stringify([hit.lib, hit.path, snippet.lb, snippet.pos]);
+  const pickedKeys = $derived(new Set(picked.map((item) => item.key)));
 
   function clearPicked() {
     picked = [];
     shareMessage = "";
   }
 
-  function pickHits(hits, checked) {
-    const keys = new Set(hits.map(hitKey));
-    if (!checked) {
-      picked = picked.filter((item) => !keys.has(hitKey(item.hit)));
-    } else {
-      picked = [...picked, ...hits.filter((hit) => !pickedKeys.has(hitKey(hit))).map((hit) => ({ hit, libraryTitle: hit.library_title }))];
-    }
+  function pickSnippet(hit, snippet, checked) {
+    const key = snippetKey(hit, snippet);
+    picked = checked ? [...picked, { key, clip: searchClip(hit, snippet) }] : picked.filter((item) => item.key !== key);
     shareMessage = "";
   }
 
-  async function shareCitations(toFile = false) {
+  async function shareClips(action) {
     if (!picked.length || sharing) return;
-    const items = $state.snapshot(picked);
+    const clips = $state.snapshot(picked).map((item) => item.clip);
     sharing = true;
     shareMessage = "";
     try {
+      if (action === "note") {
+        await onclip(clips);
+        return;
+      }
+      if (action === "ai") {
+        await onai({ quotes: clips.map(({ text, vol, lb, position }) => ({
+          text,
+          source: [vol.libraryTitle, vol.title, vol.label, lb, `第${position}字`].filter(Boolean).join(" · "),
+        })) });
+        shareMessage = `已加入 AI 会话 ${clips.length} 条摘录`;
+        return;
+      }
       let path;
-      if (toFile) {
-        path = await saveDialog({ defaultPath: "搜索引用.md", filters: [{ name: "Markdown", extensions: ["md"] }] });
+      if (action === "export") {
+        path = await saveDialog({ defaultPath: "搜索摘录.md", filters: [{ name: "Markdown", extensions: ["md"] }] });
         if (!path) return;
       }
-      const citations = await Promise.all(items.map(({ hit, libraryTitle }) => searchCitation(hit, libraryTitle)));
-      const markdown = citations.join("\n") + "\n";
+      const markdown = (await Promise.all(clips.map((clip) => clipMarkdown(clip)))).join("\n\n") + "\n";
       if (path) await api.saveBytes(path, new TextEncoder().encode(markdown));
       else await navigator.clipboard.writeText(markdown);
-      shareMessage = `${path ? "已导出" : "已复制"} ${citations.length} 条引用`;
+      shareMessage = `${path ? "已导出" : "已复制"} ${clips.length} 条摘录`;
     } catch (e) {
-      shareMessage = `无法${toFile ? "导出" : "复制"}引用：${String(e)}`;
+      shareMessage = String(e);
     } finally {
       sharing = false;
     }
@@ -329,20 +332,15 @@
 
 <div class="page">
   <form class="bar" onsubmit={submit}>
-    <div class="query-tools">
-      <div class="query-field">
-        <span class="query-icon"><Icon name="search" size={16} /></span>
-        <input type="search" class="q" bind:this={input} bind:value={s.query} oninput={() => onstate?.()}
-          placeholder="搜索全文" aria-label="全文搜索" />
-      </div>
-      <select class="mode" aria-label="匹配方式" value={s.phrase ? "phrase" : "loose"}
-        title={s.phrase ? "整句连续出现（忽略标点）" : "用空格分隔关键词，各组可以出现在文档的不同位置"}
-        onchange={(event) => setMode(event.currentTarget.value === "phrase")}>
-        <option value="loose">宽松匹配</option>
-        <option value="phrase">精确短语</option>
-      </select>
-      <button class="primary submit" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
-    </div>
+    <input type="search" class="q" bind:this={input} bind:value={s.query} oninput={() => onstate?.()}
+      placeholder="输入关键词，留空浏览全部" aria-label="全文搜索" />
+    <span class="mode" role="group" aria-label="匹配方式">
+      <button type="button" class:on={!s.phrase} aria-pressed={!s.phrase} onclick={() => setMode(false)}
+        title="用空格分隔关键词，各组可以出现在文档的不同位置">宽松匹配</button>
+      <button type="button" class:on={s.phrase} aria-pressed={s.phrase} onclick={() => setMode(true)}
+        title="整句连续出现（忽略标点）">精确短语</button>
+    </span>
+    <button class="primary submit" disabled={busy}>{busy ? "搜索中…" : "搜索"}</button>
     <div class="view-tools">
       {#if settings.aiOn && onai}
         <button type="button" class="view-action" onclick={() => onai({ toggle: true })} title="打开 / 收起右侧 AI 助手栏（F1）">
@@ -387,7 +385,9 @@
     <section class="results" aria-busy={busy}>
       {#if result && !error && result.libraries.length > 1}
         <div class="libs" role="group" aria-label="显示哪个知识库的结果">
-          <button aria-pressed={!s.libraryPinned} class:on={!s.libraryPinned} onclick={() => pickLibrary(null)}>全部知识库</button>
+          <button aria-pressed={!s.libraryPinned} class:on={!s.libraryPinned} onclick={() => pickLibrary(null)}>
+            全部知识库 <span class="n">{allMatches.toLocaleString()}</span>
+          </button>
           {#each libraries as l (l.id)}
             <button class:on={s.libraryPinned && l.id === s.lib} aria-pressed={s.libraryPinned && l.id === s.lib} onclick={() => pickLibrary(l.id)}
               title={scopedLibraries.has(l.id) ? "已限定搜索范围" : null}>
@@ -405,31 +405,15 @@
           <button class="link" onclick={clearFilters}>清除过滤</button>
         </div>
       {/if}
-      {#if showResultTools}
-        <div class="result-head">
-          <p class="summary" aria-live="polite">
-            {#if result.kind === "cbeta"}
-              {browsing ? "共" : "命中"} <strong>{result.total_books.toLocaleString()}</strong> 部、<strong>{result.total_volumes.toLocaleString()}</strong> 卷
-            {:else}
-              {browsing ? "共" : "找到"} <strong>{result.total_volumes.toLocaleString()}</strong> {browsing ? "篇文档" : "篇匹配文档"}
-            {/if}
-          </p>
-          {#if result.hits.length || picked.length}
-            <div class="citation-actions">
-              {#if selecting}
-                {#if result.hits.length}
-                  <label><input type="checkbox" checked={allPagePicked} onchange={(event) => pickHits(result.hits, event.currentTarget.checked)} />全选本页</label>
-                {/if}
-                <span class="muted selection-count">已选 {picked.length} 条</span>
-                <button type="button" onclick={() => shareCitations()} disabled={!picked.length || sharing}>复制引用</button>
-                <button type="button" onclick={() => shareCitations(true)} disabled={!picked.length || sharing}>导出 Markdown…</button>
-                <button type="button" class="link" onclick={() => { selecting = false; clearPicked(); }} disabled={sharing}>退出选择</button>
-              {:else}
-                <button type="button" onclick={() => (selecting = true)}>选择结果</button>
-              {/if}
-            </div>
-          {/if}
-          {#if shareMessage}<p class="muted share-message" role="status">{shareMessage}</p>{/if}
+      {#if picked.length}
+        <div class="selection-bar" role="group" aria-label="已选摘录">
+          <span class="selection-count" aria-live="polite">已选择 {picked.length} 条</span>
+          <button type="button" onclick={() => shareClips("copy")} disabled={sharing}>复制摘录</button>
+          {#if onclip}<button type="button" onclick={() => shareClips("note")} disabled={sharing}>加入笔记…</button>{/if}
+          {#if onai && settings.aiOn}<button type="button" onclick={() => shareClips("ai")} disabled={sharing}>加入 AI 会话</button>{/if}
+          <button type="button" onclick={() => shareClips("export")} disabled={sharing}>导出 Markdown…</button>
+          <button type="button" class="link" onclick={clearPicked} disabled={sharing}>清空选择</button>
+          {#if shareMessage}<span class="muted share-message" role="status">{shareMessage}</span>{/if}
         </div>
       {/if}
       <div class="hits" bind:this={hitsEl}>
@@ -471,8 +455,6 @@
           {#each result.hits as h}
             <article>
               <h2>
-                {#if selecting}<input type="checkbox" checked={pickedKeys.has(hitKey(h))} aria-label={`选择 ${h.title} ${h.subtitle}`}
-                  onchange={(event) => pickHits([h], event.currentTarget.checked)} />{/if}
                 <button class="link" onclick={() => open(h, null)}>{h.title} {h.book_id ? h.subtitle : ""}</button>
                 {#if result.lib == null}
                   <button type="button" class="link source" onclick={() => pickLibrary(h.lib)} title="只看此知识库">{h.library_title}</button>
@@ -480,10 +462,16 @@
                 <span class="muted id">{[h.book_id, h.book_id ? "" : h.subtitle, !browsing && h.occurrences ? `${h.occurrences} 处` : ""].filter(Boolean).join(" · ")}</span>
               </h2>
               {#each h.snippets as sn}
-                <button class="snippet" onclick={() => open(h, sn.lb)}>
-                  <span class="where muted">{sn.lb} 第{sn.pos}字</span>
-                  <span>…{#each sn.parts as p}{#if p.hl}<span class="hl">{p.t}</span>{:else}{p.t}{/if}{/each}…</span>
-                </button>
+                {@const checked = pickedKeys.has(snippetKey(h, sn))}
+                <div class="snippet-row" class:checked>
+                  <input type="checkbox" class="snippet-check" {checked}
+                    aria-label={`选择《${h.title}》${sn.lb} 第${sn.pos}字的摘录`}
+                    onchange={(event) => pickSnippet(h, sn, event.currentTarget.checked)} />
+                  <button class="snippet" onclick={() => open(h, sn.lb)}>
+                    <span class="where muted">{sn.lb} 第{sn.pos}字</span>
+                    <span>…{#each sn.parts as p}{#if p.hl}<span class="hl">{p.t}</span>{:else}{p.t}{/if}{/each}…</span>
+                  </button>
+                </div>
               {/each}
             </article>
           {:else}
@@ -498,29 +486,36 @@
           {/each}
         {/if}
       </div>
-      {#if showResultTools && result.pages > 1}
-        <nav class="pager" aria-label="搜索结果分页">
-          {#if firstOnPage}
-            <span class="page-range">第 {firstOnPage.toLocaleString()}–{(firstOnPage + result.hits.length - 1).toLocaleString()} 条</span>
+      {#if showResultTools}
+        <footer class="pager">
+          <span class="page-range" aria-live="polite">
+            {#if firstOnPage}第 {firstOnPage.toLocaleString()}–{(firstOnPage + result.hits.length - 1).toLocaleString()} 条 · {/if}
+            {#if result.kind === "cbeta"}
+              共 <strong>{result.total_books.toLocaleString()}</strong> 部、<strong>{result.total_volumes.toLocaleString()}</strong> 卷
+            {:else}
+              共 <strong>{result.total_volumes.toLocaleString()}</strong> {browsing ? "篇文档" : "篇匹配文档"}
+            {/if}
+          </span>
+          {#if result.pages > 1}
+            <form class="page-controls" aria-label="搜索结果分页" onsubmit={goToPage}>
+              <button type="button" aria-label="首页" title="首页" disabled={result.page <= 1 || busy} onclick={() => run(1)}>«</button>
+              <button type="button" aria-label="上一页" title="上一页" disabled={result.page <= 1 || busy} onclick={() => run(result.page - 1)}>
+                <Icon name="arrow-left" size={15} />
+              </button>
+              <label class="page-number">第
+                {#key result.page}
+                  <input type="text" inputmode="numeric" name="page" value={result.page} disabled={busy} aria-label="页码"
+                    title="输入页码，按 Enter 跳转" onfocus={(event) => event.currentTarget.select()} />
+                {/key}
+                / {result.pages.toLocaleString()} 页
+              </label>
+              <button type="button" aria-label="下一页" title="下一页" disabled={result.page >= result.pages || busy} onclick={() => run(result.page + 1)}>
+                <Icon name="arrow-right" size={15} />
+              </button>
+              <button type="button" aria-label="末页" title="末页" disabled={result.page >= result.pages || busy} onclick={() => run(result.pages)}>»</button>
+            </form>
           {/if}
-          <form class="page-controls" onsubmit={goToPage}>
-            <button type="button" aria-label="首页" title="首页" disabled={result.page <= 1 || busy} onclick={() => run(1)}>«</button>
-            <button type="button" aria-label="上一页" title="上一页" disabled={result.page <= 1 || busy} onclick={() => run(result.page - 1)}>
-              <Icon name="arrow-left" size={15} />
-            </button>
-            <label class="page-number">第
-              {#key result.page}
-                <input type="text" inputmode="numeric" name="page" value={result.page} disabled={busy} aria-label="页码"
-                  title="输入页码，按 Enter 跳转" onfocus={(event) => event.currentTarget.select()} />
-              {/key}
-              / {result.pages.toLocaleString()} 页
-            </label>
-            <button type="button" aria-label="下一页" title="下一页" disabled={result.page >= result.pages || busy} onclick={() => run(result.page + 1)}>
-              <Icon name="arrow-right" size={15} />
-            </button>
-            <button type="button" aria-label="末页" title="末页" disabled={result.page >= result.pages || busy} onclick={() => run(result.pages)}>»</button>
-          </form>
-        </nav>
+        </footer>
       {/if}
     </section>
   </div>
@@ -535,11 +530,12 @@
 <style>
   .page { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--paper); container-type: inline-size; }
   .bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  .query-tools { display: flex; align-items: stretch; gap: 7px; flex: 1 1 390px; min-width: 0; max-width: 535px; }
-  .query-field { position: relative; flex: 1; min-width: 0; }
-  .query-icon { position: absolute; inset-inline-start: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
-  .q { width: 100%; height: 34px; padding-inline-start: 33px; font-size: 15px; }
-  .mode { flex: none; max-width: 40%; font-size: 13px; }
+  .q { flex: 1 1 180px; min-width: 0; height: 34px; font-size: 16px; }
+  .mode { display: inline-flex; flex: none; }
+  .mode button { border-radius: 0; padding: 4px 10px; font-size: 14px; }
+  .mode button:first-child { border-radius: 6px 0 0 6px; }
+  .mode button:last-child { border-radius: 0 6px 6px 0; margin-inline-start: -1px; }
+  .mode button.on { position: relative; background: var(--accent); border-color: var(--accent); color: var(--paper); }
   .submit { flex: none; min-width: 67px; padding: 4px 8px; font-size: 14px; }
   .view-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-inline-start: auto; }
   .view-tools:empty { display: none; }
@@ -562,43 +558,46 @@
   .panes > :global(*) { flex: 1; min-height: 0; }
   .hint { padding: 12px; }
   .results { --result-gutter: 20px; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-  .libs { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px var(--result-gutter) 0; }
+  .libs { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px var(--result-gutter) 6px; }
   .libs button { border-radius: 14px; font-size: 13px; padding: 2px 12px; }
   .libs button.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
   .libs .n { opacity: 0.75; margin-left: 4px; }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 8px var(--result-gutter) 0; font-size: 13px; }
   .chip { background: var(--accent-soft); border-radius: 12px; padding: 1px 4px 1px 10px; }
   .chip .link { padding: 0 4px; }
-  .result-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px var(--result-gutter); min-height: 45px; border-bottom: 1px solid var(--line); }
-  .summary { margin: 0; color: var(--muted); font-size: 13px; }
-  .summary strong { color: var(--accent); font-size: 16px; font-variant-numeric: tabular-nums; }
   .hits { flex: 1; min-height: 0; overflow: auto; padding: 4px var(--result-gutter) 14px; }
   .intro, .err { padding-top: 8px; }
   .empty-state { padding: 8px 0; }
   .availability { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .err { color: var(--hl); white-space: pre-wrap; }
   .unsearched { font-size: 13px; margin: 8px 0; overflow-wrap: anywhere; }
-  .citation-actions { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; font-size: 13px; }
-  .citation-actions button { padding: 3px 8px; }
-  .citation-actions label { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
-  .selection-count { white-space: nowrap; }
-  .share-message { flex-basis: 100%; margin: 0; font-size: 13px; }
+  .selection-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 7px var(--result-gutter); border-bottom: 1px solid var(--line); background: var(--accent-soft); font-size: 13px; }
+  .selection-bar button { padding: 3px 8px; }
+  .selection-count { white-space: nowrap; font-weight: 600; color: var(--accent); }
+  .share-message { font-size: 12px; }
   article { border-bottom: 1px solid var(--line); padding: 10px 0 12px; }
   h2 { font-size: 18px; margin: 0 0 6px; font-weight: 600; display: flex; gap: 4px 10px; align-items: baseline; flex-wrap: wrap; }
   .source { padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); font-size: 12px; font-weight: normal; }
   .source:hover { text-decoration: underline; }
   .id { font-size: 13px; font-weight: normal; }
+  .snippet-row { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; border-radius: 4px; }
+  .snippet-check { place-self: start center; margin: 8px 0 0; accent-color: var(--accent); cursor: pointer; }
+  @media (hover: hover) {
+    .snippet-check { opacity: 0; }
+    .snippet-row:hover .snippet-check, .snippet-row:focus-within .snippet-check, .snippet-row.checked .snippet-check { opacity: 1; }
+  }
+  .snippet-row:hover, .snippet-row.checked { background: var(--accent-soft); }
   .snippet {
     display: flex; gap: 12px; width: 100%; text-align: left; border: none; background: none;
     padding: 4px 6px; line-height: 1.8; font-size: 16px; border-radius: 4px;
   }
-  .snippet:hover { background: var(--accent-soft); }
   .where { flex: none; width: 110px; font-size: 12px; font-family: ui-monospace, Consolas, monospace; padding-top: 4px; }
   .pager { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; padding: 7px var(--result-gutter); border-top: 1px solid var(--line); background: var(--panel); font-size: 13px; }
   .page-range { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .page-controls { display: flex; align-items: center; gap: 4px; margin-inline-start: auto; }
   .page-controls button { display: grid; place-items: center; padding: 0; width: 30px; height: 28px; color: var(--accent); font-size: 17px; }
-  .page-controls button:disabled, .citation-actions button:disabled { opacity: .48; cursor: default; }
+  .page-controls button:disabled, .selection-bar button:disabled { opacity: .48; cursor: default; }
+  .page-range strong { color: var(--accent); }
   .page-number { display: flex; align-items: center; gap: 5px; padding: 0 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .page-number input { width: 5ch; height: 28px; padding: 2px; text-align: center; }
   @container (width < 700px) {
