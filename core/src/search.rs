@@ -794,6 +794,20 @@ pub fn locate(vt: &VolumeText, query: &str, mode: MatchMode) -> Vec<Occurrence> 
         .collect()
 }
 
+/// Count distinct highlighted regions. `locate` returns sorted matches, so
+/// overlapping terms of a single phrase belong to the same region.
+pub fn match_region_count(occurrences: &[Occurrence]) -> usize {
+    let mut count = 0;
+    let mut end = 0;
+    for occurrence in occurrences {
+        if occurrence.from >= end {
+            count += 1;
+        }
+        end = end.max(occurrence.to);
+    }
+    count
+}
+
 /// A piece of the punctuated text around one or more nearby occurrences.
 #[derive(Debug, Clone)]
 pub struct Snippet {
@@ -1194,6 +1208,10 @@ mod tests {
         assert_eq!((occ[0].lb.as_str(), occ[0].pos), ("0001a01", 7));
         let occ = locate(&vt, "念", MatchMode::Loose);
         assert_eq!(occ.iter().map(|o| (o.lb.as_str(), o.pos)).collect::<Vec<_>>(), vec![("0001a01", 8), ("0001a02", 2)]);
+        assert_eq!(match_region_count(&occ), 2);
+        let bigrams = locate(&vt, "當念他念", MatchMode::Loose);
+        assert_eq!(bigrams.len(), 3);
+        assert_eq!(match_region_count(&bigrams), 1);
         let sn = snippets(&vt, &locate(&vt, "當念他念", MatchMode::Phrase), 2, 3);
         let marked: String = sn[0].parts.iter().filter(|p| p.1).map(|p| p.0.as_str()).collect();
         assert_eq!(marked, "當念，他念");

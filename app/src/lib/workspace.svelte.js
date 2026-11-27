@@ -419,7 +419,7 @@ function aiChatRenderer() {
 /** What of a search page is kept with its tab (and handed to a window). */
 function searchSnapshot(st) {
   const x = $state.snapshot(st);
-  return { kind: "search", query: x.query, phrase: x.phrase, library: x.lib, filters: x.filters, scopes: x.scopes, tab: x.tab, page: x.page, ran: x.ran };
+  return { kind: "search", query: x.query, phrase: x.phrase, library: x.lib, libraryPinned: x.libraryPinned, filters: x.filters, scopes: x.scopes, tab: x.tab, page: x.page, ran: x.ran };
 }
 
 function searchRenderer() {
@@ -446,6 +446,7 @@ function searchRenderer() {
         query: prm.query || "",
         phrase: !!prm.phrase,
         lib: prm.library ?? null, // (not `lib`: a tab with that parameter belongs to a library)
+        libraryPinned: !!prm.libraryPinned,
         filters: prm.filters || {},
         scopes: prm.scopes || [],
         tab: prm.tab || "/bulei",

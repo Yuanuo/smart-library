@@ -3427,6 +3427,7 @@ pub struct SearchDto {
     libraries: Vec<LibCountDto>,
     /// the library whose results follow
     lib: Option<String>,
+    kind: String,
     total_volumes: usize,
     total_books: usize,
     page: usize,
@@ -3643,10 +3644,14 @@ pub async fn search(
         return Err("还没有可搜索的知识库：请先为知识库建立索引".into());
     }
     // the asked library, else the first one with hits
-    let selected = lib
-        .filter(|id| counts.iter().any(|c| &c.id == id))
+    let selected = lib.as_ref()
+        .filter(|id| counts.iter().any(|c| &c.id == *id))
+        .cloned()
         .or_else(|| counts.iter().find(|c| c.count > 0).map(|c| c.id.clone()))
         .unwrap_or_else(|| counts[0].id.clone());
+    if lib.is_some_and(|id| id != selected) {
+        req.filters.clear();
+    }
     req.within = ranges.get(&selected).cloned().flatten();
     let l = state.library(&selected)?;
     let idx = state.index(&selected).ok_or("索引不可用")?;
@@ -3678,7 +3683,7 @@ pub async fn search(
                         parts: s.parts.into_iter().map(|(t, hl)| PartDto { t, hl }).collect(),
                     })
                     .collect();
-                (occ.len(), sn)
+                (smart_library_core::search::match_region_count(&occ), sn)
             }
             Err(_) => (0, Vec::new()), // listed but unreadable: shown without snippets
         };
@@ -3725,6 +3730,7 @@ pub async fn search(
     Ok(SearchDto {
         libraries: counts,
         lib: Some(selected),
+        kind: l.kind,
         total_volumes: r.total_volumes,
         total_books: r.total_books,
         page,

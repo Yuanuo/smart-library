@@ -15,6 +15,7 @@
     query: start.query || "",
     phrase: !!start.phrase,
     lib: start.library ?? null,
+    libraryPinned: !!start.libraryPinned,
     filters: start.filters || {},
     scopes: start.scopes || [],
     tab: start.tab || "/bulei",
@@ -27,7 +28,7 @@
 
   async function dock() {
     await emit("search-dock", {
-      query: s.query, phrase: s.phrase, library: s.lib, filters: $state.snapshot(s.filters),
+      query: s.query, phrase: s.phrase, library: s.lib, libraryPinned: s.libraryPinned, filters: $state.snapshot(s.filters),
       scopes: $state.snapshot(s.scopes), tab: s.tab, page: s.page, ran: s.ran,
     });
     await win.close();

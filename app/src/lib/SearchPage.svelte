@@ -42,11 +42,14 @@
     const filters = Object.entries(s.filters)
       .filter(([, v]) => v.length)
       .map(([root, values]) => ({ root, values }));
+    const query = s.query;
+    const phrase = s.phrase;
+    const library = s.libraryPinned || filters.length ? s.lib : null;
     try {
       const r = await api.search({
-        query: s.query,
-        phrase: s.phrase,
-        lib: s.lib,
+        query,
+        phrase,
+        lib: library,
         filters: filters.length ? filters : null,
         withins: s.scopes.length ? $state.snapshot(s.scopes) : null,
         page,
@@ -54,20 +57,27 @@
       });
       if (my !== seq) return;
       result = r;
+      if (library != null && library !== r.lib) {
+        s.libraryPinned = false;
+        s.filters = {};
+      }
       s.lib = r.lib;
       s.page = r.page;
       s.ran = true;
-      ran = { query: s.query.trim(), phrase: s.phrase };
+      ran = { query: query.trim(), phrase };
       onsearchresult?.({
-        query: ran.query || s.query,
+        query: ran.query,
         hits: r.hits || [],
         totalVolumes: r.total_volumes || 0,
-        totalBooks: r.total_books || 0,
+        totalBooks: r.kind === "cbeta" ? r.total_books : null,
       });
       ontitle?.(title());
       if (hitsEl) hitsEl.scrollTop = 0;
     } catch (e) {
-      if (my === seq) error = String(e);
+      if (my === seq) {
+        error = String(e);
+        onsearchresult?.(null);
+      }
     } finally {
       if (my === seq) busy = false;
       onstate?.();
@@ -117,8 +127,9 @@
   const chips = $derived(Object.entries(s.filters).flatMap(([root, vs]) => vs.map((name) => ({ root, name }))));
 
   function pickLibrary(id) {
-    // the facets of another library are other values: start again
+    if (id === s.lib && s.libraryPinned === (id != null)) return;
     s.lib = id;
+    s.libraryPinned = id != null;
     s.filters = {};
     changed();
   }
@@ -179,6 +190,8 @@
     });
   }
   const browsing = $derived(result && !ran.query);
+  const totalMatches = $derived(result?.libraries.reduce((total, library) => total + library.count, 0) ?? 0);
+  const otherMatch = $derived(result?.libraries.find((library) => library.id !== result.lib && library.count > 0));
 
   // ---------------------------------------------------------------- side width
   let sideWidth = $state(300);
@@ -296,9 +309,10 @@
 
     <section class="results">
       {#if result && result.libraries.length > 1}
-        <div class="libs" role="tablist" aria-label="知识库">
+        <div class="libs" role="group" aria-label="显示哪个知识库的结果">
+          <button aria-pressed={!s.libraryPinned} class:on={!s.libraryPinned} onclick={() => pickLibrary(null)}>自动选库</button>
           {#each result.libraries as l}
-            <button role="tab" class:on={l.id === result.lib} aria-selected={l.id === result.lib} onclick={() => pickLibrary(l.id)}>
+            <button class:on={s.libraryPinned && l.id === result.lib} aria-pressed={s.libraryPinned && l.id === result.lib} onclick={() => pickLibrary(l.id)}>
               {l.title} <span class="n">{l.count}</span>
             </button>
           {/each}
@@ -326,14 +340,19 @@
           </p>
         {:else}
           <div class="summary muted">
-            {browsing ? "全部 " : ""}共 {result.total_volumes} 篇，{result.total_books} 部 ·{result.millis.toFixed(0)} ms
+            {#if result.libraries.length > 1}
+              范围内共 {totalMatches} 篇{chips.length ? "（筛选前）" : ""} · {result.libraries.find((l) => l.id === result.lib)?.title}显示
+            {:else}
+              {browsing ? "全部 " : "命中 "}
+            {/if}
+            {#if result.kind === "cbeta"}{result.total_books} 部、{result.total_volumes} 卷{:else}{result.total_volumes} 篇{/if}
             {#if result.pages > 1}· 第 {result.page} / {result.pages} 页{/if}
           </div>
           {#each result.hits as h}
             <article>
               <h2>
                 <button class="link" onclick={() => open(h, null)}>{h.title} {h.book_id ? h.subtitle : ""}</button>
-                <span class="muted id">{[h.book_id, h.book_id ? "" : h.subtitle].filter(Boolean).join(" · ")}{browsing ? "" : ` · ${h.occurrences} 处`}</span>
+                <span class="muted id">{[h.book_id, h.book_id ? "" : h.subtitle, !browsing && h.occurrences ? `${h.occurrences} 处` : ""].filter(Boolean).join(" · ")}</span>
               </h2>
               {#each h.snippets as sn}
                 <button class="snippet" onclick={() => open(h, sn.lb)}>
@@ -343,7 +362,14 @@
               {/each}
             </article>
           {:else}
-            <p class="muted">没有找到。模糊匹配要求每个二字组都出现在同一篇文档；可以用空格分开关键词，或去掉一些过滤。</p>
+            {#if otherMatch}
+              <p>当前库没有符合条件的结果，其他库有命中。</p>
+              <button type="button" onclick={() => pickLibrary(otherMatch.id)}>查看 {otherMatch.title}（{otherMatch.count} 篇）</button>
+            {:else if chips.length}
+              <p>当前筛选条件没有结果。<button type="button" class="link" onclick={clearFilters}>清除筛选</button></p>
+            {:else}
+              <p class="muted">{browsing ? "此范围没有可浏览的文档。" : "此范围没有匹配结果。试试更短的关键词或扩大搜索范围。"}</p>
+            {/if}
           {/each}
           {#if result.pages > 1}
             <nav class="pager">
