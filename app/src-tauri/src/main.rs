@@ -87,6 +87,9 @@ fn main() {
                 Some(dirs) => dirs,
                 None => (app.path().app_config_dir()?, app.path().app_data_dir()?),
             };
+            if let Err(e) = smart_library_core::backup::apply_pending_restore(&config_dir, &data_dir) {
+                eprintln!("failed to apply pending restore: {e}");
+            }
             let state = AppState::new(config_dir.clone(), data_dir);
             if let Some(main_win) = app.get_webview_window("main") {
                 if let Some(ws) = state.saved_window_state() {
@@ -291,6 +294,10 @@ fn main() {
             commands::set_snapshot_policy,
             mcp_server::mcp_status_get,
             mcp_server::mcp_config_set,
+            commands::backup_create,
+            commands::backup_inspect,
+            commands::backup_stage_restore,
+            commands::relaunch_app,
             commands::relaunch_after_update,
         ])
         .run(tauri::generate_context!())

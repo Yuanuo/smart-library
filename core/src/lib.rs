@@ -10,6 +10,7 @@ pub mod ai_chat;
 pub mod analyzer;
 pub mod article;
 pub mod attach;
+pub mod backup;
 pub mod bookcase;
 pub mod bookinfo;
 pub mod catalog;

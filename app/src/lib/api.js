@@ -252,3 +252,10 @@ export const setSnapshotPolicy = (aiMaxPerDoc, aiTtlDays) =>
 // ------------------------------------------------------------ local Agent (MCP)
 export const mcpStatusGet = () => invoke("mcp_status_get");
 export const mcpConfigSet = (config) => invoke("mcp_config_set", { config });
+
+// ------------------------------------------------------------ full backup & restore
+export const backupCreate = (dest, includeSecrets = true, includeDicts = false) =>
+  invoke("backup_create", { dest, includeSecrets, includeDicts });
+export const backupInspect = (path) => invoke("backup_inspect", { path });
+export const backupStageRestore = (path) => invoke("backup_stage_restore", { path });
+export const relaunchApp = () => invoke("relaunch_app");

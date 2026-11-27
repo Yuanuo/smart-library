@@ -5322,6 +5322,10 @@ pub use ai_cmds::*;
 mod dict_cmds;
 pub use dict_cmds::*;
 
+#[path = "commands/backup_cmds.rs"]
+mod backup_cmds;
+pub use backup_cmds::*;
+
 // ------------------------------------------------------------ snapshots
 
 impl AppState {

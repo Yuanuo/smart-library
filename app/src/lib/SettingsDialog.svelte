@@ -530,6 +530,94 @@
   // clearing what the program leaves behind (trash of local folders, pictures nothing refers to)
   let cleaning = $state("");
   let cleanMsg = $state("");
+
+  // full application backup & staged restore (.smartbak)
+  let backupIncludeSecrets = $state(true);
+  let backupIncludeDicts = $state(false);
+  let backupBusy = $state("");
+  let backupMsg = $state("");
+  let backupErr = $state("");
+  let restorePreview = $state(null);
+
+  function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 1024) return `${bytes || 0} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  function formatBackupTime(unixSec) {
+    if (!unixSec) return "未知";
+    try {
+      return new Date(unixSec * 1000).toLocaleString();
+    } catch {
+      return String(unixSec);
+    }
+  }
+
+  function osLabel(os) {
+    return { windows: "Windows", macos: "macOS", linux: "Linux" }[os] || os || "未知";
+  }
+
+  async function createFullBackup() {
+    backupMsg = "";
+    backupErr = "";
+    const today = new Date().toISOString().slice(0, 10);
+    const dest = await saveDialog({
+      title: "保存完整备份包",
+      defaultPath: `smart-library-backup-${today}.smartbak`,
+      filters: [{ name: "Smart Library 备份包", extensions: ["smartbak"] }],
+    });
+    if (!dest) return;
+    backupBusy = "create";
+    try {
+      const res = await api.backupCreate(dest, backupIncludeSecrets, backupIncludeDicts);
+      backupMsg = `已创建备份包（共 ${res.file_count} 项，${formatBytes(res.archive_bytes)}）：${res.path}`;
+    } catch (e) {
+      backupErr = String(e);
+    } finally {
+      backupBusy = "";
+    }
+  }
+
+  async function pickBackupToRestore() {
+    backupMsg = "";
+    backupErr = "";
+    const picked = await openDialog({
+      title: "选择备份包",
+      multiple: false,
+      filters: [{ name: "Smart Library 备份包", extensions: ["smartbak"] }],
+    });
+    if (!picked || typeof picked !== "string") return;
+    backupBusy = "inspect";
+    try {
+      const info = await api.backupInspect(picked);
+      restorePreview = { path: picked, info };
+    } catch (e) {
+      restorePreview = null;
+      backupErr = String(e);
+    } finally {
+      backupBusy = "";
+    }
+  }
+
+  async function confirmRestore() {
+    if (!restorePreview) return;
+    const ok = await ask(
+      "还原将用备份包中的设置、阅读进度、收藏、AI 对话与内部笔记覆盖当前数据（现有文件会先自动备份到数据目录的 .restore_bak 中），并在重启应用后生效。确定继续？",
+      { title: "确认还原备份", kind: "warning", okLabel: "还原并重启", cancelLabel: "取消" },
+    );
+    if (!ok) return;
+    backupBusy = "restore";
+    backupErr = "";
+    try {
+      await api.backupStageRestore(restorePreview.path);
+      await api.relaunchApp();
+    } catch (e) {
+      backupErr = String(e);
+      backupBusy = "";
+    }
+  }
   async function clean(kind) {
     const trash = kind === "trash";
     const title = trash ? "清空文件夹库回收站" : "清理未引用图片";
@@ -1285,12 +1373,75 @@
           </div>
           <div class="card">
             <div class="card-block backup-info">
-              <h4>导出知识库</h4>
+              <h4>一键备份与还原（跨平台迁移）</h4>
+              <p class="muted">将应用设置、快捷键、AI 预设、阅读历史与进度、书签标签、AI 对话、文档快照、工作区及内部笔记库打包为单个 <code>.smartbak</code> 文件（自动排除可重建的全文索引与临时缓存，无需退出程序）。</p>
+              <div class="backup-opts">
+                <label class="backup-check">
+                  <input type="checkbox" bind:checked={backupIncludeSecrets} disabled={!!backupBusy} />
+                  <span>包含敏感凭据（AI API Key 与 MCP Token）</span>
+                </label>
+                <label class="backup-check">
+                  <input type="checkbox" bind:checked={backupIncludeDicts} disabled={!!backupBusy} />
+                  <span>包含已导入词典文件</span>
+                </label>
+              </div>
+              <div class="row-plain backup-actions">
+                <button type="button" class="primary" onclick={createFullBackup} disabled={!!backupBusy}>
+                  {backupBusy === "create" ? "正在打包备份…" : "创建备份包…"}
+                </button>
+                <button type="button" onclick={pickBackupToRestore} disabled={!!backupBusy}>
+                  {backupBusy === "inspect" ? "正在校验备份包…" : "从备份包还原…"}
+                </button>
+              </div>
+              {#if restorePreview}
+                {@const m = restorePreview.info.manifest}
+                <div class="restore-preview">
+                  <div class="restore-preview-head">
+                    <strong>待还原备份包预览</strong>
+                    <span class="muted">{formatBytes(restorePreview.info.archive_bytes)}</span>
+                  </div>
+                  <div class="restore-meta">
+                    <span>创建时间：{formatBackupTime(m.created_at)}</span>
+                    <span>来源系统：{osLabel(m.source_os)}（v{m.app_version}）</span>
+                    <span>包含内容：{[
+                      restorePreview.info.has_settings && "应用设置",
+                      restorePreview.info.has_history && "阅读进度与历史",
+                      restorePreview.info.has_marks && "书签与标签",
+                      restorePreview.info.has_ai_chat && "AI 对话",
+                      restorePreview.info.has_snapshots && "文档快照",
+                      restorePreview.info.internal_notes_count > 0 && `内部笔记库 ${restorePreview.info.internal_notes_count} 个`,
+                      m.include_dicts && "词典文件",
+                    ].filter(Boolean).join("、") || "基础配置"}</span>
+                    <span>凭据状态：{m.include_secrets ? "包含 API Key / MCP Token" : "已脱敏（不含凭据）"}</span>
+                  </div>
+                  {#if restorePreview.info.cross_os || restorePreview.info.external_libs_count > 0}
+                    <p class="muted hint">
+                      {restorePreview.info.cross_os ? "检测到跨系统备份：" : ""}备份中包含 {restorePreview.info.external_libs_count} 个外部资料库，还原重启后如路径有变，可在知识库菜单中使用「重新定位资料源」。
+                    </p>
+                  {/if}
+                  <div class="row-plain backup-actions">
+                    <button type="button" class="primary" onclick={confirmRestore} disabled={!!backupBusy}>
+                      {backupBusy === "restore" ? "正在准备并重启…" : "确认还原并重启"}
+                    </button>
+                    <button type="button" onclick={() => (restorePreview = null)} disabled={!!backupBusy}>取消</button>
+                  </div>
+                </div>
+              {/if}
+              {#if backupMsg}<p class="hint" role="status" style="word-break: break-all">{backupMsg}</p>{/if}
+              {#if backupErr}<p class="hint err-text" role="alert">{backupErr}</p>{/if}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-block backup-info">
+              <h4>导出单个知识库与数据目录</h4>
               <p class="muted">在知识库菜单选择「导出知识库」。通用数据包（.smartlib）用于带走所选文档、目录结构和支持的附件。文件夹数据包（.smartdir）保留所选目录结构、原文件和引用的附件，回收站需另行备份。</p>
-              <h4>完整备份或换电脑</h4>
-              <p class="muted">退出 Smart Library 后复制下方应用数据目录与应用配置目录，以及外部绑定的文件夹和资料包。笔记、阅读进度、收藏、快照、AI 对话及工作区保存在应用数据目录；外观排版、快捷键、AI 模型预设及知识库配置保存在应用配置目录（均跨平台通用）。迁移后，可以用知识库菜单中的「重新定位资料源」找回移动的外部资料。</p>
-              {#if dataDir}<label>应用数据目录<input type="text" readonly value={dataDir} onclick={(event) => event.currentTarget.select()} /></label>{/if}
-              {#if configDir && configDir !== dataDir}<label>应用配置目录<input type="text" readonly value={configDir} onclick={(event) => event.currentTarget.select()} /></label>{/if}
+              <p class="muted">如需手动查看或复制原始目录，应用数据与配置位置如下（均跨平台通用）：</p>
+              {#if dataDir && configDir && configDir !== dataDir}
+                <label>应用数据目录<input type="text" readonly value={dataDir} onclick={(event) => event.currentTarget.select()} /></label>
+                <label>应用配置目录<input type="text" readonly value={configDir} onclick={(event) => event.currentTarget.select()} /></label>
+              {:else if dataDir || configDir}
+                <input type="text" readonly value={dataDir || configDir} aria-label="应用数据与配置目录" onclick={(event) => event.currentTarget.select()} />
+              {/if}
             </div>
           </div>
           <div class="card">
@@ -1320,6 +1471,17 @@
   .backup-info h4 { margin: 0 0 6px; }
   .backup-info p { margin: 0 0 12px; }
   .backup-info label { display: grid; gap: 4px; margin-top: 8px; font-size: 13px; }
+  .backup-opts { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .backup-info label.backup-check { display: inline-flex; align-items: center; gap: 6px; margin-top: 0; cursor: pointer; }
+  .backup-info label.backup-check input { width: auto; margin: 0; }
+  .backup-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .restore-preview {
+    margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px;
+  }
+  .restore-preview-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+  .restore-meta { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--ink); }
+  .restore-preview p { margin: 0; }
   .dyn { width: 100%; height: 160px; font-family: monospace; font-size: 12px; box-sizing: border-box; margin: 6px 0; }
   .ai-sys { flex: 1; min-width: 200px; height: 68px; font-family: inherit; font-size: 13px; box-sizing: border-box; resize: vertical; }
   .err-text { color: var(--hl); }
