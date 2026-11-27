@@ -35,9 +35,7 @@ export function startScopeDrag(e, getItems, moveTo = null) {
   const setOver = (el) => {
     if (el === over) return;
     over?.classList.remove("scope-over");
-    if (el && (!el.dataset.scopeLib || items.every((item) => item.lib === el.dataset.scopeLib))) {
-      el.classList.add("scope-over");
-    }
+    el?.classList.add("scope-over");
     over = el;
   };
   const move = (ev) => {

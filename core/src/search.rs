@@ -29,7 +29,7 @@ use tantivy::schema::{
     STRING,
 };
 use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
-use tantivy::{Index, IndexReader, ReloadPolicy, TantivyDocument, Term};
+use tantivy::{DocAddress, Index, IndexReader, ReloadPolicy, Searcher, TantivyDocument, Term};
 
 /// Bumped whenever the schema or the analyzer changes: an index with another
 /// version must be rebuilt.
@@ -364,6 +364,29 @@ impl SearchIndex {
         Box::new(BooleanQuery::new(vec![(Occur::Must, query), (Occur::Must, allowed)]))
     }
 
+    /// A page of ranked hits, without computing facets or totals.
+    pub fn top_hits(&self, req: &SearchRequest) -> Result<Vec<Hit>, String> {
+        let searcher = self.reader.searcher();
+        let query = self.query_for(req, None)?;
+        let top = TopDocs::with_limit(req.limit.max(1)).and_offset(req.offset).order_by_score();
+        let top = searcher.search(&query, &top).map_err(|e| e.to_string())?;
+        self.read_hits(&searcher, top)
+    }
+
+    fn read_hits(&self, searcher: &Searcher, top: Vec<(f32, DocAddress)>) -> Result<Vec<Hit>, String> {
+        top.into_iter().map(|(score, addr)| {
+            let doc: TantivyDocument = searcher.doc(addr).map_err(|e| e.to_string())?;
+            let s = |field: Field| doc.get_first(field).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            Ok(Hit {
+                score,
+                path: s(self.f.path),
+                book: s(self.f.book),
+                title: s(self.f.title),
+                juan: doc.get_first(self.f.juan).and_then(|v| v.as_u64()).unwrap_or(0) as u16,
+            })
+        }).collect()
+    }
+
     pub fn search(&self, req: &SearchRequest) -> Result<SearchResult, String> {
         let _ = &self.index;
         let searcher = self.reader.searcher();
@@ -378,18 +401,7 @@ impl SearchIndex {
         let query = self.query_for(req, None)?;
         let (top, total, counts, counts2) = searcher.search(&query, &(top, Count, first, second)).map_err(|e| e.to_string())?;
 
-        let mut hits = Vec::new();
-        for (score, addr) in top {
-            let doc: TantivyDocument = searcher.doc(addr).map_err(|e| e.to_string())?;
-            let s = |field: Field| doc.get_first(field).and_then(|v| v.as_str()).unwrap_or("").to_string();
-            hits.push(Hit {
-                score,
-                path: s(self.f.path),
-                book: s(self.f.book),
-                title: s(self.f.title),
-                juan: doc.get_first(self.f.juan).and_then(|v| v.as_u64()).unwrap_or(0) as u16,
-            });
-        }
+        let hits = self.read_hits(&searcher, top)?;
         let mut facets = Vec::new();
         for (root, _) in FACET_DIMENSIONS {
             if shared.contains(&root) {

@@ -3,7 +3,7 @@
   import * as api from "./api.js";
   import DialogHeader from "./DialogHeader.svelte";
   import { autofocus } from "./autofocus.js";
-  let { title, libraryId = null, directoryAction = "选择当前目录", rootAction = null, onpick, onclose } = $props();
+  let { title, libraryId = null, libraryIds = null, directoryAction = "选择当前目录", rootAction = null, onpick, onclose } = $props();
   let libraries = $state([]);
   let library = $state(null);
   let levels = $state([]);
@@ -22,12 +22,12 @@
     const request = ++seq;
     api.status().then(({ libraries: sources }) => {
       if (request !== seq) return;
-      libraries = sources;
+      libraries = libraryIds == null ? sources : sources.filter((source) => libraryIds.includes(source.id));
       if (libraryId == null) {
         loading = false;
         return;
       }
-      const source = sources.find((item) => item.id === libraryId);
+      const source = libraries.find((item) => item.id === libraryId);
       if (source && !source.error) browse(source);
       else {
         error = source?.error || "知识库不可用。";

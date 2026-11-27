@@ -515,7 +515,8 @@
         const snips = (h.snippets || [])
           .map((s) => `  - [${s.lb}] ${(s.parts || []).map((p) => p.t).join("")}`)
           .join("\n");
-        return `${idx + 1}. 《${h.title}》${h.book_id ? ` (${h.book_id} ${h.subtitle || ""})` : h.subtitle ? ` (${h.subtitle})` : ""}\n${snips}`;
+        const context = [h.library_title, h.book_id, h.subtitle].filter(Boolean).join(" · ");
+        return `${idx + 1}. 《${h.title}》${context ? ` (${context})` : ""}\n${snips}`;
       });
       blocks.push(
         `【当前全文检索结果（关键词：「${searchContext.query || "全部"}」，共 ${searchContext.totalBooks == null ? `${searchContext.totalVolumes} 篇` : `${searchContext.totalBooks} 部、${searchContext.totalVolumes} 卷`}，以下为当前页命中摘录）】\n${lines.join("\n")}`,

@@ -31,19 +31,14 @@ export function scopesForLibrary(scopes, id) {
 export function setLibrarySearchScopes(search, scopes) {
   search.scopes = [...search.scopes.filter((item) => item.lib !== search.lib), ...scopes];
   search.libraryPinned = true;
-  search.scopeFeedback = "";
 }
 
 /** Shared by the scope pane and the library tree's context menu. */
 export function addScopesToSearch(search, items) {
   if (!items.length) return false;
   search.tab = "scope";
-  const id = search.lib ?? items[0].lib;
-  if (items.some((item) => item.lib !== id)) {
-    search.scopeFeedback = "请先切换到该节点所在的知识库，再添加范围。";
-    return false;
-  }
-  search.scopeFeedback = "";
+  // The library tree's multi-selection belongs to one library.
+  const id = items[0].lib;
   const current = scopesForLibrary(search.scopes, id);
   const scopes = new Map(current.map((item) => [scopeKey(item), item]));
   for (const item of items) {
@@ -54,7 +49,8 @@ export function addScopesToSearch(search, items) {
     const key = scopeKey(item);
     if (!scopes.has(key)) scopes.set(key, item);
   }
-  if (search.lib === id && scopes.size === current.length) return false;
+  if (search.lib === id && search.libraryPinned && scopes.size === current.length) return false;
+  if (search.lib !== id) search.filters = {};
   search.lib = id;
   setLibrarySearchScopes(search, [...scopes.values()]);
   return true;

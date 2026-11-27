@@ -464,7 +464,6 @@ function searchRenderer() {
         libraryPinned: !!prm.libraryPinned,
         filters: prm.filters || {},
         scopes: prm.scopes || [],
-        scopeFeedback: "",
         tab: prm.tab || "/bulei",
         page: prm.page || 1,
         ran: !!prm.ran,

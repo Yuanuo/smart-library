@@ -18,7 +18,6 @@
     libraryPinned: !!start.libraryPinned,
     filters: start.filters || {},
     scopes: start.scopes || [],
-    scopeFeedback: "",
     tab: start.tab || "/bulei",
     page: start.page || 1,
     ran: !!start.ran,

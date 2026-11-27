@@ -565,7 +565,7 @@ pub async fn exec_tool_with_policy(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(15)
                 .clamp(1, 50) as usize;
-            match commands::search(query.clone(), phrase, lib.clone(), None, None, Some(1), Some(limit), app.clone(), state.clone()).await
+            match commands::search(query.clone(), phrase, lib.clone(), None, None, Some(1), Some(limit), None, app.clone(), state.clone()).await
             {
                 Ok(dto) => {
                     let mut v = serde_json::to_value(dto).unwrap_or(json!({}));
@@ -590,7 +590,7 @@ pub async fn exec_tool_with_policy(
                             .unwrap_or(false);
                         if selected_denied {
                             if let Some(next_lib) = first_allowed {
-                                if let Ok(dto2) = commands::search(query, phrase, Some(next_lib), None, None, Some(1), Some(limit), app.clone(), state).await {
+                                if let Ok(dto2) = commands::search(query, phrase, Some(next_lib), None, None, Some(1), Some(limit), None, app.clone(), state).await {
                                     v = serde_json::to_value(dto2).unwrap_or(json!({}));
                                     if let Some(arr) = v.get_mut("libraries").and_then(|x| x.as_array_mut()) {
                                         filter_json_array_by_lib(arr, "id", &policy.denied_libs);

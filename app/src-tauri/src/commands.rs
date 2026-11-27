@@ -21,7 +21,7 @@ use smart_library_core::library::{classify_trees, HtmlTree, TreeGroup};
 use smart_library_core::nav::NavNode;
 use smart_library_core::notes::{self, NotesStore};
 use smart_library_core::render::RenderOptions;
-use smart_library_core::search::{facet_label, locate, snippets, Filter, MatchMode, SearchIndex, SearchRequest, Within};
+use smart_library_core::search::{facet_label, locate, snippets, Filter, Hit, MatchMode, SearchIndex, SearchRequest, Within};
 use smart_library_core::snapshots::{SnapshotMeta, SnapshotPolicy, SnapshotRecord, SnapshotStore};
 use smart_library_core::source::{DirSource, Source, ZipSource};
 use smart_library_core::cite::{parse_citations, parse_command};
@@ -3531,6 +3531,7 @@ pub struct SnippetDto {
 #[derive(Serialize)]
 pub struct HitDto {
     lib: String,
+    library_title: String,
     book_id: Option<String>,
     title: String,
     /// `卷三` for CBETA, the folder for articles
@@ -3564,12 +3565,12 @@ pub struct LibCountDto {
 
 #[derive(Serialize)]
 pub struct SearchDto {
-    /// hit counts of every library with an index (results are grouped by
-    /// library, design-spec 8.2)
+    /// Hit counts of indexed libraries, plus the selected library if its index is unavailable.
     libraries: Vec<LibCountDto>,
     unavailable_libraries: Vec<String>,
-    /// the library whose results follow
+    /// The library whose results follow, or None for a merged page.
     lib: Option<String>,
+    index_unavailable: bool,
     kind: String,
     total_volumes: usize,
     total_books: usize,
@@ -3744,6 +3745,7 @@ pub async fn search(
     withins: Option<Vec<WithinDto>>,
     page: Option<usize>,
     limit: Option<usize>,
+    merge: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<SearchDto, String> {
@@ -3791,6 +3793,70 @@ pub async fn search(
             count: idx.count(&r)?,
         });
     }
+    let page = page.unwrap_or(1).max(1);
+    if let Some(requested) = lib.as_ref().filter(|id| merge == Some(false) && !counts.iter().any(|count| &count.id == *id)) {
+        if let Some(library) = libs.iter().find(|item| &item.id == requested) {
+            counts.push(LibCountDto { id: library.id.clone(), title: library.title.clone(), count: 0 });
+            return Ok(SearchDto {
+                libraries: counts,
+                unavailable_libraries,
+                lib: Some(library.id.clone()),
+                index_unavailable: true,
+                kind: library.kind.clone(),
+                total_volumes: 0,
+                total_books: 0,
+                page: 1,
+                pages: 0,
+                millis: start.elapsed().as_secs_f64() * 1000.0,
+                facets: Vec::new(),
+                hits: Vec::new(),
+            });
+        }
+    }
+    let merge_results = match (merge, lib.as_ref()) {
+        (Some(true), None) => req.filters.is_empty(),
+        (Some(false), Some(id)) => !libs.iter().any(|library| &library.id == id),
+        _ => false,
+    };
+    if merge_results && counts.len() > 1 {
+        let sizes: Vec<_> = counts.iter().map(|library| library.count).collect();
+        let total_volumes = sizes.iter().sum::<usize>();
+        let pages = total_volumes.div_ceil(req.limit);
+        let page = page.min(pages.max(1));
+        let slots = merged_search_slots(&sizes, (page - 1) * req.limit, req.limit);
+        let mut slices = vec![None; indexed.len()];
+        for &(source, rank) in &slots {
+            slices[source].get_or_insert(rank..rank).end = rank + 1;
+        }
+        let mut by_library = Vec::with_capacity(indexed.len());
+        for ((library, index), slice) in indexed.iter().zip(slices) {
+            let mut hits = Vec::new();
+            if let Some(slice) = slice {
+                let mut request = SearchRequest::new(&query);
+                request.mode = req.mode;
+                request.within = ranges.remove(&library.id).flatten();
+                request.offset = slice.start;
+                request.limit = slice.len();
+                hits = search_hit_dtos(&state, library, &request, &index.top_hits(&request)?)?;
+            }
+            by_library.push(hits.into_iter());
+        }
+        let hits = slots.into_iter().filter_map(|(source, _)| by_library[source].next()).collect();
+        return Ok(SearchDto {
+            libraries: counts,
+            unavailable_libraries,
+            lib: None,
+            index_unavailable: false,
+            kind: String::new(),
+            total_volumes,
+            total_books: 0,
+            page,
+            pages,
+            millis: start.elapsed().as_secs_f64() * 1000.0,
+            facets: Vec::new(),
+            hits,
+        });
+    }
     // the asked library, else the first one with hits
     let selected = lib.as_ref()
         .filter(|id| counts.iter().any(|c| &c.id == *id))
@@ -3802,19 +3868,96 @@ pub async fn search(
     }
     req.within = ranges.remove(&selected).flatten();
     let (l, idx) = indexed.iter().find(|(l, _)| l.id == selected).ok_or("索引不可用")?;
-    let html = if l.kind == "html" { Some(state.html_tree(l)?) } else { None };
-
-    let page = page.unwrap_or(1).max(1);
     req.offset = (page - 1) * req.limit;
     let r = idx.search(&req)?;
-    let browsing = req.query.trim().is_empty();
+    let hits = search_hit_dtos(&state, l, &req, &r.hits)?;
+    let facets = r
+        .facets
+        .iter()
+        .map(|f| FacetDto {
+            root: f.root.clone(),
+            label: facet_label(&f.root).to_string(),
+            values: f
+                .values
+                .iter()
+                .map(|(n, c)| FacetValueDto {
+                    name: n.clone(),
+                    count: *c,
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(SearchDto {
+        libraries: counts,
+        unavailable_libraries,
+        lib: Some(selected),
+        index_unavailable: false,
+        kind: l.kind.clone(),
+        total_volumes: r.total_volumes,
+        total_books: r.total_books,
+        page,
+        pages: r.total_volumes.div_ceil(req.limit),
+        millis: start.elapsed().as_secs_f64() * 1000.0,
+        facets,
+        hits,
+    })
+}
 
-    let mut hits = Vec::new();
-    for h in &r.hits {
+/// Interleave equal ranks in library order. Skip complete rounds before the page
+/// using hit counts, so no earlier pages have to be fetched from any index.
+fn merged_search_slots(sizes: &[usize], offset: usize, limit: usize) -> Vec<(usize, usize)> {
+    let before = |rank| sizes.iter().map(|&size| size.min(rank)).sum::<usize>();
+    let max_rank = sizes.iter().copied().max().unwrap_or(0);
+    let (mut lo, mut hi) = (0, max_rank);
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        if before(mid) <= offset {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let mut skip = offset - before(lo);
+    let mut slots = Vec::new();
+    for rank in lo..max_rank {
+        for (source, _) in sizes.iter().enumerate().filter(|(_, size)| **size > rank) {
+            if skip > 0 {
+                skip -= 1;
+            } else {
+                slots.push((source, rank));
+                if slots.len() == limit {
+                    return slots;
+                }
+            }
+        }
+    }
+    slots
+}
+
+#[cfg(test)]
+mod merged_search_tests {
+    use super::merged_search_slots;
+
+    #[test]
+    fn pages_interleave_ranked_hits_across_uneven_libraries() {
+        let sizes = [4, 0, 2, 1];
+        assert_eq!(merged_search_slots(&sizes, 0, 2), [(0, 0), (2, 0)]);
+        assert_eq!(merged_search_slots(&sizes, 2, 2), [(3, 0), (0, 1)]);
+        assert_eq!(merged_search_slots(&sizes, 4, 2), [(2, 1), (0, 2)]);
+        assert_eq!(merged_search_slots(&sizes, 6, 2), [(0, 3)]);
+        assert!(merged_search_slots(&sizes, 7, 2).is_empty());
+    }
+}
+
+fn search_hit_dtos(state: &AppState, l: &Library, req: &SearchRequest, ranked: &[Hit]) -> Result<Vec<HitDto>, String> {
+    let html = if l.kind == "html" && !ranked.is_empty() { Some(state.html_tree(l)?) } else { None };
+    let browsing = req.query.trim().is_empty();
+    let mut hits = Vec::with_capacity(ranked.len());
+    for h in ranked {
         let text = if browsing {
             Err(String::new())
         } else if is_article(l) {
-            article_of(&state, l, &h.path, None).map(|a| a.search_view())
+            article_of(state, l, &h.path, None).map(|a| a.search_view())
         } else {
             state.bookcase_of(l)?.volume_text(&h.path)
         };
@@ -3849,6 +3992,7 @@ pub async fn search(
         };
         hits.push(HitDto {
             lib: l.id.clone(),
+            library_title: l.title.clone(),
             book_id: if is_article(l) { None } else { Some(h.book.clone()) },
             title: h.title.clone(),
             subtitle,
@@ -3858,35 +4002,7 @@ pub async fn search(
             snippets: sn,
         });
     }
-    let facets = r
-        .facets
-        .iter()
-        .map(|f| FacetDto {
-            root: f.root.clone(),
-            label: facet_label(&f.root).to_string(),
-            values: f
-                .values
-                .iter()
-                .map(|(n, c)| FacetValueDto {
-                    name: n.clone(),
-                    count: *c,
-                })
-                .collect(),
-        })
-        .collect();
-    Ok(SearchDto {
-        libraries: counts,
-        unavailable_libraries,
-        lib: Some(selected),
-        kind: l.kind.clone(),
-        total_volumes: r.total_volumes,
-        total_books: r.total_books,
-        page,
-        pages: r.total_volumes.div_ceil(req.limit),
-        millis: start.elapsed().as_secs_f64() * 1000.0,
-        facets,
-        hits,
-    })
+    Ok(hits)
 }
 
 // ------------------------------------------------------------ quick search
